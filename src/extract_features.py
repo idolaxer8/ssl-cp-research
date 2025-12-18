@@ -18,8 +18,8 @@ def get_args():
 def get_transform():
     # Standard ImageNet normalization (works well for DINOv2)
     return transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        transforms.Resize(518),
+        transforms.CenterCrop(518),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
@@ -41,7 +41,7 @@ def main():
         raise FileNotFoundError(f"Data directory not found: {args.data_dir}")
     
     dataset = datasets.ImageFolder(root=args.data_dir, transform=get_transform())
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
     print(f"Found {len(dataset)} images. Starting extraction...")
 
     # 3. Extraction Loop
