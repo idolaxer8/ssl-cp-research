@@ -17,8 +17,12 @@ venv/
 *.pth
 *.pt
 *.npy
+*.tar.gz
+*.zip
 data/
 datasets/
+cifar10_download/
+cifar10_dl/
 
 # Ignore Outputs
 output/
