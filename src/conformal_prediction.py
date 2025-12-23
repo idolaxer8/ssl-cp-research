@@ -11,9 +11,11 @@ This implementation provides:
 
 import numpy as np
 import torch
+import time
 from typing import Tuple, Dict, List, Optional
 from tqdm import tqdm
 from sklearn.neighbors import NearestNeighbors
+from sklearn.metrics.pairwise import euclidean_distances
 
 
 class NonconformityMeasure:
@@ -33,10 +35,12 @@ class NonconformityMeasure:
 
 class KNNNonconformity(NonconformityMeasure):
     """
-    k-Nearest Neighbors nonconformity measure.
-    Nonconformity = average distance to k nearest neighbors of the same class.
+    k-Nearest Neighbors nonconformity measure (Cherubin et al. 2021).
     
-    Works well with normalized SSL embeddings where Euclidean distance ≈ Cosine distance.
+    Nonconformity score = sum(k distances to own class) / sum(k distances to other classes)
+    
+    Higher score = far from own class and/or close to other classes = more nonconforming.
+    This ratio-based approach is more discriminative than distance alone.
     """
     
     def __init__(self, k: int = 5, metric: str = 'euclidean'):
@@ -45,96 +49,180 @@ class KNNNonconformity(NonconformityMeasure):
         self.X_cal = None
         self.y_cal = None
         self.classes = None
-        self.knn_models = {}  # One KNN per class
         
     def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
-        """Fit KNN models for each class."""
+        """Store calibration data for nonconformity computation."""
         self.X_cal = X_cal
         self.y_cal = y_cal
         self.classes = np.unique(y_cal)
+    
+    def score(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """
+        Compute nonconformity score following Cherubin et al.
         
-        # Build a KNN index for each class
+        For each point:
+        1. Compute distances to all calibration points
+        2. Find k smallest distances to same class
+        3. Find k smallest distances to other classes
+        4. Return ratio: sum(dist_same) / max(sum(dist_other), 0.1)
+        """
+        
+        scores = np.zeros(len(X))
+        
+        for i, (x, label) in enumerate(zip(X, y)):
+            # Compute distances to all calibration points
+            distances = euclidean_distances([x], self.X_cal).flatten()
+            
+            # Get distances to same class and other classes
+            same_class_mask = self.y_cal == label
+            other_class_mask = self.y_cal != label
+            
+            dist_same = distances[same_class_mask]
+            dist_other = distances[other_class_mask]
+            
+            # Get k smallest distances (best_k)
+            k_same = min(self.k, len(dist_same))
+            k_other = min(self.k, len(dist_other))
+            
+            if k_same > 0:
+                kdist_same = np.partition(dist_same, k_same-1)[:k_same]
+            else:
+                kdist_same = np.array([1e10])
+            
+            if k_other > 0:
+                kdist_other = np.partition(dist_other, k_other-1)[:k_other]
+            else:
+                kdist_other = np.array([0.1])
+            
+            # Nonconformity = sum(dist to same) / sum(dist to other)
+            # Higher = more nonconforming (far from own class, close to others)
+            scores[i] = np.sum(kdist_same) / max(np.sum(kdist_other), 0.1)
+        
+        return scores
+
+
+class SimplifiedKNNNonconformity(NonconformityMeasure):
+    """
+    Simplified k-NN nonconformity from Cherubin et al. 2021 (Fast version).
+    
+    Optimization: Precompute k nearest distances for all calibration points.
+    Nonconformity = sum of distances to k nearest neighbors of same class.
+    
+    This is much faster than regular k-NN because:
+    - Distances are precomputed during fit()
+    - Only need to compute distances from test point to calibration points
+    """
+    
+    def __init__(self, k: int = 5):
+        self.k = k
+        # calibration data
+        self.X_cal = None         # (n_cal, d)
+        self.y_cal = None         # (n_cal,)
+        self.classes = None
+        # per-class arrays
+        self.class_indices = {}   # class -> array of global calibration indices
+        self.distances = {}       # class -> (n_class, k_actual) distances (sorted asc)
+        self.temporary_scores = {}# class -> (n_class,) sum of k distances
+        self.alpha0 = None        # (n_cal,) baseline calibration scores aligned with X_cal order
+      
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        self.X_cal = X_cal
+        self.y_cal = y_cal
+        self.classes = np.unique(y_cal)
+        n_cal = len(X_cal)
+
+        # build per-class data and store index mapping
         for cls in self.classes:
-            mask = y_cal == cls
-            X_cls = X_cal[mask]
-            
-            # Ensure k doesn't exceed number of samples
-            k_actual = min(self.k, len(X_cls))
-            
-            if len(X_cls) > 0:
-                knn = NearestNeighbors(n_neighbors=k_actual, metric=self.metric)
-                knn.fit(X_cls)
-                self.knn_models[cls] = knn
+            idx = np.where(y_cal == cls)[0]           # global indices in calibration array
+            self.class_indices[cls] = idx
+            X_cls = X_cal[idx]
+            if len(X_cls) == 0:
+                raise ValueError(f"Label {cls} not present")
+
+            # pairwise distances within class
+            D = euclidean_distances(X_cls, X_cls)
+            D.sort(axis=1)
+            # exclude self (first column = 0)
+            k_actual = min(self.k, max(0, len(X_cls) - 1))
+            if k_actual == 0:
+                # no neighbors available -> distances array is empty (shape n_class x 0)
+                self.distances[cls] = np.zeros((len(X_cls), 0))
+                self.temporary_scores[cls] = np.zeros(len(X_cls))
+            else:
+                # keep k_actual nearest (excluding self)
+                self.distances[cls] = D[:, 1:k_actual+1]    # shape (n_class, k_actual)
+                self.temporary_scores[cls] = np.sum(self.distances[cls], axis=1)
+
+        # build alpha0 aligned with original calibration order
+        alpha0 = np.zeros(n_cal, dtype=float)
+        for cls in self.classes:
+            idx = self.class_indices[cls]
+            alpha0[idx] = self.temporary_scores[cls]
+        self.alpha0 = alpha0
     
-    def score(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
+    def get_calibration_scores(self) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+    
+    def score_x(self, x: np.ndarray, y: int) -> float:
+        """Score for a single test (x,y) — only test score (fast)."""
+        if y not in self.class_indices:
+            return np.inf
+        idx = self.class_indices[y]
+        X_same = self.X_cal[idx]
+        dists = euclidean_distances([x], X_same).flatten()
+        k_actual = min(self.k, len(dists))
+        if k_actual == 0:
+            return 0.0
+        # sum of k smallest distances
+        ksmall = np.partition(dists, k_actual-1)[:k_actual]
+        return float(np.sum(ksmall))
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
         """
-        Compute nonconformity score = average distance to k nearest neighbors of same class.
+        Return updated calibration scores (length n_cal) after hypothetically adding (x,y).
+        Only calibration examples of class `y` can change.
         """
-        scores = np.zeros(len(X))
-        
-        for i, (x, label) in enumerate(zip(X, y)):
-            if label not in self.knn_models:
-                # Unknown class -> maximum nonconformity
-                scores[i] = np.inf
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        n_cal = len(self.X_cal)
+        updated = self.alpha0.copy()   # baseline
+            
+        if y not in self.class_indices:
+            # unknown label: no changes to calibration scores
+            return updated
+
+        # compute distances from x to every calibration example of class y
+        idx = self.class_indices[y]
+        X_same = self.X_cal[idx]
+        dists = euclidean_distances([x], X_same).flatten()
+
+        k_actual = min(self.k, max(0, X_same.shape[0] - 1))
+        if k_actual == 0:
+            # no k-neighbors to update for this class
+            return updated
+
+        # per-class stored arrays
+        kdist_class = self.distances[y]        # shape (n_class, k_actual)
+        tmp_scores = self.temporary_scores[y]  # shape (n_class,)
+
+        # iterate through same-class calibration examples in their per-class order
+        for local_i, global_i in enumerate(idx):
+            dist_x = dists[local_i]
+            # if kdist_class may have fewer than k entries (k_actual < self.k)
+            if kdist_class.shape[1] == 0:
+                # nothing to do
                 continue
-            
-            knn = self.knn_models[label]
-            x_reshaped = x.reshape(1, -1)
-            
-            # Get distances to k nearest neighbors of same class
-            distances, _ = knn.kneighbors(x_reshaped)
-            scores[i] = np.mean(distances[0])
-        
-        return scores
+            kth = kdist_class[local_i, -1]   # largest of the k stored distances
+            if dist_x < kth:
+                # replace kth with dist_x
+                updated[global_i] = tmp_scores[local_i] - kth + dist_x
+            else:
+                # unchanged (already copied from alpha0)
+                pass
 
-
-class InverseKNNNonconformity(NonconformityMeasure):
-    """
-    Inverse k-NN nonconformity: average distance to k-NN of OTHER classes.
-    Nonconformity = 1 / (1 + avg_distance_to_other_classes)
-    
-    Lower distance to other classes = higher nonconformity = less confident.
-    """
-    
-    def __init__(self, k: int = 5, metric: str = 'euclidean'):
-        self.k = k
-        self.metric = metric
-        self.X_cal = None
-        self.y_cal = None
-        self.classes = None
-        
-    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
-        self.X_cal = X_cal
-        self.y_cal = y_cal
-        self.classes = np.unique(y_cal)
-        
-    def score(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Compute inverse distance to other classes."""
-        scores = np.zeros(len(X))
-        
-        for i, (x, label) in enumerate(zip(X, y)):
-            # Get samples from OTHER classes
-            mask_other = self.y_cal != label
-            X_other = self.X_cal[mask_other]
-            
-            if len(X_other) == 0:
-                scores[i] = 0.0
-                continue
-            
-            # Find k nearest neighbors from other classes
-            k_actual = min(self.k, len(X_other))
-            knn = NearestNeighbors(n_neighbors=k_actual, metric=self.metric)
-            knn.fit(X_other)
-            
-            x_reshaped = x.reshape(1, -1)
-            distances, _ = knn.kneighbors(x_reshaped)
-            
-            # Inverse nonconformity: smaller distance to other classes = more nonconforming
-            avg_dist = np.mean(distances[0])
-            scores[i] = 1.0 / (1.0 + avg_dist)
-        
-        return scores
-
+        return updated
 
 class FullConformalPredictor:
     """
@@ -182,13 +270,23 @@ class FullConformalPredictor:
         self.classes = np.unique(y_cal)
         
         # Fit nonconformity measure
+        start_time = time.time()
         self.ncm.fit(X_cal, y_cal)
+        fit_time = time.time() - start_time
         
         # Compute and cache calibration scores
-        self.cal_scores = self.ncm.score(X_cal, y_cal)
+        start_time = time.time()
+        # Try new API first (SimplifiedKNN), fallback to legacy (KNN)
+        try:
+            self.cal_scores = self.ncm.get_calibration_scores()
+        except (AttributeError, NotImplementedError):
+            # Fallback for legacy NCMs
+            self.cal_scores = self.ncm.score(X_cal, y_cal)
+        score_time = time.time() - start_time
         
         print(f"Calibrated with {len(X_cal)} examples, {len(self.classes)} classes")
-        print(f"Calibration scores - mean: {self.cal_scores.mean():.4f}, std: {self.cal_scores.std():.4f}")
+        print(f"Calibration scores - min: {self.cal_scores.min():.4f}, max: {self.cal_scores.max():.4f}, mean: {self.cal_scores.mean():.4f}, std: {self.cal_scores.std():.4f}")
+        print(f"Timing: fit={fit_time:.2f}s, score_cal={score_time:.2f}s")
     
     def predict(
         self,
@@ -209,10 +307,12 @@ class FullConformalPredictor:
             - 'prediction_sets': List of prediction sets (lists of labels)
             - 'set_sizes': Size of each prediction set
             - 'p_values': (optional) p-values for each (test_idx, class) pair
+            - 'prediction_time': Total prediction time in seconds
         """
         if self.cal_scores is None:
             raise ValueError("Must call calibrate() before predict()")
         
+        start_time = time.time()
         n_test = len(X_test)
         n_cal = len(self.X_cal)
         
@@ -220,46 +320,89 @@ class FullConformalPredictor:
         set_sizes = []
         all_p_values = [] if return_p_values else None
         
+        # Debug: track empty sets
+        empty_count = 0
+        
         iterator = tqdm(range(n_test), desc="Full CP") if verbose else range(n_test)
         
         for i in iterator:
             x_test = X_test[i]
             pred_set = []
-            p_vals = {} if return_p_values else None
+            p_vals = {}  # Always compute for debugging
             
             # For each candidate label, compute p-value
             for y_candidate in self.classes:
-                # Compute test score assuming this label
-                test_score = self.ncm.score(
-                    x_test.reshape(1, -1),
-                    np.array([y_candidate])
-                )[0]
+                # Try new API (SimplifiedKNN with exact Full CP updates)
+                try:
+                    test_score = self.ncm.score_x(x_test, int(y_candidate))
+                    updated_scores = self.ncm.updated_calibration_scores_for(x_test, int(y_candidate))
+                    # p-value using updated calibration scores
+                    n_greater = np.sum(updated_scores >= test_score)
+                    p_value = (n_greater + 1) / (n_cal + 1)
+                except (AttributeError, NotImplementedError):
+                    # Fallback for legacy NCMs (KNN) - use fixed calibration scores
+                    try:
+                        test_score = self.ncm.score(
+                            x_test.reshape(1, -1),
+                            np.array([y_candidate]),
+                            only_score_x=True
+                        )[0]
+                    except TypeError:
+                        test_score = self.ncm.score(
+                            x_test.reshape(1, -1),
+                            np.array([y_candidate])
+                        )[0]
+                    # Use fixed calibration scores (not exact Full CP)
+                    n_greater = np.sum(self.cal_scores >= test_score)
+                    p_value = (n_greater + 1) / (n_cal + 1)
                 
-                # Compute p-value: fraction of calibration scores >= test score
-                # Add 1 to numerator and denominator (smoothed p-value)
-                n_greater = np.sum(self.cal_scores >= test_score)
-                p_value = (n_greater + 1) / (n_cal + 1)
-                
-                if return_p_values:
-                    p_vals[int(y_candidate)] = p_value
+                p_vals[int(y_candidate)] = p_value
                 
                 # Include in prediction set if p-value > alpha
                 if p_value > self.alpha:
                     pred_set.append(int(y_candidate))
             
+            # Debug: warn if empty
+            if len(pred_set) == 0:
+                empty_count += 1
+                if empty_count <= 3 and verbose:  # Show first 3 warnings
+                    best_p = max(p_vals.values())
+                    best_class = max(p_vals, key=p_vals.get)
+                    print(f"\nWarning: Empty prediction set for test example {i}")
+                    print(f"  Best p-value: {best_p:.4f} (class {best_class}), alpha: {self.alpha}")
+                    # Compute test scores for debugging
+                    try:
+                        test_scores_all = [self.ncm.score_x(x_test, int(c)) for c in self.classes]
+                    except (AttributeError, NotImplementedError):
+                        test_scores_all = [self.ncm.score(x_test.reshape(1, -1), np.array([c]))[0] for c in self.classes]
+                    print(f"  Test scores range: [{min(test_scores_all):.4f}, {max(test_scores_all):.4f}]")
+                    print(f"  Cal scores range: [{self.cal_scores.min():.4f}, {self.cal_scores.max():.4f}]")
+            
             prediction_sets.append(pred_set)
             set_sizes.append(len(pred_set))
             
+            # Only return p_values if requested
             if return_p_values:
                 all_p_values.append(p_vals)
         
+        # Warn about empty sets
+        if empty_count > 0 and verbose:
+            print(f"\n⚠️  Warning: {empty_count}/{n_test} prediction sets are empty!")
+            print(f"   Consider increasing alpha (current: {self.alpha}) or checking your data.")
+        
+        prediction_time = time.time() - start_time
+        
         results = {
             'prediction_sets': prediction_sets,
-            'set_sizes': np.array(set_sizes)
+            'set_sizes': np.array(set_sizes),
+            'prediction_time': prediction_time
         }
         
         if return_p_values:
             results['p_values'] = all_p_values
+        
+        if verbose:
+            print(f"\nPrediction time: {prediction_time:.2f}s ({prediction_time/n_test*1000:.1f}ms per sample)")
         
         return results
     
@@ -331,27 +474,26 @@ class FullConformalPredictor:
         return metrics
 
 
-def train_val_test_split(
+def cal_test_split(
     embeddings: np.ndarray,
     labels: np.ndarray,
-    train_ratio: float = 0.5,
-    cal_ratio: float = 0.25,
-    test_ratio: float = 0.25,
+    cal_ratio: float = 0.5,
     random_state: int = 42
 ) -> Tuple:
     """
-    Split data into train/calibration/test sets.
+    Split data into calibration/test sets for Full CP.
+    
+    Note: Full CP doesn't require a separate training set.
+    We work directly with calibration data and test data.
     
     Args:
         embeddings: Feature vectors (n, d)
         labels: Labels (n,)
-        train_ratio: Fraction for training (not used in CP, but for future classifier training)
-        cal_ratio: Fraction for calibration
-        test_ratio: Fraction for testing
+        cal_ratio: Fraction for calibration (rest goes to test)
         random_state: Random seed
         
     Returns:
-        (X_train, y_train, X_cal, y_cal, X_test, y_test)
+        (X_cal, y_cal, X_test, y_test)
     """
     np.random.seed(random_state)
     n = len(embeddings)
@@ -359,21 +501,42 @@ def train_val_test_split(
     # Generate random permutation
     indices = np.random.permutation(n)
     
-    # Calculate split points
-    n_train = int(n * train_ratio)
+    # Calculate split point
     n_cal = int(n * cal_ratio)
     
-    train_idx = indices[:n_train]
-    cal_idx = indices[n_train:n_train + n_cal]
-    test_idx = indices[n_train + n_cal:]
+    cal_idx = indices[:n_cal]
+    test_idx = indices[n_cal:]
     
-    X_train = embeddings[train_idx]
-    y_train = labels[train_idx]
     X_cal = embeddings[cal_idx]
     y_cal = labels[cal_idx]
     X_test = embeddings[test_idx]
     y_test = labels[test_idx]
     
-    print(f"Split: Train={len(X_train)}, Cal={len(X_cal)}, Test={len(X_test)}")
+    print(f"Split: Cal={len(X_cal)}, Test={len(X_test)}")
+    
+    return X_cal, y_cal, X_test, y_test
+
+
+def train_val_test_split(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    train_ratio: float = 0.0,  # Kept for backward compatibility, but not used
+    cal_ratio: float = 0.5,
+    test_ratio: float = 0.5,
+    random_state: int = 42
+) -> Tuple:
+    """
+    DEPRECATED: Use cal_test_split() instead.
+    
+    Full CP doesn't use a training set, only calibration and test.
+    This function is kept for backward compatibility but returns empty train sets.
+    """
+    X_cal, y_cal, X_test, y_test = cal_test_split(
+        embeddings, labels, cal_ratio=cal_ratio, random_state=random_state
+    )
+    
+    # Return empty train sets for compatibility
+    X_train = np.array([])
+    y_train = np.array([])
     
     return X_train, y_train, X_cal, y_cal, X_test, y_test

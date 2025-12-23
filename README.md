@@ -61,17 +61,17 @@ Run Full CP with k-NN nonconformity measure:
 python src/run_conformal_experiment.py \
     --embeddings_path output/embeddings.pt \
     --alpha 0.1 \
-    --ncm knn \
+    --ncm simplified_knn \
     --k 5 \
+    --cal_ratio 0.5 \
     --save_predictions
 ```
 
 **Key Arguments:**
 - `--alpha`: Significance level (e.g., 0.1 = 90% coverage guarantee)
-- `--ncm`: Nonconformity measure (`knn` or `inverse_knn`)
+- `--ncm`: Nonconformity measure (`knn` or `simplified_knn` - simplified is faster)
 - `--k`: Number of neighbors for k-NN
-- `--cal_ratio`: Calibration set size (default: 0.25)
-- `--test_ratio`: Test set size (default: 0.25)
+- `--cal_ratio`: Calibration set size (default: 0.5, rest goes to test)
 
 ## Outputs
 
