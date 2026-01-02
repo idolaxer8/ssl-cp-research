@@ -232,10 +232,16 @@ def load_raw_pixel_features(data_dir: str, labels: np.ndarray) -> np.ndarray:
 def compare_ssl_vs_baseline(X_ssl, X_raw, y, args, output_dir: str):
     """
     Compare CP performance on SSL embeddings vs raw pixel features.
+    Applies PCA to raw features to match SSL embedding dimension for fair comparison.
     """
     print("\n" + "="*70)
     print("SSL EMBEDDINGS vs RAW PIXEL BASELINE COMPARISON")
     print("="*70)
+    
+    # Report dimensions
+    print(f"\nOriginal dimensions:")
+    print(f"  SSL embeddings: {X_ssl.shape[1]}D")
+    print(f"  Raw pixels: {X_raw.shape[1]}D")
     
     # Use consistent split for both
     X_cal_ssl, y_cal, X_test_ssl, y_test = cal_test_split(
@@ -245,10 +251,32 @@ def compare_ssl_vs_baseline(X_ssl, X_raw, y, args, output_dir: str):
         X_raw, y, cal_ratio=args.cal_ratio, random_state=args.seed
     )
     
+    # Apply PCA to raw features to match SSL dimension (fair comparison)
+    # k-NN suffers from curse of dimensionality, so we need equal dimensions
+    from sklearn.decomposition import PCA
+    
+    target_dim = X_ssl.shape[1]
+    if X_raw.shape[1] > target_dim:
+        print(f"\nApplying PCA to raw features: {X_raw.shape[1]}D → {target_dim}D")
+        print("  (For fair comparison: k-NN is sensitive to dimensionality)")
+        
+        pca = PCA(n_components=target_dim, random_state=args.seed)
+        X_cal_raw_pca = pca.fit_transform(X_cal_raw)
+        X_test_raw_pca = pca.transform(X_test_raw)
+        
+        # Normalize after PCA
+        X_cal_raw_pca = X_cal_raw_pca / (np.linalg.norm(X_cal_raw_pca, axis=1, keepdims=True) + 1e-8)
+        X_test_raw_pca = X_test_raw_pca / (np.linalg.norm(X_test_raw_pca, axis=1, keepdims=True) + 1e-8)
+        
+        print(f"  Explained variance: {pca.explained_variance_ratio_.sum():.3f}")
+    else:
+        X_cal_raw_pca = X_cal_raw
+        X_test_raw_pca = X_test_raw
+    
     comparison_results = {}
     
     for name, X_cal, X_test in [
-        ("Raw Pixels (Baseline)", X_cal_raw, X_test_raw),
+        ("Raw Pixels (Baseline + PCA)", X_cal_raw_pca, X_test_raw_pca),
         ("SSL Embeddings (DINOv2)", X_cal_ssl, X_test_ssl),
     ]:
         print(f"\nEvaluating {name}...")
@@ -280,7 +308,7 @@ def compare_ssl_vs_baseline(X_ssl, X_raw, y, args, output_dir: str):
     print("SSL IMPROVEMENT over BASELINE")
     print("="*70)
     
-    baseline = comparison_results["Raw Pixels (Baseline)"]
+    baseline = comparison_results["Raw Pixels (Baseline + PCA)"]
     ssl = comparison_results["SSL Embeddings (DINOv2)"]
     
     # Coverage improvement

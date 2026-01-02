@@ -49,56 +49,113 @@ class KNNNonconformity(NonconformityMeasure):
         self.X_cal = None
         self.y_cal = None
         self.classes = None
+        # index helper
+        self.class_indices = {}
+        # cached baseline calibration scores (alpha0)
+        self.alpha0 = None
         
     def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
-        """Store calibration data for nonconformity computation."""
+        """Store calibration data and build per-class index mapping."""
         self.X_cal = X_cal
         self.y_cal = y_cal
         self.classes = np.unique(y_cal)
+        # build per-class indices
+        self.class_indices = {cls: np.where(y_cal == cls)[0] for cls in self.classes}
+        # compute baseline calibration scores (alpha0)
+        self.alpha0 = self.get_calibration_scores()
     
     def score(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
         """
-        Compute nonconformity score following Cherubin et al.
-        
-        For each point:
-        1. Compute distances to all calibration points
-        2. Find k smallest distances to same class
-        3. Find k smallest distances to other classes
-        4. Return ratio: sum(dist_same) / max(sum(dist_other), 0.1)
+        Compute nonconformity score using min-distance ratio:
+        A((x,y)) = min_{i: yi=y} d(x, xi) / min_{i: yi!=y} d(x, xi)
         """
-        
+        eps = 1e-8
         scores = np.zeros(len(X))
-        
         for i, (x, label) in enumerate(zip(X, y)):
-            # Compute distances to all calibration points
-            distances = euclidean_distances([x], self.X_cal).flatten()
-            
-            # Get distances to same class and other classes
-            same_class_mask = self.y_cal == label
-            other_class_mask = self.y_cal != label
-            
-            dist_same = distances[same_class_mask]
-            dist_other = distances[other_class_mask]
-            
-            # Get k smallest distances (best_k)
-            k_same = min(self.k, len(dist_same))
-            k_other = min(self.k, len(dist_other))
-            
-            if k_same > 0:
-                kdist_same = np.partition(dist_same, k_same-1)[:k_same]
-            else:
-                kdist_same = np.array([1e10])
-            
-            if k_other > 0:
-                kdist_other = np.partition(dist_other, k_other-1)[:k_other]
-            else:
-                kdist_other = np.array([0.1])
-            
-            # Nonconformity = sum(dist to same) / sum(dist to other)
-            # Higher = more nonconforming (far from own class, close to others)
-            scores[i] = np.sum(kdist_same) / max(np.sum(kdist_other), 0.1)
-        
+            # distances to same and other classes
+            same_idx = self.class_indices.get(label, np.array([], dtype=int))
+            other_idx = np.where(self.y_cal != label)[0]
+            if len(same_idx) == 0 or len(other_idx) == 0:
+                scores[i] = np.inf
+                continue
+            d_same = euclidean_distances([x], self.X_cal[same_idx]).flatten()
+            d_other = euclidean_distances([x], self.X_cal[other_idx]).flatten()
+            scores[i] = float(np.min(d_same)) / max(float(np.min(d_other)), eps)
         return scores
+
+    def get_calibration_scores(self) -> np.ndarray:
+        """
+        Baseline calibration scores alpha0 in original order.
+        For each calibration xi with label yi:
+        alpha0_i = min_{j: yj=yi, j!=i} d(xi, xj) / min_{j: yj!=yi} d(xi, xj)
+        """
+        eps = 1e-8
+        if self.X_cal is None:
+            raise ValueError("Must call fit() first")
+        n_cal = len(self.X_cal)
+        alpha0 = np.zeros(n_cal, dtype=float)
+        for i in range(n_cal):
+            yi = self.y_cal[i]
+            same_idx = self.class_indices.get(yi, np.array([], dtype=int))
+            # exclude self from same-class set
+            same_idx = same_idx[same_idx != i]
+            other_idx = np.where(self.y_cal != yi)[0]
+            if len(same_idx) == 0 or len(other_idx) == 0:
+                alpha0[i] = np.inf
+                continue
+            d_same = euclidean_distances(self.X_cal[i:i+1], self.X_cal[same_idx]).flatten()
+            d_other = euclidean_distances(self.X_cal[i:i+1], self.X_cal[other_idx]).flatten()
+            alpha0[i] = float(np.min(d_same)) / max(float(np.min(d_other)), eps)
+        return alpha0
+
+    def score_x(self, x: np.ndarray, y: int) -> float:
+        """Score for a single test (x,y) using min-distance ratio."""
+        eps = 1e-8
+        same_idx = self.class_indices.get(y, np.array([], dtype=int))
+        other_idx = np.where(self.y_cal != y)[0]
+        if len(same_idx) == 0 or len(other_idx) == 0:
+            return float('inf')
+        d_same = euclidean_distances([x], self.X_cal[same_idx]).flatten()
+        d_other = euclidean_distances([x], self.X_cal[other_idx]).flatten()
+        return float(np.min(d_same)) / max(float(np.min(d_other)), eps)
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
+        """
+        Naive Full CP update: recompute alpha_i' for all calibration points assuming (x,y) is added.
+        No optimizations; we recompute min distances directly.
+        """
+        eps = 1e-8
+        if self.X_cal is None:
+            raise ValueError("Must call fit() first")
+        n_cal = len(self.X_cal)
+        updated = np.zeros(n_cal, dtype=float)
+        # Precompute distances from x to all calibration points
+        d_x_to_all = euclidean_distances([x], self.X_cal).flatten()
+        for i in range(n_cal):
+            yi = self.y_cal[i]
+            same_idx = self.class_indices.get(yi, np.array([], dtype=int))
+            # exclude self from same-class set
+            same_idx = same_idx[same_idx != i]
+            other_idx = np.where(self.y_cal != yi)[0]
+            # base sets
+            if len(other_idx) == 0:
+                updated[i] = np.inf
+                continue
+            # min same, possibly influenced by (x,y) if y==yi
+            if len(same_idx) == 0:
+                min_same = d_x_to_all[i] if y == yi else float('inf')
+            else:
+                d_same = euclidean_distances(self.X_cal[i:i+1], self.X_cal[same_idx]).flatten()
+                min_same = float(np.min(d_same))
+                if y == yi:
+                    min_same = min(min_same, d_x_to_all[i])
+            # min other, possibly influenced by (x,y) if y!=yi
+            d_other = euclidean_distances(self.X_cal[i:i+1], self.X_cal[other_idx]).flatten()
+            min_other = float(np.min(d_other))
+            if y != yi:
+                min_other = min(min_other, d_x_to_all[i])
+            updated[i] = min_same / max(min_other, eps)
+        return updated
 
 
 class SimplifiedKNNNonconformity(NonconformityMeasure):
@@ -332,29 +389,11 @@ class FullConformalPredictor:
             
             # For each candidate label, compute p-value
             for y_candidate in self.classes:
-                # Try new API (SimplifiedKNN with exact Full CP updates)
-                try:
-                    test_score = self.ncm.score_x(x_test, int(y_candidate))
-                    updated_scores = self.ncm.updated_calibration_scores_for(x_test, int(y_candidate))
-                    # p-value using updated calibration scores
-                    n_greater = np.sum(updated_scores >= test_score)
-                    p_value = (n_greater + 1) / (n_cal + 1)
-                except (AttributeError, NotImplementedError):
-                    # Fallback for legacy NCMs (KNN) - use fixed calibration scores
-                    try:
-                        test_score = self.ncm.score(
-                            x_test.reshape(1, -1),
-                            np.array([y_candidate]),
-                            only_score_x=True
-                        )[0]
-                    except TypeError:
-                        test_score = self.ncm.score(
-                            x_test.reshape(1, -1),
-                            np.array([y_candidate])
-                        )[0]
-                    # Use fixed calibration scores (not exact Full CP)
-                    n_greater = np.sum(self.cal_scores >= test_score)
-                    p_value = (n_greater + 1) / (n_cal + 1)
+                # Exact Full CP path using new NCM API
+                test_score = self.ncm.score_x(x_test, int(y_candidate))
+                updated_scores = self.ncm.updated_calibration_scores_for(x_test, int(y_candidate))
+                n_greater = np.sum(updated_scores >= test_score)
+                p_value = (n_greater + 1) / (n_cal + 1)
                 
                 p_vals[int(y_candidate)] = p_value
                 
@@ -370,11 +409,8 @@ class FullConformalPredictor:
                     best_class = max(p_vals, key=p_vals.get)
                     print(f"\nWarning: Empty prediction set for test example {i}")
                     print(f"  Best p-value: {best_p:.4f} (class {best_class}), alpha: {self.alpha}")
-                    # Compute test scores for debugging
-                    try:
-                        test_scores_all = [self.ncm.score_x(x_test, int(c)) for c in self.classes]
-                    except (AttributeError, NotImplementedError):
-                        test_scores_all = [self.ncm.score(x_test.reshape(1, -1), np.array([c]))[0] for c in self.classes]
+                    # Compute test scores for debugging using new API
+                    test_scores_all = [self.ncm.score_x(x_test, int(c)) for c in self.classes]
                     print(f"  Test scores range: [{min(test_scores_all):.4f}, {max(test_scores_all):.4f}]")
                     print(f"  Cal scores range: [{self.cal_scores.min():.4f}, {self.cal_scores.max():.4f}]")
             
