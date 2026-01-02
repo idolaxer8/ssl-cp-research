@@ -4,7 +4,7 @@ import torch
 import timm
 import numpy as np
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 def get_args():
@@ -13,6 +13,8 @@ def get_args():
     parser.add_argument("--output_name", type=str, default="embeddings.pt", help="Filename for saved tensors")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--model_name", type=str, default="vit_base_patch14_dinov2.lvd142m", help="timm model name")
+    parser.add_argument("--num_per_class", type=int, default=None,
+                        help="Limit number of images per class (None = all)")
     return parser.parse_args()
 
 def get_transform():
@@ -41,6 +43,20 @@ def main():
         raise FileNotFoundError(f"Data directory not found: {args.data_dir}")
     
     dataset = datasets.ImageFolder(root=args.data_dir, transform=get_transform())
+    # Optionally limit number of images per class by creating a Subset
+    if args.num_per_class is not None:
+        class_counts = {i: 0 for i in range(len(dataset.classes))}
+        selected_indices = []
+        for idx, (_path, label) in enumerate(dataset.samples):
+            if class_counts[label] < args.num_per_class:
+                selected_indices.append(idx)
+                class_counts[label] += 1
+            # stop early if all classes reached the limit
+            if all(count >= args.num_per_class for count in class_counts.values()):
+                break
+
+        dataset = Subset(dataset, selected_indices)
+
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
     print(f"Found {len(dataset)} images. Starting extraction...")
 
