@@ -528,6 +528,182 @@ class RelativeCentroidNonconformity(NonconformityMeasure):
         return self._compute_scores_vectorized(self.X_cal, self.y_cal, updated_centroid_matrix)
 
 
+class RidgeRegressionNonconformity(NonconformityMeasure):
+    """
+    Ridge Regression (LS-SVM) in Primal Form optimized for Full CP.
+    
+    Based on Cherubin et al. 2021 exact CP optimization, adapted for:
+    1. Primal form: inverts (d×d) matrix instead of (N×N) - efficient for d << N
+    2. Multi-class: One-vs-Rest with {-1, +1} encoding in a single matrix operation
+    3. Sherman-Morrison: O(d²) instant updates for Full CP
+    
+    Nonconformity score: s(x, y) = -f_y(x)
+    where f_y(x) is the Ridge regression prediction for class y.
+    
+    Interpretation:
+    - Negative score: model confidently predicts class y (conforming)
+    - Positive score: model does NOT predict class y (nonconforming)
+    
+    Reference: https://arxiv.org/pdf/2102.03236
+    """
+    
+    def __init__(self, lambda_reg: float = 1.0):
+        """
+        Args:
+            lambda_reg: Regularization parameter (larger = more regularization)
+        """
+        self.lambda_reg = lambda_reg
+        self.X_cal = None
+        self.y_cal = None
+        self.classes = None
+        self.n_classes = None
+        
+        # Precomputed mappings
+        self.class_to_idx = None
+        self.y_cal_indices = None  # Indices of true classes for calibration points
+        
+        # Core matrices for Ridge Regression
+        self.inv_cov = None   # (d, d) - Inverse of (X^T X + λI)
+        self.XtY = None       # (d, n_classes) - Cross-correlation X^T Y
+        
+        # Cached calibration scores
+        self.alpha0 = None
+        
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        """
+        Fit Ridge Regression on calibration set.
+        
+        Computes and caches:
+        - Inverse covariance matrix (X^T X + λI)^{-1}
+        - Cross-correlation X^T Y
+        - Calibration scores
+        """
+        self.X_cal = X_cal
+        self.y_cal = y_cal
+        self.classes = np.unique(y_cal)
+        self.n_classes = len(self.classes)
+        N, d = X_cal.shape
+        
+        # Precompute class mappings
+        self.class_to_idx = {c: i for i, c in enumerate(self.classes)}
+        self.y_cal_indices = np.array([self.class_to_idx[y] for y in y_cal])
+        
+        # 1. One-Hot Encode Targets with {-1, +1} scheme
+        # Shape: (N, n_classes)
+        Y_onehot = -1.0 * np.ones((N, self.n_classes))
+        Y_onehot[np.arange(N), self.y_cal_indices] = 1.0
+            
+        # 2. Compute Covariance: A = X^T X + λI
+        # Shape: (d, d)
+        A = X_cal.T @ X_cal
+        A[np.diag_indices_from(A)] += self.lambda_reg
+        
+        # 3. Compute Inverse: A^{-1} (expensive step, done once)
+        self.inv_cov = np.linalg.inv(A)
+        
+        # 4. Compute Cross-Correlation: B = X^T Y
+        self.XtY = X_cal.T @ Y_onehot
+        
+        # 5. Cache calibration scores
+        self.alpha0 = self._compute_calibration_scores(self.inv_cov, self.XtY)
+    
+    def _compute_weights(self, inv_cov: np.ndarray, XtY: np.ndarray) -> np.ndarray:
+        """Compute weights: W = A^{-1} B, shape (d, n_classes)"""
+        return inv_cov @ XtY
+    
+    def _compute_calibration_scores(self, inv_cov: np.ndarray, XtY: np.ndarray) -> np.ndarray:
+        """
+        Compute scores for all calibration points (vectorized).
+        Score = -prediction for true class.
+        """
+        W = self._compute_weights(inv_cov, XtY)
+        
+        # Predictions: (N, n_classes)
+        preds = self.X_cal @ W
+        
+        # Extract predictions for true classes using advanced indexing
+        true_class_preds = preds[np.arange(len(preds)), self.y_cal_indices]
+        
+        return -true_class_preds
+    
+    def _sherman_morrison_update(self, x: np.ndarray, y: int):
+        """
+        Compute updated inverse covariance and XtY after adding (x, y).
+        
+        Sherman-Morrison formula:
+        (A + xx^T)^{-1} = A^{-1} - (A^{-1} x x^T A^{-1}) / (1 + x^T A^{-1} x)
+        
+        Returns:
+            (inv_cov_new, XtY_new) - Updated matrices
+        """
+        # Sherman-Morrison update for inverse covariance
+        u = self.inv_cov @ x  # (d,)
+        denom = 1.0 + x @ u
+        
+        # Numerical stability check
+        if abs(denom) < 1e-10:
+            # Fallback: return original (shouldn't happen in practice)
+            inv_cov_new = self.inv_cov.copy()
+        else:
+            inv_cov_new = self.inv_cov - np.outer(u, u) / denom
+        
+        # Update XtY: add contribution of new point
+        y_target_vec = -1.0 * np.ones(self.n_classes)
+        cls_idx = self.class_to_idx[y]
+        y_target_vec[cls_idx] = 1.0
+        
+        XtY_new = self.XtY + np.outer(x, y_target_vec)
+        
+        return inv_cov_new, XtY_new
+    
+    def get_calibration_scores(self) -> np.ndarray:
+        """Return cached calibration scores."""
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+    
+    def score_x(self, x: np.ndarray, y: int) -> float:
+        """
+        Score for test point (x, y) AFTER hypothetically adding it to calibration set.
+        
+        For Full CP correctness, we must score the test point using the UPDATED model
+        (after adding the test point), not the original model.
+        """
+        if y not in self.class_to_idx:
+            return float('inf')
+        
+        # Get updated model via Sherman-Morrison
+        inv_cov_new, XtY_new = self._sherman_morrison_update(x, y)
+        
+        # Compute new weights
+        W_new = self._compute_weights(inv_cov_new, XtY_new)
+        
+        # Score for test point with updated model
+        cls_idx = self.class_to_idx[y]
+        pred = x @ W_new[:, cls_idx]
+        
+        return -pred
+    
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
+        """
+        Compute updated calibration scores after hypothetically adding (x, y).
+        
+        Uses Sherman-Morrison for O(d²) update instead of O(d³) matrix inversion.
+        All calibration points are re-scored with the updated model.
+        """
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        
+        if y not in self.class_to_idx:
+            return np.inf * np.ones(len(self.X_cal))
+        
+        # Get updated model via Sherman-Morrison
+        inv_cov_new, XtY_new = self._sherman_morrison_update(x, y)
+        
+        # Re-score all calibration points with updated model
+        return self._compute_calibration_scores(inv_cov_new, XtY_new)
+
+
 class FullConformalPredictor:
     
     def __init__(

@@ -17,6 +17,7 @@ from conformal_prediction import (
     SimplifiedKNNNonconformity,
     CentroidNonconformity,
     RelativeCentroidNonconformity,
+    RidgeRegressionNonconformity,
     cal_test_split,
     train_val_test_split  # Kept for backward compatibility
 )
@@ -37,8 +38,10 @@ def parse_args():
     parser.add_argument("--alpha", type=float, default=0.02,
                        help="Significance level (target miscoverage rate)")
     parser.add_argument("--ncm", type=str, default="knn",
-                       choices=["knn", "simplified_knn", "centroid", "relative_centroid"],
-                       help="Nonconformity measure (simplified_knn is faster, centroid/relative_centroid use class centroids)")
+                       choices=["knn", "simplified_knn", "centroid", "relative_centroid", "ridge"],
+                       help="Nonconformity measure (simplified_knn is faster, centroid/relative_centroid use class centroids, ridge uses LS-SVM)")
+    parser.add_argument("--lambda_reg", type=float, default=1.0,
+                       help="Regularization parameter for ridge NCM")
     parser.add_argument("--k", type=int, default=5,
                        help="Number of neighbors for k-NN nonconformity")
     
@@ -489,6 +492,8 @@ def main():
         ncm = CentroidNonconformity()
     elif args.ncm == "relative_centroid":
         ncm = RelativeCentroidNonconformity()
+    elif args.ncm == "ridge":
+        ncm = RidgeRegressionNonconformity(lambda_reg=args.lambda_reg)
     else:
         raise ValueError(f"Unknown NCM: {args.ncm}")
     
