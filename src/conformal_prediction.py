@@ -296,6 +296,239 @@ class FullConformalPredictor:
     - Caching of calibration scores
     - Early stopping for prediction sets
     """
+
+
+class CentroidNonconformity(NonconformityMeasure):
+    """
+    Centroid Distance (Prototypical) nonconformity measure.
+    
+    Nonconformity score = distance from point to its class centroid.
+    α_i = d(x_i, μ_y) where μ_y is the mean of all calibration examples with label y.
+    
+    This is a global measure (vs local k-NN) and is computationally efficient.
+    """
+    
+    def __init__(self, metric: str = 'euclidean'):
+        self.metric = metric
+        self.X_cal = None
+        self.y_cal = None
+        self.classes = None
+        self.class_indices = {}
+        self.centroids = {}      # class -> centroid vector
+        self.class_counts = {}   # class -> number of examples
+        self.alpha0 = None
+    
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        """Compute class centroids from calibration data."""
+        self.X_cal = X_cal
+        self.y_cal = y_cal
+        self.classes = np.unique(y_cal)
+        
+        # Compute centroids for each class
+        for cls in self.classes:
+            idx = np.where(y_cal == cls)[0]
+            self.class_indices[cls] = idx
+            self.class_counts[cls] = len(idx)
+            self.centroids[cls] = X_cal[idx].mean(axis=0)
+        
+        # Compute baseline calibration scores
+        self.alpha0 = self.get_calibration_scores()
+    
+    def get_calibration_scores(self) -> np.ndarray:
+        """Compute α_i = d(x_i, μ_{y_i}) for all calibration points."""
+        if self.X_cal is None:
+            raise ValueError("Must call fit() first")
+        
+        n_cal = len(self.X_cal)
+        alpha0 = np.zeros(n_cal, dtype=float)
+        
+        for i in range(n_cal):
+            yi = self.y_cal[i]
+            centroid = self.centroids[yi]
+            alpha0[i] = np.linalg.norm(self.X_cal[i] - centroid)
+        
+        return alpha0
+    
+    def score_x(self, x: np.ndarray, y: int) -> float:
+        """Score for a single test point: d(x, μ_y)."""
+        if y not in self.centroids:
+            return float('inf')
+        return float(np.linalg.norm(x - self.centroids[y]))
+    
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
+        """
+        Compute updated calibration scores after hypothetically adding (x, y).
+        
+        When (x, y) is added:
+        - Centroid μ'_y = (n_y * μ_y + x) / (n_y + 1)
+        - All calibration points of class y get new scores with μ'_y
+        - Other classes unchanged
+        """
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        
+        updated = self.alpha0.copy()
+        
+        if y not in self.centroids:
+            return updated
+        
+        # Compute new centroid for class y
+        n_y = self.class_counts[y]
+        old_centroid = self.centroids[y]
+        new_centroid = (n_y * old_centroid + x) / (n_y + 1)
+        
+        # Update scores for all calibration points of class y
+        idx = self.class_indices[y]
+        for i in idx:
+            updated[i] = np.linalg.norm(self.X_cal[i] - new_centroid)
+        
+        return updated
+
+
+class RelativeCentroidNonconformity(NonconformityMeasure):
+    """
+    Relative Centroid Distance nonconformity measure.
+    
+    More robust to OOD data than plain centroid distance because it asks:
+    "Is this point closer to my class than to the nearest enemy class?"
+    
+    Nonconformity score:
+        S(x, y) = d(x, μ_y) - min_{y' ≠ y} d(x, μ_{y'})
+    
+    Interpretation (higher = more nonconforming, as required by CP):
+    - Positive score: d_own > d_other → farther from own class than nearest enemy (nonconforming)
+    - Zero: equidistant to own class and nearest enemy class
+    - Negative score: d_own < d_other → closer to own class than nearest enemy (conforming)
+    
+    This is more discriminative than absolute centroid distance for OOD detection.
+    """
+    
+    def __init__(self, metric: str = 'euclidean'):
+        self.metric = metric
+        self.X_cal = None
+        self.y_cal = None
+        self.classes = None
+        self.class_indices = {}
+        self.centroids = {}      # class -> centroid vector
+        self.class_counts = {}   # class -> number of examples
+        self.alpha0 = None
+        # Precomputed for vectorized operations
+        self._centroid_matrix = None  # (n_classes, d)
+        self._class_list = None       # list of class labels in order
+    
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        """Compute class centroids from calibration data."""
+        self.X_cal = X_cal
+        self.y_cal = y_cal
+        self.classes = np.unique(y_cal)
+        
+        # Compute centroids for each class
+        for cls in self.classes:
+            idx = np.where(y_cal == cls)[0]
+            self.class_indices[cls] = idx
+            self.class_counts[cls] = len(idx)
+            self.centroids[cls] = X_cal[idx].mean(axis=0)
+        
+        # Build centroid matrix for vectorized operations
+        self._class_list = list(self.classes)
+        self._centroid_matrix = np.array([self.centroids[c] for c in self._class_list])
+        
+        # Compute baseline calibration scores
+        self.alpha0 = self._compute_scores_vectorized(X_cal, y_cal, self._centroid_matrix)
+    
+    def _compute_scores_vectorized(self, X: np.ndarray, y: np.ndarray, centroid_matrix: np.ndarray) -> np.ndarray:
+        """
+        Vectorized computation of S(x, y) = d(x, μ_y) - min_{y' ≠ y} d(x, μ_{y'}) for all points.
+        
+        Args:
+            X: (n, d) feature matrix
+            y: (n,) labels
+            centroid_matrix: (n_classes, d) centroid matrix
+        
+        Returns:
+            (n,) scores
+        """
+        n = len(X)
+        n_classes = len(self._class_list)
+        
+        # Compute all pairwise distances: (n, n_classes)
+        # ||x - c||^2 = ||x||^2 + ||c||^2 - 2 * x @ c.T
+        X_sq = np.sum(X ** 2, axis=1, keepdims=True)  # (n, 1)
+        C_sq = np.sum(centroid_matrix ** 2, axis=1, keepdims=True).T  # (1, n_classes)
+        dists_sq = X_sq + C_sq - 2 * X @ centroid_matrix.T  # (n, n_classes)
+        dists_sq = np.maximum(dists_sq, 0)  # numerical safety
+        dists = np.sqrt(dists_sq)  # (n, n_classes)
+        
+        # Map labels to indices in centroid_matrix
+        class_to_idx = {c: i for i, c in enumerate(self._class_list)}
+        y_idx = np.array([class_to_idx[yi] for yi in y])
+        
+        # d_own: distance to own class centroid
+        d_own = dists[np.arange(n), y_idx]  # (n,)
+        
+        # d_other_min: min distance to any other class centroid
+        # Set own-class distance to inf so it's not selected as min
+        dists_masked = dists.copy()
+        dists_masked[np.arange(n), y_idx] = np.inf
+        d_other_min = np.min(dists_masked, axis=1)  # (n,)
+        
+        return d_own - d_other_min
+    
+    def get_calibration_scores(self) -> np.ndarray:
+        """Return precomputed calibration scores."""
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+    
+    def score_x(self, x: np.ndarray, y: int) -> float:
+        """Score for a single test point."""
+        if y not in self.centroids:
+            return float('inf')
+        
+        d_own = np.linalg.norm(x - self.centroids[y])
+        
+        # Find minimum distance to other class centroids
+        d_others = [np.linalg.norm(x - c) for cls, c in self.centroids.items() if cls != y]
+        
+        if len(d_others) == 0:
+            return d_own  # No other classes, fall back to absolute distance
+        
+        return d_own - min(d_others)
+    
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
+        """
+        Compute updated calibration scores after hypothetically adding (x, y).
+        
+        Vectorized implementation for Full CP efficiency.
+        
+        When (x, y) is added:
+        - Centroid μ'_y = (n_y * μ_y + x) / (n_y + 1)
+        - ALL calibration points need score updates because:
+          - Points of class y: their d(x_i, μ_y) changes
+          - Points of other classes: their min distance to "enemy" classes may change
+            if class y was their nearest enemy
+        """
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        
+        if y not in self.centroids:
+            return self.alpha0.copy()
+        
+        # Compute new centroid for class y
+        n_y = self.class_counts[y]
+        old_centroid = self.centroids[y]
+        new_centroid = (n_y * old_centroid + x) / (n_y + 1)
+        
+        # Build updated centroid matrix (only one centroid changes)
+        y_idx = self._class_list.index(y)
+        updated_centroid_matrix = self._centroid_matrix.copy()
+        updated_centroid_matrix[y_idx] = new_centroid
+        
+        # Vectorized recomputation for ALL calibration points
+        return self._compute_scores_vectorized(self.X_cal, self.y_cal, updated_centroid_matrix)
+
+
+class FullConformalPredictor:
     
     def __init__(
         self,

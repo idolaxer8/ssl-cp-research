@@ -15,6 +15,8 @@ from conformal_prediction import (
     FullConformalPredictor,
     KNNNonconformity,
     SimplifiedKNNNonconformity,
+    CentroidNonconformity,
+    RelativeCentroidNonconformity,
     cal_test_split,
     train_val_test_split  # Kept for backward compatibility
 )
@@ -28,15 +30,15 @@ def parse_args():
                        help="Path to embeddings .pt file")
     
     # Split ratios (for Full CP, no training set needed)
-    parser.add_argument("--cal_ratio", type=float, default=0.85,
+    parser.add_argument("--cal_ratio", type=float, default=0.5,
                        help="Fraction of data for calibration (rest goes to test)")
     
     # Conformal prediction
-    parser.add_argument("--alpha", type=float, default=0.1,
+    parser.add_argument("--alpha", type=float, default=0.02,
                        help="Significance level (target miscoverage rate)")
     parser.add_argument("--ncm", type=str, default="knn",
-                       choices=["knn", "simplified_knn"],
-                       help="Nonconformity measure (simplified_knn is faster)")
+                       choices=["knn", "simplified_knn", "centroid", "relative_centroid"],
+                       help="Nonconformity measure (simplified_knn is faster, centroid/relative_centroid use class centroids)")
     parser.add_argument("--k", type=int, default=5,
                        help="Number of neighbors for k-NN nonconformity")
     
@@ -47,12 +49,16 @@ def parse_args():
                        help="Save prediction sets to file")
     parser.add_argument("--compare_methods", action="store_true",
                        help="Compare runtime between k-NN and simplified k-NN")
+    parser.add_argument("--compare_k", action="store_true",
+                       help="Compare performance across different k values")
     parser.add_argument("--compare_with_baseline", action="store_true",
                        help="Compare SSL embeddings vs raw pixel features (baseline)")
     
     # Data paths
     parser.add_argument("--data_dir", type=str, default="data",
                        help="Directory containing raw images (for baseline comparison)")
+    parser.add_argument("--num_per_class", type=int, default=None,
+                       help="Limit number of images per class for baseline comparison (None = match embeddings)")
     
     # Misc
     parser.add_argument("--seed", type=int, default=42,
@@ -97,7 +103,7 @@ def plot_set_size_distribution(set_sizes: np.ndarray, alpha: float, output_dir: 
 
 def plot_coverage_by_alpha(X_cal, y_cal, X_test, y_test, ncm, output_dir: str):
     """Plot coverage and set size vs alpha."""
-    alphas = np.linspace(0.05, 0.2, 3)
+    alphas = np.linspace(0.01, 0.2, 5)
     coverages = []
     avg_sizes = []
     
@@ -198,38 +204,124 @@ def analyze_per_class_coverage(y_test, prediction_sets, output_dir: str):
     return per_class_coverage, per_class_avg_size
 
 
-def load_raw_pixel_features(data_dir: str, labels: np.ndarray) -> np.ndarray:
+def compare_k_values(X_cal, y_cal, X_test, y_test, args, output_dir: str):
+    """Compare conformal prediction performance across different k values."""
+    k_values = [1, 3, 5, 7, 10, 15, 20]
+    
+    print("\n" + "="*70)
+    print("PERFORMANCE vs k (Number of Neighbors)")
+    print("="*70)
+    
+    results_by_k = {}
+    
+    for k in k_values:
+        print(f"\nEvaluating k={k}...")
+        
+        if args.ncm == "simplified_knn":
+            ncm = SimplifiedKNNNonconformity(k=k)
+        else:
+            ncm = KNNNonconformity(k=k, metric='euclidean')
+        
+        cp = FullConformalPredictor(ncm, alpha=args.alpha)
+        cp.calibrate(X_cal, y_cal)
+        metrics = cp.evaluate(X_test, y_test, verbose=False)
+        
+        results_by_k[k] = metrics
+        
+        print(f"  Coverage: {metrics['coverage']:.3f}")
+        print(f"  Avg set size: {metrics['avg_set_size']:.3f}")
+        print(f"  Singleton rate: {metrics['singleton_rate']:.3f}")
+    
+    # Plot results
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+    
+    coverages = [results_by_k[k]['coverage'] for k in k_values]
+    set_sizes = [results_by_k[k]['avg_set_size'] for k in k_values]
+    singleton_rates = [results_by_k[k]['singleton_rate'] for k in k_values]
+    empty_rates = [results_by_k[k]['empty_set_rate'] for k in k_values]
+    
+    # Coverage vs k
+    ax1.plot(k_values, coverages, 'o-', linewidth=2, markersize=8)
+    ax1.axhline(y=1-args.alpha, color='r', linestyle='--', label=f'Target (1-α={1-args.alpha:.3f})')
+    ax1.set_xlabel('k (neighbors)', fontsize=12)
+    ax1.set_ylabel('Coverage', fontsize=12)
+    ax1.set_title('Coverage vs k', fontsize=14)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Avg set size vs k
+    ax2.plot(k_values, set_sizes, 'o-', linewidth=2, markersize=8, color='green')
+    ax2.set_xlabel('k (neighbors)', fontsize=12)
+    ax2.set_ylabel('Avg Set Size', fontsize=12)
+    ax2.set_title('Efficiency vs k', fontsize=14)
+    ax2.grid(True, alpha=0.3)
+    
+    # Singleton rate vs k
+    ax3.plot(k_values, singleton_rates, 'o-', linewidth=2, markersize=8, color='orange')
+    ax3.set_xlabel('k (neighbors)', fontsize=12)
+    ax3.set_ylabel('Singleton Rate', fontsize=12)
+    ax3.set_title('Singleton Rate vs k', fontsize=14)
+    ax3.grid(True, alpha=0.3)
+    
+    # Empty set rate vs k
+    ax4.plot(k_values, empty_rates, 'o-', linewidth=2, markersize=8, color='red')
+    ax4.set_xlabel('k (neighbors)', fontsize=12)
+    ax4.set_ylabel('Empty Set Rate', fontsize=12)
+    ax4.set_title('Empty Set Rate vs k', fontsize=14)
+    ax4.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    save_path = Path(output_dir) / "performance_vs_k.png"
+    plt.savefig(save_path, dpi=150)
+    print(f"\nSaved plot to {save_path}")
+    plt.close()
+    
+    # Save results
+    k_comparison_path = Path(output_dir) / "k_comparison.pt"
+    torch.save(results_by_k, k_comparison_path)
+    print(f"Saved k comparison to {k_comparison_path}")
+    print("="*70)
+    
+    return results_by_k
+
+
+def load_raw_pixel_features(data_dir: str, num_per_class: int):
     """
-    Load raw pixel features from image folder.
-    Assumes images organized as: data/class_name/*.png
-    Returns flattened, normalized pixel features matching the label order.
+    Load raw pixel features from ImageFolder, selecting first `num_per_class` images per class.
+    Returns (features, labels) where features are L2-normalized flattened pixels (n_images, 3072).
     """
     from torchvision.datasets import ImageFolder
     from torchvision import transforms
-    
-    # Create dataset
+
     transform = transforms.Compose([
-        transforms.Resize((32, 32)),  # CIFAR-10 size
+        transforms.Resize((32, 32)),
         transforms.ToTensor(),
     ])
     dataset = ImageFolder(root=data_dir, transform=transform)
-    
-    # Collect features in same order as embeddings
-    features_list = []
-    for idx in range(len(dataset)):
-        img, _ = dataset[idx]
-        # Flatten: (3, 32, 32) -> (3072,)
-        features_list.append(img.numpy().flatten())
-    
-    features = np.array(features_list, dtype=np.float32)
-    
-    # Normalize to unit norm for fair comparison
-    features = features / (np.linalg.norm(features, axis=1, keepdims=True) + 1e-8)
-    
-    return features
+    n_classes = len(dataset.classes)
+
+    # Select first num_per_class images per class
+    class_count = {c: 0 for c in range(n_classes)}
+    indices = []
+    labels = []
+    for idx, (_, label) in enumerate(dataset.samples):
+        if class_count[label] < num_per_class:
+            indices.append(idx)
+            labels.append(label)
+            class_count[label] += 1
+        if all(c >= num_per_class for c in class_count.values()):
+            break
+
+    if len(indices) != num_per_class * n_classes:
+        raise ValueError(f"Not enough images: need {num_per_class} per class, got {class_count}")
+
+    features = np.array([dataset[i][0].numpy().flatten() for i in indices], dtype=np.float32)
+    features /= (np.linalg.norm(features, axis=1, keepdims=True) + 1e-8)
+    labels = np.array(labels)
+    return features, labels
 
 
-def compare_ssl_vs_baseline(X_ssl, X_raw, y, args, output_dir: str):
+def compare_ssl_vs_baseline(X_ssl, y_ssl, X_raw, y_raw, args, output_dir: str):
     """
     Compare CP performance on SSL embeddings vs raw pixel features.
     Applies PCA to raw features to match SSL embedding dimension for fair comparison.
@@ -240,15 +332,15 @@ def compare_ssl_vs_baseline(X_ssl, X_raw, y, args, output_dir: str):
     
     # Report dimensions
     print(f"\nOriginal dimensions:")
-    print(f"  SSL embeddings: {X_ssl.shape[1]}D")
-    print(f"  Raw pixels: {X_raw.shape[1]}D")
+    print(f"  SSL embeddings: {X_ssl.shape[0]} samples, {X_ssl.shape[1]}D")
+    print(f"  Raw pixels: {X_raw.shape[0]} samples, {X_raw.shape[1]}D")
     
-    # Use consistent split for both
-    X_cal_ssl, y_cal, X_test_ssl, y_test = cal_test_split(
-        X_ssl, y, cal_ratio=args.cal_ratio, random_state=args.seed
+    # Use consistent split for both (same seed ensures same split pattern)
+    X_cal_ssl, y_cal_ssl, X_test_ssl, y_test_ssl = cal_test_split(
+        X_ssl, y_ssl, cal_ratio=args.cal_ratio, random_state=args.seed
     )
-    X_cal_raw, _, X_test_raw, _ = cal_test_split(
-        X_raw, y, cal_ratio=args.cal_ratio, random_state=args.seed
+    X_cal_raw, y_cal_raw, X_test_raw, y_test_raw = cal_test_split(
+        X_raw, y_raw, cal_ratio=args.cal_ratio, random_state=args.seed
     )
     
     # Apply PCA to raw features to match SSL dimension (fair comparison)
@@ -275,9 +367,9 @@ def compare_ssl_vs_baseline(X_ssl, X_raw, y, args, output_dir: str):
     
     comparison_results = {}
     
-    for name, X_cal, X_test in [
-        ("Raw Pixels (Baseline + PCA)", X_cal_raw_pca, X_test_raw_pca),
-        ("SSL Embeddings (DINOv2)", X_cal_ssl, X_test_ssl),
+    for name, X_cal, X_test, y_cal, y_test in [
+        ("Raw Pixels (Baseline + PCA)", X_cal_raw_pca, X_test_raw_pca, y_cal_raw, y_test_raw),
+        ("SSL Embeddings", X_cal_ssl, X_test_ssl, y_cal_ssl, y_test_ssl),
     ]:
         print(f"\nEvaluating {name}...")
         print(f"  Calibration set: {len(X_cal)}, Test set: {len(X_test)}")
@@ -309,7 +401,7 @@ def compare_ssl_vs_baseline(X_ssl, X_raw, y, args, output_dir: str):
     print("="*70)
     
     baseline = comparison_results["Raw Pixels (Baseline + PCA)"]
-    ssl = comparison_results["SSL Embeddings (DINOv2)"]
+    ssl = comparison_results["SSL Embeddings"]
     
     # Coverage improvement
     cov_improvement = (ssl['coverage'] - baseline['coverage']) / (baseline['coverage'] + 1e-8) * 100
@@ -333,8 +425,28 @@ def compare_ssl_vs_baseline(X_ssl, X_raw, y, args, output_dir: str):
     print("="*70)
     
     # Save comparison results
-    comparison_path = Path(output_dir) / "ssl_vs_baseline_comparison.pt"
-    torch.save(comparison_results, comparison_path)
+    comparison_path = Path(output_dir) / "ssl_vs_baseline_comparison.txt"
+    with open(comparison_path, "w") as f:
+        f.write("SSL vs Raw Baseline Comparison\n")
+        f.write("="*60 + "\n\n")
+        for name, metrics in comparison_results.items():
+            f.write(f"{name}\n")
+            f.write(f"  Coverage: {metrics['coverage']:.4f} (target {metrics['target_coverage']:.4f})\n")
+            f.write(f"  Avg set size: {metrics['avg_set_size']:.4f}\n")
+            f.write(f"  Median set size: {metrics['median_set_size']:.4f}\n")
+            f.write(f"  Singleton rate: {metrics['singleton_rate']:.4f}\n")
+            f.write(f"  Singleton accuracy: {metrics['singleton_accuracy']:.4f}\n")
+            f.write(f"  Empty set rate: {metrics['empty_set_rate']:.4f}\n")
+            f.write("\n")
+        f.write("Improvements (SSL over Baseline)\n")
+        f.write("="*60 + "\n")
+        f.write(f"Coverage delta (%): {cov_improvement:+.2f}\n")
+        f.write(f"Avg set size delta (% reduction): {setsize_improvement:+.2f}\n")
+        f.write(f"Singleton rate delta (%): {singleton_improvement:+.2f}\n")
+        if baseline['empty_set_rate'] > 0:
+            f.write(f"Empty set rate delta (% reduction): {empty_improvement:+.2f}\n")
+        else:
+            f.write("Empty set rate: baseline already 0.0000\n")
     print(f"\nSaved comparison to {comparison_path}")
     
     return comparison_results
@@ -373,6 +485,10 @@ def main():
         ncm = KNNNonconformity(k=args.k, metric='euclidean')
     elif args.ncm == "simplified_knn":
         ncm = SimplifiedKNNNonconformity(k=args.k)
+    elif args.ncm == "centroid":
+        ncm = CentroidNonconformity()
+    elif args.ncm == "relative_centroid":
+        ncm = RelativeCentroidNonconformity()
     else:
         raise ValueError(f"Unknown NCM: {args.ncm}")
     
@@ -417,18 +533,21 @@ def main():
         print(f"\nSpeedup: {speedup:.2f}x ({comparison_results['Simplified k-NN']['prediction_time']/comparison_results['k-NN']['prediction_time']*100:.1f}% of k-NN time)")
         print("="*70)
     
+    # 3b2. Optional: Compare different k values
+    if args.compare_k:
+        print(f"\n[3b2] Comparing performance across different k values...")
+        compare_k_values(X_cal, y_cal, X_test, y_test, args, args.output_dir)
+    
     # 3c. Optional: Compare SSL vs Baseline (raw pixels)
     if args.compare_with_baseline:
+        if args.num_per_class is None:
+            raise ValueError("--num_per_class is required for baseline comparison")
         print(f"\n[3c] Loading raw pixel features for baseline comparison...")
-        try:
-            raw_features = load_raw_pixel_features(args.data_dir, labels)
-            print(f"  Raw features shape: {raw_features.shape}")
-            
-            # Run comparison
-            compare_ssl_vs_baseline(embeddings, raw_features, labels, args, args.output_dir)
-        except Exception as e:
-            print(f"  ⚠️  Could not load raw features for baseline: {e}")
-            print(f"     Skipping baseline comparison. Make sure --data_dir points to images folder.")
+        raw_features, raw_labels = load_raw_pixel_features(args.data_dir, args.num_per_class)
+        print(f"  Raw features shape: {raw_features.shape}")
+        # Use first num_per_class*n_classes from SSL embeddings to match raw
+        n_raw = len(raw_features)
+        compare_ssl_vs_baseline(embeddings[:n_raw], labels[:n_raw], raw_features, raw_labels, args, args.output_dir)
     
     # 4. Run Full Conformal Prediction
     print(f"\n[4/5] Running Full Conformal Prediction (α={args.alpha})...")
@@ -460,15 +579,25 @@ def main():
     )
     
     # Save results
-    results_dict = {
-        'metrics': metrics,
-        'per_class_coverage': per_class_cov,
-        'per_class_avg_size': per_class_size,
-        'args': vars(args)
-    }
-    
-    results_path = Path(args.output_dir) / "cp_results.pt"
-    torch.save(results_dict, results_path)
+    results_path = Path(args.output_dir) / "cp_results.txt"
+    with open(results_path, "w") as f:
+        f.write("Conformal Prediction Results\n")
+        f.write("="*60 + "\n\n")
+        f.write("Overall Metrics\n")
+        f.write(f"  Alpha: {metrics['alpha']:.4f}\n")
+        f.write(f"  Target coverage: {metrics['target_coverage']:.4f}\n")
+        f.write(f"  Coverage: {metrics['coverage']:.4f}\n")
+        f.write(f"  Avg set size: {metrics['avg_set_size']:.4f}\n")
+        f.write(f"  Median set size: {metrics['median_set_size']:.4f}\n")
+        f.write(f"  Singleton rate: {metrics['singleton_rate']:.4f}\n")
+        f.write(f"  Singleton accuracy: {metrics['singleton_accuracy']:.4f}\n")
+        f.write(f"  Empty set rate: {metrics['empty_set_rate']:.4f}\n\n")
+        f.write("Per-class Coverage\n")
+        for cls, cov in sorted(per_class_cov.items()):
+            f.write(f"  Class {cls}: coverage={cov:.4f}, avg_set_size={per_class_size[cls]:.4f}\n")
+        f.write("\nArgs\n")
+        for k, v in vars(args).items():
+            f.write(f"  {k}: {v}\n")
     print(f"\nSaved results to {results_path}")
     
     # Optionally save predictions

@@ -7,21 +7,33 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
+# Model presets: short name -> (timm_model_name, input_size)
+MODEL_PRESETS = {
+    "dinov2-base": ("vit_base_patch14_dinov2.lvd142m", 518),
+    "dinov2-large": ("vit_large_patch14_dinov2.lvd142m", 518),
+    "dinov2-giant": ("vit_giant_patch14_dinov2.lvd142m", 518),
+    "clip-base": ("vit_base_patch16_clip_224.openai", 224),
+    "clip-large": ("vit_large_patch14_clip_224.openai", 224),
+    "beit-base": ("beit_base_patch16_224.in22k_ft_in22k_in1k", 224),
+    "beitv2-base": ("beitv2_base_patch16_224.in1k_ft_in22k_in1k", 224),
+}
+
 def get_args():
+    preset_list = ", ".join(MODEL_PRESETS.keys())
     parser = argparse.ArgumentParser(description="Extract SSL Features for Conformal Prediction")
     parser.add_argument("--data_dir", type=str, required=True, help="Path to folder containing images (e.g. data/train)")
     parser.add_argument("--output_name", type=str, default="embeddings.pt", help="Filename for saved tensors")
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--model_name", type=str, default="vit_base_patch14_dinov2.lvd142m", help="timm model name")
+    parser.add_argument("--model", type=str, default="dinov2-base",
+                        help=f"Model preset: {preset_list}, or full timm model name")
     parser.add_argument("--num_per_class", type=int, default=None,
                         help="Limit number of images per class (None = all)")
     return parser.parse_args()
 
-def get_transform():
-    # Standard ImageNet normalization (works well for DINOv2)
+def get_transform(input_size: int):
     return transforms.Compose([
-        transforms.Resize(518),
-        transforms.CenterCrop(518),
+        transforms.Resize(input_size),
+        transforms.CenterCrop(input_size),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
@@ -31,10 +43,17 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
+    # Resolve model preset or use as timm name directly
+    if args.model in MODEL_PRESETS:
+        model_name, input_size = MODEL_PRESETS[args.model]
+        print(f"Using preset '{args.model}' -> {model_name} (input: {input_size}x{input_size})")
+    else:
+        model_name, input_size = args.model, 224  # default input size for unknown models
+        print(f"Using custom timm model: {model_name} (input: {input_size}x{input_size})")
+
     # 1. Load SSL Model
-    print(f"Loading model: {args.model_name}...")
-    # num_classes=0 tells timm to return the raw pooling layer (features), not logits
-    model = timm.create_model(args.model_name, pretrained=True, num_classes=0)
+    print(f"Loading model: {model_name}...")
+    model = timm.create_model(model_name, pretrained=True, num_classes=0)
     model = model.to(device)
     model.eval()
 
@@ -42,7 +61,7 @@ def main():
     if not os.path.exists(args.data_dir):
         raise FileNotFoundError(f"Data directory not found: {args.data_dir}")
     
-    dataset = datasets.ImageFolder(root=args.data_dir, transform=get_transform())
+    dataset = datasets.ImageFolder(root=args.data_dir, transform=get_transform(input_size))
     # Optionally limit number of images per class by creating a Subset
     if args.num_per_class is not None:
         class_counts = {i: 0 for i in range(len(dataset.classes))}
