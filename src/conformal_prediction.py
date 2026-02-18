@@ -32,13 +32,23 @@ class NonconformityMeasure:
         """
         raise NotImplementedError
 
+    def score_x_cv(self, x: np.ndarray, y: int) -> float:
+        """
+        Score a single point for CV+/Jackknife+ (no hypothetical addition).
+
+        For most NCMs this is identical to score_x. Override in NCMs where
+        score_x includes a hypothetical test-point addition (e.g. Ridge with
+        Sherman-Morrison).
+        """
+        return self.score_x(x, y)
+
 
 class KNNNonconformity(NonconformityMeasure):
     """
     k-Nearest Neighbors nonconformity measure (Cherubin et al. 2021).
-    
-    Nonconformity score = sum(k distances to own class) / sum(k distances to other classes)
-    
+
+    Nonconformity score = min distance to own class / min distance to other class
+
     Higher score = far from own class and/or close to other classes = more nonconforming.
     This ratio-based approach is more discriminative than distance alone.
     """
@@ -281,22 +291,6 @@ class SimplifiedKNNNonconformity(NonconformityMeasure):
 
         return updated
 
-class FullConformalPredictor:
-    """
-    Full Conformal Prediction with optimizations from Cherubin et al. 2021.
-    
-    For each test example and each candidate label:
-    1. Compute nonconformity score assuming that label
-    2. Compare with calibration scores
-    3. Compute p-value: fraction of calibration examples with score >= test score
-    4. Include label in prediction set if p-value > significance level α
-    
-    Optimizations:
-    - Vectorized operations where possible
-    - Caching of calibration scores
-    - Early stopping for prediction sets
-    """
-
 
 class CentroidNonconformity(NonconformityMeasure):
     """
@@ -536,6 +530,7 @@ class RidgeRegressionNonconformity(NonconformityMeasure):
     1. Primal form: inverts (d×d) matrix instead of (N×N) - efficient for d << N
     2. Multi-class: One-vs-Rest with {-1, +1} encoding in a single matrix operation
     3. Sherman-Morrison: O(d²) instant updates for Full CP
+    4. Fast re-scoring: O(N×d) instead of O(N×d×n_classes) for many-class problems
     
     Nonconformity score: s(x, y) = -f_y(x)
     where f_y(x) is the Ridge regression prediction for class y.
@@ -545,6 +540,16 @@ class RidgeRegressionNonconformity(NonconformityMeasure):
     - Positive score: model does NOT predict class y (nonconforming)
     
     Reference: https://arxiv.org/pdf/2102.03236
+    
+    Optimization for many classes (e.g., CIFAR-100):
+    Instead of recomputing W_new and scoring all classes, we use:
+        W_new = W + outer(u, delta)
+        where delta = (y_vec - u @ XtY) / denom
+    
+    For re-scoring calibration points, we only compute the true-class prediction:
+        score_i_new = alpha0_i - (x_i @ u) * delta[y_cal_indices[i]]
+    
+    This reduces complexity from O(N × d × n_classes) to O(N × d).
     """
     
     def __init__(self, lambda_reg: float = 1.0):
@@ -604,57 +609,29 @@ class RidgeRegressionNonconformity(NonconformityMeasure):
         # 4. Compute Cross-Correlation: B = X^T Y
         self.XtY = X_cal.T @ Y_onehot
         
-        # 5. Cache calibration scores
-        self.alpha0 = self._compute_calibration_scores(self.inv_cov, self.XtY)
+        # 5. Cache calibration scores using optimized method
+        self.alpha0 = self._compute_calibration_scores_optimized()
     
-    def _compute_weights(self, inv_cov: np.ndarray, XtY: np.ndarray) -> np.ndarray:
-        """Compute weights: W = A^{-1} B, shape (d, n_classes)"""
-        return inv_cov @ XtY
-    
-    def _compute_calibration_scores(self, inv_cov: np.ndarray, XtY: np.ndarray) -> np.ndarray:
+    def _compute_calibration_scores_optimized(self) -> np.ndarray:
         """
-        Compute scores for all calibration points (vectorized).
-        Score = -prediction for true class.
+        Compute scores for all calibration points efficiently.
+        Only computes the prediction for the TRUE class of each point.
+        
+        Complexity: O(N × d) instead of O(N × d × n_classes)
         """
-        W = self._compute_weights(inv_cov, XtY)
+        # W = inv_cov @ XtY, shape (d, n_classes)
+        W = self.inv_cov @ self.XtY
         
-        # Predictions: (N, n_classes)
-        preds = self.X_cal @ W
+        # For each calibration point i, we only need W[:, y_cal_indices[i]]
+        # Using advanced indexing: W[:, y_cal_indices] has shape (d, N)
+        # Then element-wise multiply with X_cal.T and sum
+        W_true_classes = W[:, self.y_cal_indices]  # (d, N)
         
-        # Extract predictions for true classes using advanced indexing
-        true_class_preds = preds[np.arange(len(preds)), self.y_cal_indices]
+        # true_class_preds[i] = X_cal[i] @ W[:, y_cal_indices[i]]
+        # = sum_j X_cal[i, j] * W[j, y_cal_indices[i]]
+        true_class_preds = np.sum(self.X_cal * W_true_classes.T, axis=1)  # (N,)
         
         return -true_class_preds
-    
-    def _sherman_morrison_update(self, x: np.ndarray, y: int):
-        """
-        Compute updated inverse covariance and XtY after adding (x, y).
-        
-        Sherman-Morrison formula:
-        (A + xx^T)^{-1} = A^{-1} - (A^{-1} x x^T A^{-1}) / (1 + x^T A^{-1} x)
-        
-        Returns:
-            (inv_cov_new, XtY_new) - Updated matrices
-        """
-        # Sherman-Morrison update for inverse covariance
-        u = self.inv_cov @ x  # (d,)
-        denom = 1.0 + x @ u
-        
-        # Numerical stability check
-        if abs(denom) < 1e-10:
-            # Fallback: return original (shouldn't happen in practice)
-            inv_cov_new = self.inv_cov.copy()
-        else:
-            inv_cov_new = self.inv_cov - np.outer(u, u) / denom
-        
-        # Update XtY: add contribution of new point
-        y_target_vec = -1.0 * np.ones(self.n_classes)
-        cls_idx = self.class_to_idx[y]
-        y_target_vec[cls_idx] = 1.0
-        
-        XtY_new = self.XtY + np.outer(x, y_target_vec)
-        
-        return inv_cov_new, XtY_new
     
     def get_calibration_scores(self) -> np.ndarray:
         """Return cached calibration scores."""
@@ -666,30 +643,74 @@ class RidgeRegressionNonconformity(NonconformityMeasure):
         """
         Score for test point (x, y) AFTER hypothetically adding it to calibration set.
         
-        For Full CP correctness, we must score the test point using the UPDATED model
-        (after adding the test point), not the original model.
+        Optimized: Only computes the single column W_new[:, y] needed.
+        
+        Derivation:
+            W_new = W + outer(u, delta), where delta = (y_vec - u @ XtY) / denom
+            score = -x @ W_new[:, y] = -x @ W[:, y] - (x @ u) * delta[y]
+        
+        Since we don't cache W, we compute W[:, y] = inv_cov @ XtY[:, y] on the fly.
+        Complexity: O(d²) instead of O(d² × n_classes)
         """
         if y not in self.class_to_idx:
             return float('inf')
         
-        # Get updated model via Sherman-Morrison
-        inv_cov_new, XtY_new = self._sherman_morrison_update(x, y)
-        
-        # Compute new weights
-        W_new = self._compute_weights(inv_cov_new, XtY_new)
-        
-        # Score for test point with updated model
         cls_idx = self.class_to_idx[y]
-        pred = x @ W_new[:, cls_idx]
         
-        return -pred
-    
+        # Sherman-Morrison quantities
+        u = self.inv_cov @ x  # (d,)
+        denom = 1.0 + x @ u
+        
+        if abs(denom) < 1e-10:
+            # Fallback: use original model
+            W_y = self.inv_cov @ self.XtY[:, cls_idx]
+            return -float(x @ W_y)
+        
+        # Original weight for class y: W[:, y] = inv_cov @ XtY[:, y]
+        W_y = self.inv_cov @ self.XtY[:, cls_idx]  # (d,)
+        orig_pred = x @ W_y
+        
+        # Delta for class y
+        # y_vec has +1 at cls_idx, -1 elsewhere
+        # delta[cls_idx] = (1.0 - (u @ XtY)[cls_idx]) / denom
+        u_dot_XtY_y = u @ self.XtY[:, cls_idx]  # scalar
+        delta_y = (1.0 - u_dot_XtY_y) / denom
+        
+        # Updated prediction
+        pred_new = orig_pred + (x @ u) * delta_y
+        
+        return -float(pred_new)
+
+    def score_x_cv(self, x: np.ndarray, y: int) -> float:
+        """
+        Score for CV+/Jackknife+: use the existing model WITHOUT Sherman-Morrison update.
+
+        Returns -f_y(x) = -(x @ W[:, y]) where W = inv_cov @ XtY.
+        Complexity: O(d²)
+        """
+        if y not in self.class_to_idx:
+            return float('inf')
+        cls_idx = self.class_to_idx[y]
+        W_y = self.inv_cov @ self.XtY[:, cls_idx]
+        return -float(x @ W_y)
+
     def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
         """
         Compute updated calibration scores after hypothetically adding (x, y).
         
-        Uses Sherman-Morrison for O(d²) update instead of O(d³) matrix inversion.
-        All calibration points are re-scored with the updated model.
+        OPTIMIZED VERSION: O(N × d) instead of O(N × d × n_classes)
+        
+        Key insight: We only need the prediction for each point's TRUE class.
+        Using Sherman-Morrison, the weight update is:
+            W_new = W + outer(u, delta)
+            where u = inv_cov @ x, delta = (y_vec - u @ XtY) / denom
+        
+        For calibration point i with true class c_i:
+            score_i_new = -x_i @ W_new[:, c_i]
+                        = -x_i @ W[:, c_i] - (x_i @ u) * delta[c_i]
+                        = alpha0[i] - (x_i @ u) * delta[c_i]
+        
+        This avoids computing the full W_new matrix!
         """
         if self.alpha0 is None:
             raise ValueError("Must call fit() first")
@@ -697,11 +718,450 @@ class RidgeRegressionNonconformity(NonconformityMeasure):
         if y not in self.class_to_idx:
             return np.inf * np.ones(len(self.X_cal))
         
-        # Get updated model via Sherman-Morrison
-        inv_cov_new, XtY_new = self._sherman_morrison_update(x, y)
+        cls_idx = self.class_to_idx[y]
         
-        # Re-score all calibration points with updated model
-        return self._compute_calibration_scores(inv_cov_new, XtY_new)
+        # Sherman-Morrison quantities
+        u = self.inv_cov @ x  # (d,)
+        denom = 1.0 + x @ u
+        
+        if abs(denom) < 1e-10:
+            # Numerical issue: return original scores
+            return self.alpha0.copy()
+        
+        # Compute delta for ALL classes (needed because calibration points have various classes)
+        # y_vec: +1 at cls_idx, -1 elsewhere
+        y_target_vec = -1.0 * np.ones(self.n_classes)
+        y_target_vec[cls_idx] = 1.0
+        
+        u_dot_XtY = u @ self.XtY  # (n_classes,) - O(d × n_classes)
+        delta = (y_target_vec - u_dot_XtY) / denom  # (n_classes,)
+        
+        # Compute X_cal @ u: dot product of each calibration point with u
+        dots = self.X_cal @ u  # (N,) - O(N × d)
+        
+        # Get the delta value for each calibration point's TRUE class
+        delta_per_point = delta[self.y_cal_indices]  # (N,)
+        
+        # Updated scores: alpha0[i] - dots[i] * delta[y_cal_indices[i]]
+        return self.alpha0 - dots * delta_per_point
+
+
+class FastNNRatio(NonconformityMeasure):
+    """
+    Optimized Nearest Neighbor Ratio NCM using Lookup Tables.
+    
+    Designed to work well in the few-shot regime (as few as 1 example per class)
+    by using a contrastive ratio approach.
+    
+    Nonconformity score:
+        α_i = min_{j: y_j = y_i, j ≠ i} d(x_i, x_j) / min_{k: y_k ≠ y_i} d(x_i, x_k)
+    
+    Interpretation (higher = more nonconforming):
+    - Ratio > 1: closer to enemy class than own class (nonconforming)
+    - Ratio < 1: closer to own class than enemy class (conforming)
+    - Ratio = 1: equidistant
+    
+    The ratio automatically handles density variations - if a region is sparse,
+    both numerator and denominator grow, but the ratio remains meaningful.
+    
+    Optimization:
+    - Precompute lookup tables for min distances during fit() - O(N²) once
+    - Update scores in O(N) using vectorized comparisons against lookup tables
+    - No neighbor re-sorting needed at test time
+    """
+    
+    def __init__(self):
+        # Calibration data
+        self.X_cal = None
+        self.y_cal = None
+        
+        # LOOKUP TABLES (The Optimization)
+        # These store the current minimum distance for every sample
+        self.lookup_same = None   # shape (n_cal,): dist to nearest neighbor of SAME class
+        self.lookup_other = None  # shape (n_cal,): dist to nearest neighbor of DIFF class
+        
+        # Baseline alpha scores
+        self.alpha0 = None
+    
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        """
+        Build the Lookup Tables using vectorized operations.
+        
+        Complexity: O(N²) - done once during calibration.
+        """
+        self.X_cal = X_cal
+        self.y_cal = y_cal
+        n_cal = len(X_cal)
+        
+        # 1. Compute full distance matrix once
+        D = euclidean_distances(X_cal, X_cal)
+        np.fill_diagonal(D, np.inf)  # Ignore self-matches
+        
+        # 2. Initialize Lookup Tables
+        self.lookup_same = np.full(n_cal, np.inf)
+        self.lookup_other = np.full(n_cal, np.inf)
+        
+        # 3. Fill Tables using vectorized operations per class
+        classes = np.unique(y_cal)
+        for c in classes:
+            # Indices for this class and other classes
+            idx_same = np.where(y_cal == c)[0]
+            idx_other = np.where(y_cal != c)[0]
+            
+            if len(idx_same) > 0:
+                # Update 'same' lookup: min distance to other samples of SAME class
+                if len(idx_same) > 1:
+                    # Use np.ix_ for efficient sub-matrix indexing
+                    self.lookup_same[idx_same] = np.min(D[np.ix_(idx_same, idx_same)], axis=1)
+                else:
+                    # Singleton class: no same-class neighbor available
+                    self.lookup_same[idx_same] = np.inf
+                
+                # Update 'other' lookup: min distance to samples of OTHER classes
+                if len(idx_other) > 0:
+                    self.lookup_other[idx_same] = np.min(D[np.ix_(idx_same, idx_other)], axis=1)
+        
+        # 4. Compute Baseline Scores (alpha0)
+        self.alpha0 = self.lookup_same / (self.lookup_other + 1e-8)
+        
+        # Replace infs (singleton classes) with a high penalty score
+        self.alpha0[np.isinf(self.alpha0)] = 1e9
+    
+    def get_calibration_scores(self) -> np.ndarray:
+        """Return precomputed calibration scores."""
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+    
+    def score_x(self, x: np.ndarray, y: int, precomputed_dists: np.ndarray = None) -> float:
+        """
+        Calculate score for the test point x itself.
+        
+        Args:
+            x: Test point features
+            y: Candidate label
+            precomputed_dists: Optional precomputed distances from x to all calibration points.
+                               If provided, avoids redundant distance computation.
+        
+        Complexity: O(N), or O(1) masking if precomputed_dists provided
+        """
+        # Use precomputed distances if available, otherwise compute
+        if precomputed_dists is not None:
+            dists = precomputed_dists
+        else:
+            dists = euclidean_distances([x], self.X_cal).flatten()
+        
+        # 1. Find nearest SAME class neighbor in calibration set
+        mask_same = (self.y_cal == y)
+        if np.any(mask_same):
+            dist_same = np.min(dists[mask_same])
+        else:
+            return 1e9  # Penalty: proposed class y has no examples
+        
+        # 2. Find nearest OTHER class neighbor
+        mask_other = (self.y_cal != y)
+        if np.any(mask_other):
+            dist_other = np.min(dists[mask_other])
+        else:
+            dist_other = 1e-8  # Should not happen if >1 class
+        
+        return dist_same / (dist_other + 1e-8)
+    
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int, precomputed_dists: np.ndarray = None) -> np.ndarray:
+        """
+        Update scores of EXISTING calibration points after hypothetically adding (x, y).
+        
+        The Optimization:
+        We do NOT recalculate nearest neighbors or re-sort.
+        We simply compare dist(cal_i, x) against lookup_table[i].
+        
+        Args:
+            x: Test point features
+            y: Candidate label
+            precomputed_dists: Optional precomputed distances from x to all calibration points.
+                               If provided, avoids redundant distance computation.
+        
+        Complexity: O(N) - fully vectorized
+        """
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        
+        # Start with baseline scores
+        updated_scores = self.alpha0.copy()
+        
+        # Use precomputed distances if available, otherwise compute
+        if precomputed_dists is not None:
+            dists_x = precomputed_dists
+        else:
+            dists_x = euclidean_distances([x], self.X_cal).flatten()
+        
+        # ---------------------------------------------------------
+        # CASE A: Update points belonging to the SAME class (y)
+        # For these points, x is a new candidate for "Same Class Neighbor"
+        # ---------------------------------------------------------
+        idx_same = np.where(self.y_cal == y)[0]
+        if len(idx_same) > 0:
+            # 1. Get current best "same" distances from lookup
+            current_same = self.lookup_same[idx_same]
+            
+            # 2. Check if new point x is closer
+            new_same = np.minimum(current_same, dists_x[idx_same])
+            
+            # 3. Recalculate score (Ratio = Same / Other)
+            # Note: Denominator (Other) does NOT change for these points
+            updated_scores[idx_same] = new_same / (self.lookup_other[idx_same] + 1e-8)
+        
+        # ---------------------------------------------------------
+        # CASE B: Update points belonging to OTHER classes (!= y)
+        # For these points, x is a new candidate for "Other Class Neighbor"
+        # ---------------------------------------------------------
+        idx_other = np.where(self.y_cal != y)[0]
+        if len(idx_other) > 0:
+            # 1. Get current best "other" distances from lookup
+            current_other = self.lookup_other[idx_other]
+            
+            # 2. Check if new point x is closer
+            new_other = np.minimum(current_other, dists_x[idx_other])
+            
+            # 3. Recalculate score (Ratio = Same / Other)
+            # Note: Numerator (Same) does NOT change for these points
+            updated_scores[idx_other] = self.lookup_same[idx_other] / (new_other + 1e-8)
+        
+        return updated_scores
+
+
+class HypersphericalNNRatio(NonconformityMeasure):
+    """
+    Geodesic Nearest-Neighbor Ratio NCM for hyperspherical embeddings.
+
+    SSL models (DINOv2, etc.) produce L2-normalized embeddings on the unit
+    hypersphere S^{d-1}.  This NCM operates in the true angular / geodesic
+    space instead of treating the manifold as Euclidean.
+
+    Nonconformity score:
+        alpha_i = arccos(max_same_sim_i) / (arccos(max_other_sim_i) + eps)
+
+    where similarities are cosine similarities and arccos converts them to
+    geodesic distances on the unit sphere.
+
+    Key insight: The geodesic ratio arccos(s_same)/arccos(s_other) is NOT
+    monotonically equivalent to the Euclidean ratio sqrt((1-s_same)/(1-s_other)).
+    The arccos nonlinearity amplifies differences in high-similarity regions
+    (near class centroids), making it more discriminative for tightly clustered
+    SSL embeddings.
+
+    Works with FullConformalPredictor out of the box: precomputed Euclidean
+    distances are converted internally to cosine similarities via the exact
+    identity  sim = 1 - d^2/2  (valid for unit vectors).
+    """
+
+    def __init__(self):
+        self.X_cal = None
+        self.y_cal = None
+
+        # Lookup tables: max cosine similarity to same / other class
+        self.lookup_same_sim = None   # (n_cal,)
+        self.lookup_other_sim = None  # (n_cal,)
+
+        self.alpha0 = None
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _dists_to_sims(dists: np.ndarray) -> np.ndarray:
+        """Convert Euclidean distances to cosine similarities (exact for unit vecs)."""
+        return 1.0 - dists ** 2 / 2.0
+
+    @staticmethod
+    def _geodesic_ratio(same_sim: np.ndarray, other_sim: np.ndarray) -> np.ndarray:
+        """Compute arccos(same) / (arccos(other) + eps)."""
+        eps = 1e-8
+        same_clipped = np.clip(same_sim, -1.0, 1.0)
+        other_clipped = np.clip(other_sim, -1.0, 1.0)
+        return np.arccos(same_clipped) / (np.arccos(other_clipped) + eps)
+
+    # ------------------------------------------------------------------
+    # fit
+    # ------------------------------------------------------------------
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        self.X_cal = X_cal
+        self.y_cal = y_cal
+        n_cal = len(X_cal)
+
+        # Cosine similarity matrix (assumes L2-normalised rows)
+        S = X_cal @ X_cal.T
+        np.fill_diagonal(S, -np.inf)  # exclude self
+
+        self.lookup_same_sim = np.full(n_cal, -1.0)
+        self.lookup_other_sim = np.full(n_cal, -1.0)
+
+        classes = np.unique(y_cal)
+        for c in classes:
+            idx_same = np.where(y_cal == c)[0]
+            idx_other = np.where(y_cal != c)[0]
+
+            if len(idx_same) > 1:
+                self.lookup_same_sim[idx_same] = np.max(
+                    S[np.ix_(idx_same, idx_same)], axis=1
+                )
+            # else: singleton -> stays at -1.0 => arccos(-1)=pi (max penalty)
+
+            if len(idx_other) > 0:
+                self.lookup_other_sim[idx_same] = np.max(
+                    S[np.ix_(idx_same, idx_other)], axis=1
+                )
+
+        self.alpha0 = self._geodesic_ratio(self.lookup_same_sim,
+                                            self.lookup_other_sim)
+        # Cap infinities from singleton classes
+        self.alpha0[~np.isfinite(self.alpha0)] = 1e9
+
+    # ------------------------------------------------------------------
+    # calibration scores
+    # ------------------------------------------------------------------
+    def get_calibration_scores(self) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+
+    # ------------------------------------------------------------------
+    # score a single test point
+    # ------------------------------------------------------------------
+    def score_x(self, x: np.ndarray, y: int,
+                precomputed_dists: np.ndarray = None) -> float:
+        if precomputed_dists is not None:
+            sims = self._dists_to_sims(precomputed_dists)
+        else:
+            sims = (x @ self.X_cal.T)  # cosine similarity (unit vecs)
+
+        mask_same = (self.y_cal == y)
+        mask_other = (self.y_cal != y)
+
+        if not np.any(mask_same):
+            return 1e9
+
+        max_same_sim = np.max(sims[mask_same])
+        if not np.any(mask_other):
+            max_other_sim = -1.0
+        else:
+            max_other_sim = np.max(sims[mask_other])
+
+        return float(self._geodesic_ratio(
+            np.array([max_same_sim]), np.array([max_other_sim])
+        )[0])
+
+    # ------------------------------------------------------------------
+    # updated calibration scores after hypothetical addition of (x, y)
+    # ------------------------------------------------------------------
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int,
+                                       precomputed_dists: np.ndarray = None) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+
+        if precomputed_dists is not None:
+            sims_x = self._dists_to_sims(precomputed_dists)
+        else:
+            sims_x = (x @ self.X_cal.T)
+
+        # Start from lookup tables
+        updated_same = self.lookup_same_sim.copy()
+        updated_other = self.lookup_other_sim.copy()
+
+        # Points of SAME class as y: x is a new same-class candidate
+        idx_same = np.where(self.y_cal == y)[0]
+        if len(idx_same) > 0:
+            updated_same[idx_same] = np.maximum(
+                self.lookup_same_sim[idx_same], sims_x[idx_same]
+            )
+
+        # Points of OTHER class: x is a new other-class candidate
+        idx_other = np.where(self.y_cal != y)[0]
+        if len(idx_other) > 0:
+            updated_other[idx_other] = np.maximum(
+                self.lookup_other_sim[idx_other], sims_x[idx_other]
+            )
+
+        scores = self._geodesic_ratio(updated_same, updated_other)
+        scores[~np.isfinite(scores)] = 1e9
+        return scores
+
+
+class SoftmaxNonconformity(NonconformityMeasure):
+    """
+    Logistic Regression (Softmax) nonconformity measure.
+
+    Score: s(x, y) = 1 - p(y | x)   where p comes from a softmax classifier.
+
+    During fit(), a logistic regression model is trained on the calibration
+    data.  This makes the NCM **data-adaptive** — unlike geometric NCMs that
+    only measure distances, it learns a decision boundary.
+
+    Designed for use with **CV+** (CrossValidationPlusPredictor):
+    * Each fold trains its own classifier on the training portion.
+    * Held-out points are scored with ``score_x_cv``.
+    * At test time each fold's classifier scores the test point.
+
+    NOT suitable for Full CP (no efficient hypothetical-addition update).
+    """
+
+    def __init__(self, max_iter: int = 1000):
+        self.max_iter = max_iter
+        self.classifier = None
+        self.scaler = None
+        self.X_cal = None
+        self.y_cal = None
+        self.alpha0 = None
+        self._class_to_idx = None
+
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+
+        self.X_cal = X_cal
+        self.y_cal = y_cal
+
+        self.scaler = StandardScaler()
+        X_scaled = self.scaler.fit_transform(X_cal)
+
+        self.classifier = LogisticRegression(
+            max_iter=self.max_iter, solver='lbfgs', random_state=42
+        )
+        self.classifier.fit(X_scaled, y_cal)
+        self._class_to_idx = {c: i for i, c in enumerate(self.classifier.classes_)}
+
+        # Calibration scores: 1 - p(y_true | x)
+        probs = self.classifier.predict_proba(X_scaled)
+        self.alpha0 = np.array([
+            1.0 - probs[i, self._class_to_idx[y_cal[i]]]
+            if y_cal[i] in self._class_to_idx else 1.0
+            for i in range(len(y_cal))
+        ])
+
+    def get_calibration_scores(self) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+
+    def score_x(self, x: np.ndarray, y: int, **kwargs) -> float:
+        """Score a single point.  Ignores precomputed_dists (not applicable)."""
+        return self.score_x_cv(x, y)
+
+    def score_x_cv(self, x: np.ndarray, y: int) -> float:
+        """Score for CV+: 1 - p(y | x) using the fitted classifier."""
+        if self.classifier is None:
+            raise ValueError("Must call fit() first")
+        X_scaled = self.scaler.transform(x.reshape(1, -1))
+        probs = self.classifier.predict_proba(X_scaled)[0]
+        if y in self._class_to_idx:
+            return 1.0 - float(probs[self._class_to_idx[y]])
+        return 1.0  # unseen class → max nonconformity
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int, **kwargs) -> np.ndarray:
+        raise NotImplementedError(
+            "SoftmaxNonconformity does not support Full CP updates. "
+            "Use with CV+ or Split CP only."
+        )
 
 
 class FullConformalPredictor:
@@ -709,12 +1169,23 @@ class FullConformalPredictor:
     def __init__(
         self,
         nonconformity_measure: NonconformityMeasure,
-        alpha: float = 0.1
+        alpha: float = 0.1,
+        similarity_matrix: np.ndarray = None,
+        sim_classes: np.ndarray = None,
+        lambda_cs: float = 0.0,
     ):
         """
         Args:
             nonconformity_measure: Nonconformity scoring function
             alpha: Significance level (e.g., 0.1 for 90% confidence)
+            similarity_matrix: (n_classes, n_classes) class similarity matrix
+                from ``build_class_similarity_matrix``.  If provided together
+                with ``lambda_cs > 0``, the predictor applies the model-specific
+                class similarity penalty at test time (Eq. 5 from the paper).
+            sim_classes: Array of class labels corresponding to the rows/cols
+                of ``similarity_matrix``.
+            lambda_cs: Penalty weight for class similarity.
+                0 = disabled (default).
         """
         self.ncm = nonconformity_measure
         self.alpha = alpha
@@ -722,24 +1193,35 @@ class FullConformalPredictor:
         self.y_cal = None
         self.classes = None
         self.cal_scores = None  # Cached calibration scores
+
+        # Class similarity penalty (paper: "Enhancing CP via Class Similarity")
+        self.similarity_matrix = similarity_matrix
+        self.lambda_cs = lambda_cs
+        if similarity_matrix is not None and sim_classes is not None:
+            self._sim_class_to_idx = {int(c): i for i, c in enumerate(sim_classes)}
+        else:
+            self._sim_class_to_idx = None
         
-    def calibrate(self, X_cal: np.ndarray, y_cal: np.ndarray):
+    def calibrate(self, X_cal: np.ndarray, y_cal: np.ndarray,
+                  all_classes: np.ndarray = None):
         """
         Calibrate the conformal predictor on calibration set.
-        
+
         Args:
             X_cal: Calibration features (n_cal, d)
             y_cal: Calibration labels (n_cal,)
+            all_classes: Full label space to iterate over during prediction.
+                         If None, uses only classes present in y_cal.
         """
         self.X_cal = X_cal
         self.y_cal = y_cal
-        self.classes = np.unique(y_cal)
-        
+        self.classes = np.unique(all_classes) if all_classes is not None else np.unique(y_cal)
+
         # Fit nonconformity measure
         start_time = time.time()
         self.ncm.fit(X_cal, y_cal)
         fit_time = time.time() - start_time
-        
+
         # Compute and cache calibration scores
         start_time = time.time()
         # Try new API first (SimplifiedKNN), fallback to legacy (KNN)
@@ -749,10 +1231,44 @@ class FullConformalPredictor:
             # Fallback for legacy NCMs
             self.cal_scores = self.ncm.score(X_cal, y_cal)
         score_time = time.time() - start_time
-        
-        print(f"Calibrated with {len(X_cal)} examples, {len(self.classes)} classes")
-        print(f"Calibration scores - min: {self.cal_scores.min():.4f}, max: {self.cal_scores.max():.4f}, mean: {self.cal_scores.mean():.4f}, std: {self.cal_scores.std():.4f}")
+
+        cal_classes = np.unique(y_cal)
+        print(f"Calibrated with {len(X_cal)} examples, {len(cal_classes)} cal classes, {len(self.classes)} candidate classes")
+        print(f"Calibration scores (base) - min: {self.cal_scores.min():.4f}, max: {self.cal_scores.max():.4f}, mean: {self.cal_scores.mean():.4f}, std: {self.cal_scores.std():.4f}")
         print(f"Timing: fit={fit_time:.2f}s, score_cal={score_time:.2f}s")
+
+        # --- Class similarity: LOO 1-NN penalty on calibration scores ---
+        self._cs_cal_penalty = None  # stored for reuse on updated scores
+        if self.lambda_cs > 0 and self.similarity_matrix is not None and self._sim_class_to_idx is not None:
+            n_cal = len(X_cal)
+            # Compute pairwise distances for LOO 1-NN
+            D_cal = euclidean_distances(X_cal, X_cal)
+            np.fill_diagonal(D_cal, np.inf)  # exclude self
+            loo_nn_idx = np.argmin(D_cal, axis=1)  # LOO nearest neighbour
+            y_hat_loo = y_cal[loo_nn_idx]           # LOO predicted class
+
+            # Compute penalty for each cal point
+            self._cs_cal_penalty = np.zeros(n_cal, dtype=float)
+            for i in range(n_cal):
+                yi_idx = self._sim_class_to_idx.get(int(y_cal[i]))
+                yh_idx = self._sim_class_to_idx.get(int(y_hat_loo[i]))
+                if yi_idx is not None and yh_idx is not None:
+                    sim = self.similarity_matrix[yi_idx, yh_idx]
+                    self._cs_cal_penalty[i] = self.lambda_cs * (1.0 - sim)
+
+            self.cal_scores = self.cal_scores + self._cs_cal_penalty
+
+            loo_acc = np.mean(y_hat_loo == y_cal)
+            avg_penalty = self._cs_cal_penalty.mean()
+            nonzero_frac = np.mean(self._cs_cal_penalty > 0)
+            print(f"Class similarity penalty: lambda_cs={self.lambda_cs:.3f}, "
+                  f"LOO-1NN acc={loo_acc:.3f}, "
+                  f"avg penalty={avg_penalty:.4f}, "
+                  f"nonzero={nonzero_frac:.1%}")
+            print(f"Calibration scores (penalized) - min: {self.cal_scores.min():.4f}, "
+                  f"max: {self.cal_scores.max():.4f}, "
+                  f"mean: {self.cal_scores.mean():.4f}, "
+                  f"std: {self.cal_scores.std():.4f}")
     
     def predict(
         self,
@@ -791,25 +1307,69 @@ class FullConformalPredictor:
         
         iterator = tqdm(range(n_test), desc="Full CP") if verbose else range(n_test)
         
+        # Check if class similarity penalty is active
+        use_cs = (self.lambda_cs > 0
+                  and self.similarity_matrix is not None
+                  and self._sim_class_to_idx is not None
+                  and self._cs_cal_penalty is not None)
+
         for i in iterator:
             x_test = X_test[i]
             pred_set = []
             p_vals = {}  # Always compute for debugging
-            
+
+            # Precompute distances once per test point for NCMs that support it (100x speedup)
+            precomputed_dists = None
+            if hasattr(self.ncm, 'X_cal') and self.ncm.X_cal is not None:
+                precomputed_dists = euclidean_distances([x_test], self.ncm.X_cal).flatten()
+
+            # --- Determine y_hat for test point via 1-NN (if CS active) ---
+            if use_cs:
+                if precomputed_dists is not None:
+                    nn_idx = np.argmin(precomputed_dists)
+                else:
+                    dists_tmp = euclidean_distances([x_test], self.X_cal).flatten()
+                    nn_idx = np.argmin(dists_tmp)
+                y_hat_test = int(self.y_cal[nn_idx])
+
             # For each candidate label, compute p-value
             for y_candidate in self.classes:
-                # Exact Full CP path using new NCM API
-                test_score = self.ncm.score_x(x_test, int(y_candidate))
-                updated_scores = self.ncm.updated_calibration_scores_for(x_test, int(y_candidate))
+                yc = int(y_candidate)
+
+                # Compute base scores
+                if precomputed_dists is not None:
+                    try:
+                        test_score = self.ncm.score_x(x_test, yc, precomputed_dists=precomputed_dists)
+                        updated_scores = self.ncm.updated_calibration_scores_for(x_test, yc, precomputed_dists=precomputed_dists)
+                    except TypeError:
+                        test_score = self.ncm.score_x(x_test, yc)
+                        updated_scores = self.ncm.updated_calibration_scores_for(x_test, yc)
+                else:
+                    test_score = self.ncm.score_x(x_test, yc)
+                    updated_scores = self.ncm.updated_calibration_scores_for(x_test, yc)
+
+                if use_cs:
+                    # Penalise TEST score: lambda * (1 - M[y_candidate, y_hat_test])
+                    yc_idx = self._sim_class_to_idx.get(yc)
+                    yhat_idx = self._sim_class_to_idx.get(y_hat_test)
+                    if yc_idx is not None and yhat_idx is not None:
+                        sim = self.similarity_matrix[yc_idx, yhat_idx]
+                        test_score = test_score + self.lambda_cs * (1.0 - sim)
+
+                    # Penalise UPDATED calibration scores with the same
+                    # LOO penalties computed during calibrate().
+                    # This restores exchangeability: cal points are penalised
+                    # at the same rate as the test point.
+                    updated_scores = updated_scores + self._cs_cal_penalty
+
                 n_greater = np.sum(updated_scores >= test_score)
                 p_value = (n_greater + 1) / (n_cal + 1)
-                
-                p_vals[int(y_candidate)] = p_value
-                
-                # Include in prediction set if p-value > alpha
+
+                p_vals[yc] = p_value
+
                 if p_value > self.alpha:
-                    pred_set.append(int(y_candidate))
-            
+                    pred_set.append(yc)
+
             # Debug: warn if empty
             if len(pred_set) == 0:
                 empty_count += 1
@@ -818,14 +1378,11 @@ class FullConformalPredictor:
                     best_class = max(p_vals, key=p_vals.get)
                     print(f"\nWarning: Empty prediction set for test example {i}")
                     print(f"  Best p-value: {best_p:.4f} (class {best_class}), alpha: {self.alpha}")
-                    # Compute test scores for debugging using new API
-                    test_scores_all = [self.ncm.score_x(x_test, int(c)) for c in self.classes]
-                    print(f"  Test scores range: [{min(test_scores_all):.4f}, {max(test_scores_all):.4f}]")
                     print(f"  Cal scores range: [{self.cal_scores.min():.4f}, {self.cal_scores.max():.4f}]")
-            
+
             prediction_sets.append(pred_set)
             set_sizes.append(len(pred_set))
-            
+
             # Only return p_values if requested
             if return_p_values:
                 all_p_values.append(p_vals)
@@ -919,6 +1476,632 @@ class FullConformalPredictor:
         return metrics
 
 
+class SoftmaxSplitCP:
+    """
+    Naive Softmax Split Conformal Prediction baseline.
+    
+    This is the standard "control" baseline for conformal prediction experiments.
+    It uses a trained classifier's softmax probabilities as confidence scores.
+    
+    Protocol:
+    1. Split data into D_train, D_calib, D_test
+    2. Train a classifier (logistic regression) on D_train
+    3. For each sample in D_calib: score s_i = 1 - p(y_true | x_i)
+    4. Find quantile q at level (1 - alpha) * (n_cal + 1) / n_cal
+    5. For test point x: prediction set = {y : 1 - p(y|x) <= q}
+    
+    This baseline represents what you get with a standard classifier + CP,
+    without the sophisticated nonconformity measures used in Full CP.
+    
+    Reference: Shafer & Vovk (2008), Romano et al. (2020)
+    """
+    
+    def __init__(self, alpha: float = 0.1, max_iter: int = 1000):
+        """
+        Args:
+            alpha: Significance level (e.g., 0.1 for 90% coverage target)
+            max_iter: Max iterations for logistic regression
+        """
+        self.alpha = alpha
+        self.max_iter = max_iter
+        self.classifier = None
+        self.scaler = None
+        self.q_hat = None  # Calibration quantile
+        self.classes = None
+        self.cal_scores = None
+        
+    def fit(self, X_train: np.ndarray, y_train: np.ndarray):
+        """
+        Train the softmax classifier on training data.
+        
+        Args:
+            X_train: Training features (n_train, d)
+            y_train: Training labels (n_train,)
+        """
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+        
+        self.classes = np.unique(y_train)
+        
+        # Standardize features for better convergence
+        self.scaler = StandardScaler()
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        
+        # Train logistic regression with softmax
+        self.classifier = LogisticRegression(
+            max_iter=self.max_iter,
+            solver='lbfgs',
+            random_state=42
+        )
+        self.classifier.fit(X_train_scaled, y_train)
+        
+        print(f"Trained softmax classifier on {len(X_train)} examples, {len(self.classes)} classes")
+    
+    def calibrate(self, X_cal: np.ndarray, y_cal: np.ndarray,
+                  all_classes: np.ndarray = None):
+        """
+        Calibrate using calibration set to find quantile threshold.
+
+        Score: s_i = 1 - p(y_true | x_i) (higher = less confident = more nonconforming)
+
+        Args:
+            X_cal: Calibration features (n_cal, d)
+            y_cal: Calibration labels (n_cal,)
+            all_classes: Full label space for prediction sets.
+                         If None, uses classifier's known classes.
+        """
+        if self.classifier is None:
+            raise ValueError("Must call fit() before calibrate()")
+
+        self._all_classes = all_classes  # store for predict()
+
+        X_cal_scaled = self.scaler.transform(X_cal)
+
+        # Get softmax probabilities
+        probs = self.classifier.predict_proba(X_cal_scaled)
+
+        # Compute nonconformity scores: s_i = 1 - p(y_true | x_i)
+        # Need to map y_cal labels to classifier's class indices
+        class_to_idx = {c: i for i, c in enumerate(self.classifier.classes_)}
+
+        self.cal_scores = np.zeros(len(y_cal))
+        for i, (prob, y_true) in enumerate(zip(probs, y_cal)):
+            if y_true in class_to_idx:
+                self.cal_scores[i] = 1.0 - prob[class_to_idx[y_true]]
+            else:
+                # Unknown class - assign max nonconformity
+                self.cal_scores[i] = 1.0
+
+        # Compute quantile at level (1 - alpha) * (n + 1) / n
+        # This is the finite-sample correction for split CP
+        n_cal = len(y_cal)
+        quantile_level = np.ceil((n_cal + 1) * (1 - self.alpha)) / n_cal
+        quantile_level = min(quantile_level, 1.0)  # Cap at 1.0
+
+        self.q_hat = np.quantile(self.cal_scores, quantile_level)
+
+        print(f"Calibrated on {n_cal} examples")
+        print(f"Calibration scores - min: {self.cal_scores.min():.4f}, max: {self.cal_scores.max():.4f}, "
+              f"mean: {self.cal_scores.mean():.4f}, std: {self.cal_scores.std():.4f}")
+        print(f"Quantile threshold q_hat: {self.q_hat:.4f} (at level {quantile_level:.4f})")
+
+    def predict(self, X_test: np.ndarray, return_p_values: bool = False) -> Dict:
+        """
+        Compute prediction sets for test examples.
+
+        Prediction set: {y : 1 - p(y|x) <= q_hat}
+        Equivalently: {y : p(y|x) >= 1 - q_hat}
+
+        Iterates over the full label space (all_classes) if provided during
+        calibrate(). Unseen classes get probability 0 and are only included
+        if q_hat >= 1.0.
+
+        Args:
+            X_test: Test features (n_test, d)
+            return_p_values: If True, return softmax probabilities as pseudo p-values
+
+        Returns:
+            Dict with 'prediction_sets' and optionally 'p_values'
+        """
+        if self.q_hat is None:
+            raise ValueError("Must call calibrate() before predict()")
+
+        X_test_scaled = self.scaler.transform(X_test)
+        probs = self.classifier.predict_proba(X_test_scaled)
+
+        n_test = len(X_test)
+        prediction_sets = []
+
+        # Threshold for inclusion: p(y|x) >= 1 - q_hat
+        prob_threshold = 1.0 - self.q_hat
+
+        # Build class -> prob-column-index map
+        clf_class_to_idx = {c: i for i, c in enumerate(self.classifier.classes_)}
+
+        # Determine full candidate label space
+        if self._all_classes is not None:
+            candidate_classes = np.unique(self._all_classes)
+        else:
+            candidate_classes = self.classifier.classes_
+
+        for i in range(n_test):
+            pred_set = []
+            for c in candidate_classes:
+                if c in clf_class_to_idx:
+                    p = probs[i, clf_class_to_idx[c]]
+                else:
+                    p = 0.0  # unseen class gets zero probability
+                if p >= prob_threshold:
+                    pred_set.append(int(c))
+            prediction_sets.append(pred_set)
+
+        result = {'prediction_sets': prediction_sets}
+
+        if return_p_values:
+            # Return softmax probs as pseudo p-values (not true p-values, just for comparison)
+            result['p_values'] = probs
+
+        return result
+    
+    def evaluate(self, X_test: np.ndarray, y_test: np.ndarray, verbose: bool = True) -> Dict:
+        """
+        Evaluate prediction sets on test data.
+        
+        Args:
+            X_test: Test features
+            y_test: True test labels
+            verbose: Print results
+            
+        Returns:
+            Dict with coverage, set sizes, and other metrics
+        """
+        predictions = self.predict(X_test)
+        pred_sets = predictions['prediction_sets']
+        
+        n_test = len(y_test)
+        
+        # Coverage: fraction of test examples where true label is in prediction set
+        covered = sum(1 for i, ps in enumerate(pred_sets) if y_test[i] in ps)
+        coverage = covered / n_test
+        
+        # Set sizes
+        set_sizes = [len(ps) for ps in pred_sets]
+        avg_set_size = np.mean(set_sizes)
+        median_set_size = np.median(set_sizes)
+        
+        # Additional metrics
+        singleton_count = sum(1 for ps in pred_sets if len(ps) == 1)
+        singleton_rate = singleton_count / n_test
+        
+        # Singleton accuracy: among singletons, how many are correct
+        singleton_correct = sum(1 for i, ps in enumerate(pred_sets) 
+                               if len(ps) == 1 and y_test[i] in ps)
+        singleton_accuracy = singleton_correct / singleton_count if singleton_count > 0 else 0.0
+        
+        # Empty set rate
+        empty_count = sum(1 for ps in pred_sets if len(ps) == 0)
+        empty_set_rate = empty_count / n_test
+        
+        # Classifier accuracy (top-1)
+        X_test_scaled = self.scaler.transform(X_test)
+        y_pred = self.classifier.predict(X_test_scaled)
+        classifier_accuracy = np.mean(y_pred == y_test)
+        
+        metrics = {
+            'coverage': coverage,
+            'avg_set_size': avg_set_size,
+            'median_set_size': median_set_size,
+            'singleton_rate': singleton_rate,
+            'singleton_accuracy': singleton_accuracy,
+            'empty_set_rate': empty_set_rate,
+            'classifier_accuracy': classifier_accuracy,
+            'set_sizes': set_sizes,
+        }
+        
+        if verbose:
+            print("\n" + "="*50)
+            print("SOFTMAX SPLIT CP EVALUATION")
+            print("="*50)
+            print(f"Test examples:                 {n_test}")
+            print(f"Target coverage (1-α):         {1-self.alpha:.3f}")
+            print(f"Achieved coverage:             {coverage:.3f}")
+            print(f"Average set size:              {avg_set_size:.2f}")
+            print(f"Median set size:               {median_set_size:.1f}")
+            print(f"Singleton rate:                {singleton_rate:.3f}")
+            print(f"Singleton accuracy:            {singleton_accuracy:.3f}")
+            print(f"Empty set rate:                {empty_set_rate:.3f}")
+            print(f"Classifier accuracy (top-1):   {classifier_accuracy:.3f}")
+            print("="*50)
+        
+        return metrics
+
+
+class CrossValidationPlusPredictor:
+    """
+    Cross-Validation+ (CV+) Conformal Prediction, inspired by Jackknife+.
+
+    Instead of retraining on every test point (Full CP) or wasting data on a
+    separate training set (Split CP), CV+ uses K-fold cross-validation:
+
+    1. Split calibration data into K folds
+    2. For each fold k, fit an NCM on all data except fold k
+    3. Score each calibration point with the NCM that excluded its fold
+    4. At test time, score the test point with each fold's NCM and aggregate
+
+    Advantages over Full CP:
+    - Much faster at test time (K forward passes vs n_cal updates per label)
+    - Same data-efficient calibration (no separate training set)
+
+    Advantages over Split CP:
+    - Uses all calibration data for both fitting and scoring
+    - No data wasted on a separate training set for the classifier
+
+    Coverage guarantee: P(Y in C(X)) >= 1 - 2*alpha (Barber et al. 2021).
+    In practice, coverage is typically close to 1 - alpha.
+
+    Reference: Barber, Candes, Ramdas & Tibshirani (2021)
+               "Predictive Inference with the Jackknife+"
+    """
+
+    def __init__(self, ncm_factory, alpha: float = 0.1, n_folds: int = 5):
+        """
+        Args:
+            ncm_factory: Callable returning a new NCM instance
+                         (e.g. lambda: SimplifiedKNNNonconformity(k=5))
+            alpha: Significance level (e.g. 0.1 for 90% target coverage)
+            n_folds: Number of cross-validation folds
+        """
+        self.ncm_factory = ncm_factory
+        self.alpha = alpha
+        self.n_folds = n_folds
+
+        self.X_cal = None
+        self.y_cal = None
+        self.classes = None
+
+        self.fold_ncms = []              # K fitted NCMs
+        self.fold_assignments = None     # (n_cal,) fold index per calibration point
+        self.cal_scores = None           # (n_cal,) leave-fold-out scores
+
+    def calibrate(self, X_cal: np.ndarray, y_cal: np.ndarray,
+                  all_classes: np.ndarray = None):
+        """
+        Calibrate using K-fold cross-validation.
+
+        For each fold k:
+        1. Fit NCM on all data except fold k
+        2. Score points in fold k using that NCM
+
+        Args:
+            X_cal: Calibration features (n_cal, d)
+            y_cal: Calibration labels (n_cal,)
+            all_classes: Full label space to iterate over during prediction.
+                         If None, uses only classes present in y_cal.
+        """
+        from sklearn.model_selection import StratifiedKFold
+
+        self.X_cal = X_cal
+        self.y_cal = y_cal
+        self.classes = np.unique(all_classes) if all_classes is not None else np.unique(y_cal)
+
+        # Cap n_folds at the smallest class size to avoid StratifiedKFold error
+        min_class_size = min(np.sum(y_cal == c) for c in self.classes)
+        actual_folds = min(self.n_folds, min_class_size)
+        if actual_folds < self.n_folds:
+            print(f"  CV+ note: reduced folds from {self.n_folds} to {actual_folds} "
+                  f"(smallest class has {min_class_size} members)")
+        if actual_folds < 2:
+            actual_folds = 2
+            print(f"  CV+ warning: forcing n_folds=2 (minimum for CV)")
+
+        n_cal = len(X_cal)
+        self.fold_assignments = np.zeros(n_cal, dtype=int)
+        self.cal_scores = np.zeros(n_cal, dtype=float)
+        self.fold_ncms = []
+
+        self._actual_folds = actual_folds
+        skf = StratifiedKFold(n_splits=actual_folds, shuffle=True, random_state=42)
+
+        start_time = time.time()
+
+        for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X_cal, y_cal)):
+            ncm = self.ncm_factory()
+            ncm.fit(X_cal[train_idx], y_cal[train_idx])
+            self.fold_ncms.append(ncm)
+
+            self.fold_assignments[val_idx] = fold_idx
+
+            # Score held-out points with the NCM that excluded them
+            for i in val_idx:
+                self.cal_scores[i] = ncm.score_x_cv(X_cal[i], int(y_cal[i]))
+
+        fit_time = time.time() - start_time
+
+        cal_classes = np.unique(y_cal)
+        print(f"CV+ Calibrated: {n_cal} examples, {len(cal_classes)} cal classes, "
+              f"{len(self.classes)} candidate classes, {actual_folds} folds")
+        print(f"Calibration scores - min: {self.cal_scores.min():.4f}, "
+              f"max: {self.cal_scores.max():.4f}, mean: {self.cal_scores.mean():.4f}")
+        print(f"Timing: calibrate={fit_time:.2f}s")
+
+    def predict(
+        self,
+        X_test: np.ndarray,
+        return_p_values: bool = False,
+        verbose: bool = True
+    ) -> Dict:
+        """
+        Compute prediction sets using the CV+ formula.
+
+        For each test point x and candidate label y:
+        1. Compute K test scores (one per fold NCM)
+        2. For each cal point i (in fold k(i)), compare R_i vs R_test^{k(i)}
+        3. p_value = (1 + sum 1{R_i >= R_test^{k(i)}}) / (n_cal + 1)
+
+        Returns:
+            Dict with 'prediction_sets', 'set_sizes', 'prediction_time',
+            and optionally 'p_values'.
+        """
+        if self.cal_scores is None:
+            raise ValueError("Must call calibrate() before predict()")
+
+        start_time = time.time()
+        n_test = len(X_test)
+        n_cal = len(self.X_cal)
+
+        prediction_sets = []
+        set_sizes = []
+        all_p_values = [] if return_p_values else None
+        empty_count = 0
+
+        iterator = tqdm(range(n_test), desc="CV+") if verbose else range(n_test)
+
+        for i in iterator:
+            x_test = X_test[i]
+            pred_set = []
+            p_vals = {}
+
+            # Compute test score under each fold's NCM (shared across labels? no - depends on y)
+            for y_candidate in self.classes:
+                # K test scores, one per fold NCM
+                n_folds = self._actual_folds
+                test_scores_per_fold = np.zeros(n_folds)
+                for k in range(n_folds):
+                    test_scores_per_fold[k] = self.fold_ncms[k].score_x_cv(
+                        x_test, int(y_candidate)
+                    )
+
+                # Vectorised CV+ comparison:
+                # For each cal point i in fold k(i), compare R_i >= R_test^{k(i)}
+                test_score_per_cal = test_scores_per_fold[self.fold_assignments]
+                n_greater = np.sum(self.cal_scores >= test_score_per_cal)
+
+                p_value = (n_greater + 1) / (n_cal + 1)
+                p_vals[int(y_candidate)] = p_value
+
+                if p_value > self.alpha:
+                    pred_set.append(int(y_candidate))
+
+            if len(pred_set) == 0:
+                empty_count += 1
+                if empty_count <= 3 and verbose:
+                    best_p = max(p_vals.values())
+                    best_class = max(p_vals, key=p_vals.get)
+                    print(f"\nWarning: Empty prediction set for test example {i}")
+                    print(f"  Best p-value: {best_p:.4f} (class {best_class}), alpha: {self.alpha}")
+
+            prediction_sets.append(pred_set)
+            set_sizes.append(len(pred_set))
+
+            if return_p_values:
+                all_p_values.append(p_vals)
+
+        if empty_count > 0 and verbose:
+            print(f"\nWarning: {empty_count}/{n_test} prediction sets are empty!")
+
+        prediction_time = time.time() - start_time
+
+        results = {
+            'prediction_sets': prediction_sets,
+            'set_sizes': np.array(set_sizes),
+            'prediction_time': prediction_time
+        }
+
+        if return_p_values:
+            results['p_values'] = all_p_values
+
+        if verbose:
+            print(f"\nPrediction time: {prediction_time:.2f}s "
+                  f"({prediction_time / n_test * 1000:.1f}ms per sample)")
+
+        return results
+
+    def evaluate(
+        self,
+        X_test: np.ndarray,
+        y_test: np.ndarray,
+        verbose: bool = True
+    ) -> Dict:
+        """Evaluate CV+ prediction sets on test data."""
+        results = self.predict(X_test, return_p_values=False, verbose=verbose)
+        prediction_sets = results['prediction_sets']
+        set_sizes = results['set_sizes']
+
+        coverage = np.mean([
+            y_test[i] in pred_set
+            for i, pred_set in enumerate(prediction_sets)
+        ])
+        avg_set_size = np.mean(set_sizes)
+
+        singleton_mask = set_sizes == 1
+        if singleton_mask.sum() > 0:
+            singleton_correct = np.mean([
+                y_test[i] == prediction_sets[i][0]
+                for i in np.where(singleton_mask)[0]
+            ])
+            singleton_rate = singleton_mask.mean()
+        else:
+            singleton_correct = 0.0
+            singleton_rate = 0.0
+
+        empty_rate = np.mean(set_sizes == 0)
+
+        metrics = {
+            'coverage': coverage,
+            'avg_set_size': avg_set_size,
+            'median_set_size': np.median(set_sizes),
+            'singleton_rate': singleton_rate,
+            'singleton_accuracy': singleton_correct,
+            'empty_set_rate': empty_rate,
+            'alpha': self.alpha,
+            'target_coverage': 1 - self.alpha
+        }
+
+        if verbose:
+            print("\n" + "=" * 50)
+            print("CV+ CONFORMAL PREDICTION EVALUATION")
+            print("=" * 50)
+            print(f"Significance level (alpha):    {metrics['alpha']:.3f}")
+            print(f"Target coverage:               {metrics['target_coverage']:.3f}")
+            print(f"Theoretical guarantee:         >={1 - 2 * self.alpha:.3f}")
+            print(f"Actual coverage:               {metrics['coverage']:.3f}")
+            print(f"Average set size:              {metrics['avg_set_size']:.3f}")
+            print(f"Median set size:               {metrics['median_set_size']:.1f}")
+            print(f"Singleton rate:                {metrics['singleton_rate']:.3f}")
+            print(f"Singleton accuracy:            {metrics['singleton_accuracy']:.3f}")
+            print(f"Empty set rate:                {metrics['empty_set_rate']:.3f}")
+            print("=" * 50)
+
+        return metrics
+
+
+def build_class_similarity_matrix(
+    X: np.ndarray,
+    y: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Build model-specific class similarity matrix M from embedding centroids.
+
+    Reference: "Enhancing Conformal Prediction via Class Similarity" (Eq. 5-6).
+
+    M_{c,c'} = <h_bar_c - h_bar_G, h_bar_c' - h_bar_G>
+               / (||h_bar_c - h_bar_G|| * ||h_bar_c' - h_bar_G||)
+
+    where h_bar_c is the centroid of class c and h_bar_G is the global mean.
+
+    Args:
+        X: Feature embeddings (N, d)
+        y: Class labels (N,)
+
+    Returns:
+        (M, classes) where M is (n_classes, n_classes) similarity matrix
+        in [-1, 1] and classes is the sorted array of unique labels.
+    """
+    classes = np.unique(y)
+    n_classes = len(classes)
+    d = X.shape[1]
+
+    # Compute class centroids
+    centroids = np.zeros((n_classes, d))
+    for idx, c in enumerate(classes):
+        centroids[idx] = X[y == c].mean(axis=0)
+
+    # Global mean
+    global_mean = centroids.mean(axis=0)
+
+    # Center centroids
+    centered = centroids - global_mean  # (n_classes, d)
+
+    # Normalise
+    norms = np.linalg.norm(centered, axis=1, keepdims=True)
+    norms = np.maximum(norms, 1e-10)  # avoid division by zero
+    centered_normed = centered / norms
+
+    # Cosine similarity of centered centroids
+    M = centered_normed @ centered_normed.T  # (n_classes, n_classes)
+
+    return M, classes
+
+
+def create_ncm(ncm_type: str, k: int = 5, lambda_reg: float = 1.0) -> NonconformityMeasure:
+    """
+    Factory function to create NCM instances.
+
+    Args:
+        ncm_type: One of 'knn', 'simplified_knn', 'centroid',
+                  'relative_centroid', 'ridge', 'nn_ratio'
+        k: Number of neighbors (for knn, simplified_knn)
+        lambda_reg: Regularization parameter (for ridge)
+    """
+    if ncm_type == "knn":
+        return KNNNonconformity(k=k, metric='euclidean')
+    elif ncm_type == "simplified_knn":
+        return SimplifiedKNNNonconformity(k=k)
+    elif ncm_type == "centroid":
+        return CentroidNonconformity()
+    elif ncm_type == "relative_centroid":
+        return RelativeCentroidNonconformity()
+    elif ncm_type == "ridge":
+        return RidgeRegressionNonconformity(lambda_reg=lambda_reg)
+    elif ncm_type == "nn_ratio":
+        return FastNNRatio()
+    elif ncm_type == "geodesic_nn_ratio":
+        return HypersphericalNNRatio()
+    elif ncm_type == "softmax":
+        return SoftmaxNonconformity()
+    else:
+        raise ValueError(f"Unknown NCM type: {ncm_type}")
+
+
+def train_cal_test_split(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    train_ratio: float = 0.4,
+    cal_ratio: float = 0.3,
+    random_state: int = 42
+) -> Tuple:
+    """
+    Split data into train/calibration/test sets for Split CP.
+    
+    This is needed for SoftmaxSplitCP which requires a training set
+    (unlike Full CP which only needs calibration + test).
+    
+    Args:
+        embeddings: Feature vectors (n, d)
+        labels: Labels (n,)
+        train_ratio: Fraction for training
+        cal_ratio: Fraction for calibration (rest goes to test)
+        random_state: Random seed
+        
+    Returns:
+        (X_train, y_train, X_cal, y_cal, X_test, y_test)
+    """
+    np.random.seed(random_state)
+    n = len(embeddings)
+    
+    # Generate random permutation
+    indices = np.random.permutation(n)
+    
+    # Calculate split points
+    n_train = int(n * train_ratio)
+    n_cal = int(n * cal_ratio)
+    
+    train_idx = indices[:n_train]
+    cal_idx = indices[n_train:n_train + n_cal]
+    test_idx = indices[n_train + n_cal:]
+    
+    X_train = embeddings[train_idx]
+    y_train = labels[train_idx]
+    X_cal = embeddings[cal_idx]
+    y_cal = labels[cal_idx]
+    X_test = embeddings[test_idx]
+    y_test = labels[test_idx]
+    
+    print(f"Split: Train={len(X_train)}, Cal={len(X_cal)}, Test={len(X_test)}")
+    
+    return X_train, y_train, X_cal, y_cal, X_test, y_test
+
+
 def cal_test_split(
     embeddings: np.ndarray,
     labels: np.ndarray,
@@ -960,28 +2143,3 @@ def cal_test_split(
     print(f"Split: Cal={len(X_cal)}, Test={len(X_test)}")
     
     return X_cal, y_cal, X_test, y_test
-
-
-def train_val_test_split(
-    embeddings: np.ndarray,
-    labels: np.ndarray,
-    train_ratio: float = 0.0,  # Kept for backward compatibility, but not used
-    cal_ratio: float = 0.5,
-    test_ratio: float = 0.5,
-    random_state: int = 42
-) -> Tuple:
-    """
-    DEPRECATED: Use cal_test_split() instead.
-    
-    Full CP doesn't use a training set, only calibration and test.
-    This function is kept for backward compatibility but returns empty train sets.
-    """
-    X_cal, y_cal, X_test, y_test = cal_test_split(
-        embeddings, labels, cal_ratio=cal_ratio, random_state=random_state
-    )
-    
-    # Return empty train sets for compatibility
-    X_train = np.array([])
-    y_train = np.array([])
-    
-    return X_train, y_train, X_cal, y_cal, X_test, y_test

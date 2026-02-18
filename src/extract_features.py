@@ -9,13 +9,22 @@ from tqdm import tqdm
 
 # Model presets: short name -> (timm_model_name, input_size)
 MODEL_PRESETS = {
+    # Self-Distillation (DINOv2)
     "dinov2-base": ("vit_base_patch14_dinov2.lvd142m", 518),
     "dinov2-large": ("vit_large_patch14_dinov2.lvd142m", 518),
     "dinov2-giant": ("vit_giant_patch14_dinov2.lvd142m", 518),
+    # Vision-Language (CLIP)
     "clip-base": ("vit_base_patch16_clip_224.openai", 224),
     "clip-large": ("vit_large_patch14_clip_224.openai", 224),
+    # Masked Image Modeling (BEiT, MAE)
     "beit-base": ("beit_base_patch16_224.in22k_ft_in22k_in1k", 224),
     "beitv2-base": ("beitv2_base_patch16_224.in1k_ft_in22k_in1k", 224),
+    "mae-base": ("vit_base_patch16_224.mae", 224),
+    "mae-large": ("vit_large_patch16_224.mae", 224),
+    # Contrastive Learning (Facebook SSL - similar to MoCo/SimCLR)
+    "ssl-resnet50": ("resnet50.fb_ssl_yfcc100m_ft_in1k", 224),
+    # Semi-Weakly Supervised (Facebook SWSL - contrastive + weak labels)
+    "swsl-resnet50": ("resnet50.fb_swsl_ig1b_ft_in1k", 224),
 }
 
 def get_args():

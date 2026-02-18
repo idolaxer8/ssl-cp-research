@@ -32,9 +32,8 @@ def main():
         
         pca_50 = PCA(n_components=n_comps)
         pca_result = pca_50.fit_transform(embeddings)
-        
+
         # Perplexity must be less than number of samples
-        n_samples = embeddings.shape[0]
         perp = min(30, n_samples - 1) if n_samples > 1 else 1
         
         reducer = TSNE(n_components=2, perplexity=perp, random_state=42, init='pca', learning_rate='auto')

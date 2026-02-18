@@ -1,10 +1,11 @@
 """
-Download datasets (CIFAR-10, STL-10, EuroSAT) and save as image files in ImageFolder structure.
+Download datasets (CIFAR-10, CIFAR-100, STL-10, EuroSAT) and save as image files in ImageFolder structure.
 
 Usage:
-    python src/download_cifar10.py --dataset cifar10 --output_dir data/cifar10 --num_per_class 200
-    python src/download_cifar10.py --dataset stl10 --output_dir data/stl10 --num_per_class 200
-    python src/download_cifar10.py --dataset eurosat --output_dir data/eurosat --num_per_class 200
+    python src/download_datasets.py --dataset cifar10 --output_dir data/cifar10 --num_per_class 200
+    python src/download_datasets.py --dataset cifar100 --output_dir data/cifar100 --num_per_class 100
+    python src/download_datasets.py --dataset stl10 --output_dir data/stl10 --num_per_class 200
+    python src/download_datasets.py --dataset eurosat --output_dir data/eurosat --num_per_class 200
 """
 
 import argparse
@@ -18,6 +19,19 @@ from tqdm import tqdm
 DATASET_INFO = {
     "cifar10": {
         "classes": ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck'],
+        "size": "32x32",
+    },
+    "cifar100": {
+        "classes": ['apple', 'aquarium_fish', 'baby', 'bear', 'beaver', 'bed', 'bee', 'beetle', 'bicycle', 'bottle',
+                    'bowl', 'boy', 'bridge', 'bus', 'butterfly', 'camel', 'can', 'castle', 'caterpillar', 'cattle',
+                    'chair', 'chimpanzee', 'clock', 'cloud', 'cockroach', 'couch', 'crab', 'crocodile', 'cup', 'dinosaur',
+                    'dolphin', 'elephant', 'flatfish', 'forest', 'fox', 'girl', 'hamster', 'house', 'kangaroo', 'keyboard',
+                    'lamp', 'lawn_mower', 'leopard', 'lion', 'lizard', 'lobster', 'man', 'maple_tree', 'motorcycle', 'mountain',
+                    'mouse', 'mushroom', 'oak_tree', 'orange', 'orchid', 'otter', 'palm_tree', 'pear', 'pickup_truck', 'pine_tree',
+                    'plain', 'plate', 'poppy', 'porcupine', 'possum', 'rabbit', 'raccoon', 'ray', 'road', 'rocket',
+                    'rose', 'sea', 'seal', 'shark', 'shrew', 'skunk', 'skyscraper', 'snail', 'snake', 'spider',
+                    'squirrel', 'streetcar', 'sunflower', 'sweet_pepper', 'table', 'tank', 'telephone', 'television', 'tiger', 'tractor',
+                    'train', 'trout', 'tulip', 'turtle', 'wardrobe', 'whale', 'willow_tree', 'wolf', 'woman', 'worm'],
         "size": "32x32",
     },
     "stl10": {
@@ -35,13 +49,13 @@ DATASET_INFO = {
 def parse_args():
     parser = argparse.ArgumentParser(description="Download dataset and save as images")
     parser.add_argument("--dataset", type=str, default="cifar10",
-                       choices=["cifar10", "stl10", "eurosat"],
+                       choices=["cifar10", "cifar100", "stl10", "eurosat"],
                        help="Dataset to download")
     parser.add_argument("--output_dir", type=str, default=None,
                        help="Output directory (default: data/<dataset>)")
     parser.add_argument("--split", type=str, default="train",
                        choices=["train", "test", "both"],
-                       help="Which split to download (cifar10/stl10 only)")
+                       help="Which split to download (cifar10/cifar100/stl10 only)")
     parser.add_argument("--num_per_class", type=int, default=None,
                        help="Limit number of images per class (None = all)")
     parser.add_argument("--download_dir", type=str, default="./dataset_download",
@@ -113,6 +127,23 @@ def download_cifar10(args, output_dir):
         save_dataset_as_images(ds, out, class_names, args.num_per_class)
 
 
+def download_cifar100(args, output_dir):
+    """Download and save CIFAR-100."""
+    class_names = DATASET_INFO["cifar100"]["classes"]
+    
+    if args.split in ["train", "both"]:
+        print("\nDownloading CIFAR-100 training set...")
+        ds = datasets.CIFAR100(root=args.download_dir, train=True, download=True, transform=None)
+        out = output_dir if args.split == "train" else f"{output_dir}/train"
+        save_dataset_as_images(ds, out, class_names, args.num_per_class)
+    
+    if args.split in ["test", "both"]:
+        print("\nDownloading CIFAR-100 test set...")
+        ds = datasets.CIFAR100(root=args.download_dir, train=False, download=True, transform=None)
+        out = output_dir if args.split == "test" else f"{output_dir}/test"
+        save_dataset_as_images(ds, out, class_names, args.num_per_class)
+
+
 def download_stl10(args, output_dir):
     """Download and save STL-10."""
     class_names = DATASET_INFO["stl10"]["classes"]
@@ -159,6 +190,8 @@ def main():
     
     if args.dataset == "cifar10":
         download_cifar10(args, output_dir)
+    elif args.dataset == "cifar100":
+        download_cifar100(args, output_dir)
     elif args.dataset == "stl10":
         download_stl10(args, output_dir)
     elif args.dataset == "eurosat":

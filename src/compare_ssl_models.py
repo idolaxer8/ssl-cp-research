@@ -27,7 +27,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from conformal_prediction import (
     SimplifiedKNNNonconformity, 
     FullConformalPredictor, 
-    cal_test_split
+    cal_test_split,
+    SoftmaxSplitCP,
+    train_cal_test_split
 )
 
 # Base SSL models to compare (only base/standard sizes)
@@ -63,10 +65,12 @@ def parse_args():
     parser.add_argument("--cal_ratio", type=float, default=0.5,
                        help="Calibration set ratio")
     parser.add_argument("--ncm", type=str, default="simplified_knn",
-                       choices=["simplified_knn", "knn", "centroid", "relative_centroid", "ridge"],
-                       help="Nonconformity measure")
+                       choices=["simplified_knn", "knn", "centroid", "relative_centroid", "ridge", "softmax_split_cp"],
+                       help="Nonconformity measure (softmax_split_cp = naive softmax baseline)")
     parser.add_argument("--k", type=int, default=5,
                        help="k for k-NN based NCM")
+    parser.add_argument("--train_ratio", type=float, default=0.4,
+                       help="Training set ratio (only used for softmax_split_cp)")
     
     # Alpha values
     parser.add_argument("--alphas", type=float, nargs="+", default=ALPHA_VALUES,
@@ -248,7 +252,8 @@ def compute_calibration_metrics(X_train, y_train, X_test, y_test, n_bins=10):
 
 
 def run_conformal_experiment(embeddings_path, alphas, cal_ratio, ncm_type, k, seed,
-                             max_samples=None, samples_per_class=None, compute_calibration=False, n_bins=10):
+                             max_samples=None, samples_per_class=None, compute_calibration=False, n_bins=10,
+                             train_ratio=0.4):
     """Run conformal prediction for multiple alpha values."""
     # Load embeddings
     data = torch.load(embeddings_path, weights_only=False)
@@ -263,7 +268,38 @@ def run_conformal_experiment(embeddings_path, alphas, cal_ratio, ncm_type, k, se
     if len(labels) < original_size:
         print(f"  Subsampled: {original_size} → {len(labels)} samples")
     
-    # Split data
+    # Handle Softmax Split CP separately (needs train/cal/test split)
+    if ncm_type == "softmax_split_cp":
+        # Split into train/cal/test
+        X_train, y_train, X_cal, y_cal, X_test, y_test = train_cal_test_split(
+            embeddings, labels, train_ratio=train_ratio, cal_ratio=cal_ratio, random_state=seed
+        )
+        
+        results = {"alphas": [], "coverages": [], "avg_set_sizes": [], "median_set_sizes": []}
+        
+        # Compute calibration metrics if requested (uses train as "cal" for the classifier)
+        if compute_calibration:
+            calibration = compute_calibration_metrics(X_train, y_train, X_test, y_test, n_bins=n_bins)
+            results["calibration"] = calibration
+        
+        for alpha in alphas:
+            # Create and run SoftmaxSplitCP
+            predictor = SoftmaxSplitCP(alpha=alpha)
+            predictor.fit(X_train, y_train)
+            predictor.calibrate(X_cal, y_cal)
+            
+            # Evaluate
+            metrics = predictor.evaluate(X_test, y_test, verbose=False)
+            
+            results["alphas"].append(alpha)
+            results["coverages"].append(metrics["coverage"])
+            results["avg_set_sizes"].append(metrics["avg_set_size"])
+            results["median_set_sizes"].append(metrics["median_set_size"])
+        
+        return results
+    
+    # Standard Full CP path
+    # Split data (cal + test only)
     X_cal, y_cal, X_test, y_test = cal_test_split(
         embeddings, labels, cal_ratio=cal_ratio, random_state=seed
     )
@@ -624,7 +660,8 @@ def main():
                 embeddings_path, args.alphas, args.cal_ratio, 
                 args.ncm, args.k, args.seed,
                 args.max_samples, args.samples_per_class,
-                compute_calibration=args.calibration_plot, n_bins=args.n_bins
+                compute_calibration=args.calibration_plot, n_bins=args.n_bins,
+                train_ratio=args.train_ratio
             )
             all_results[model_name] = results
             
@@ -652,6 +689,7 @@ def main():
         f.write("SSL Model Comparison Results\n")
         f.write("="*70 + "\n")
         f.write(f"Dataset: {args.data_dir}\n")
+        f.write(f"Samples per class: {args.samples_per_class}\n")
         f.write(f"NCM: {args.ncm} (k={args.k})\n")
         f.write(f"Cal ratio: {args.cal_ratio}\n\n")
         
