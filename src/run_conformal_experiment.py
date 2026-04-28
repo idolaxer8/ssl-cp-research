@@ -18,7 +18,6 @@ from conformal_prediction import (
     create_ncm,
     cal_test_split,
     train_cal_test_split,
-    build_class_similarity_matrix,
 )
 
 
@@ -37,10 +36,12 @@ def parse_args():
     parser.add_argument("--alpha", type=float, default=0.1,
                        help="Significance level (target miscoverage rate)")
     parser.add_argument("--ncm", type=str, default="knn",
-                       choices=["knn", "simplified_knn", "centroid", "relative_centroid", "ridge", "nn_ratio", "geodesic_nn_ratio", "softmax"],
+                       choices=["knn", "simplified_knn", "centroid", "relative_centroid", "ridge",
+                                "nn_ratio", "geodesic_nn_ratio", "mahal_nn_ratio", "whitened_geodesic", "softmax"],
                        help="NCM for Full CP (and CV+ unless --ncm_cv is set)")
     parser.add_argument("--ncm_cv", type=str, default=None,
-                       choices=["knn", "simplified_knn", "centroid", "relative_centroid", "ridge", "nn_ratio", "geodesic_nn_ratio", "softmax"],
+                       choices=["knn", "simplified_knn", "centroid", "relative_centroid", "ridge",
+                                "nn_ratio", "geodesic_nn_ratio", "mahal_nn_ratio", "whitened_geodesic", "softmax"],
                        help="NCM for CV+ (defaults to --ncm if not set)")
     parser.add_argument("--lambda_reg", type=float, default=1.0,
                        help="Regularization parameter for ridge NCM")
@@ -74,11 +75,6 @@ def parse_args():
                        help="Comma-separated calibration sizes to sweep (x-axis)")
     parser.add_argument("--split_train_ratio", type=float, default=0.5,
                        help="Split CP train size as fraction of cal_size (train = ratio * cal)")
-    parser.add_argument("--class_similarity", action="store_true",
-                       help="Enable model-specific class similarity penalty for Full CP")
-    parser.add_argument("--lambda_cs", type=float, default=0.5,
-                       help="Class similarity penalty weight (used with --class_similarity)")
-
     # Data paths
     parser.add_argument("--data_dir", type=str, default="data",
                        help="Directory containing raw images (for baseline comparison)")
@@ -884,17 +880,7 @@ def compare_cp_methods(
     print(f"Split CP: SoftmaxSplitCP (logistic regression)")
     print(f"CV+ folds: {args.n_folds}")
     print(f"Alpha: {args.alpha}")
-    if args.class_similarity:
-        print(f"Class similarity penalty: ON (lambda_cs={args.lambda_cs})")
     print("=" * 70)
-
-    # Build class similarity matrix if enabled (from full dataset)
-    sim_matrix = None
-    sim_classes = None
-    if args.class_similarity:
-        sim_matrix, sim_classes = build_class_similarity_matrix(embeddings, labels)
-        print(f"Similarity matrix: {sim_matrix.shape}, "
-              f"avg={sim_matrix.mean():.3f}, diag={np.diag(sim_matrix).mean():.3f}")
 
     method_names = ['full_cp', 'cv_plus', 'split_cp']
     results = {
@@ -973,12 +959,7 @@ def compare_cp_methods(
                 ncm = create_ncm(args.ncm, k=args.k, lambda_reg=args.lambda_reg)
                 print(f"    Full CP...")
                 t0 = time.time()
-                cp_full = FullConformalPredictor(
-                    ncm, alpha=args.alpha,
-                    similarity_matrix=sim_matrix,
-                    sim_classes=sim_classes,
-                    lambda_cs=args.lambda_cs if args.class_similarity else 0.0,
-                )
+                cp_full = FullConformalPredictor(ncm, alpha=args.alpha)
                 cp_full.calibrate(X_cal, y_cal, all_classes=all_classes)
                 m_full = cp_full.evaluate(X_test, y_test, verbose=False)
                 t_full = time.time() - t0
@@ -1359,19 +1340,7 @@ def main():
     print(f"\n[4/5] Running Full Conformal Prediction (α={args.alpha})...")
     all_classes = np.unique(labels)
 
-    # Build class similarity matrix if enabled
-    sim_matrix = None
-    sim_classes = None
-    if args.class_similarity:
-        sim_matrix, sim_classes = build_class_similarity_matrix(embeddings, labels)
-        print(f"Class similarity matrix: {sim_matrix.shape}, lambda_cs={args.lambda_cs}")
-
-    cp = FullConformalPredictor(
-        ncm, alpha=args.alpha,
-        similarity_matrix=sim_matrix,
-        sim_classes=sim_classes,
-        lambda_cs=args.lambda_cs if args.class_similarity else 0.0,
-    )
+    cp = FullConformalPredictor(ncm, alpha=args.alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
     
     # Evaluate

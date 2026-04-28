@@ -16,6 +16,8 @@ from typing import Tuple, Dict, List, Optional
 from tqdm import tqdm
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics.pairwise import euclidean_distances
+from scipy.special import logsumexp as scipy_logsumexp
+
 
 
 class NonconformityMeasure:
@@ -774,40 +776,40 @@ class FastNNRatio(NonconformityMeasure):
         # Calibration data
         self.X_cal = None
         self.y_cal = None
-        
+
         # LOOKUP TABLES (The Optimization)
         # These store the current minimum distance for every sample
         self.lookup_same = None   # shape (n_cal,): dist to nearest neighbor of SAME class
         self.lookup_other = None  # shape (n_cal,): dist to nearest neighbor of DIFF class
-        
+
         # Baseline alpha scores
         self.alpha0 = None
-    
+
     def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
         """
         Build the Lookup Tables using vectorized operations.
-        
+
         Complexity: O(N²) - done once during calibration.
         """
         self.X_cal = X_cal
         self.y_cal = y_cal
         n_cal = len(X_cal)
-        
+
         # 1. Compute full distance matrix once
         D = euclidean_distances(X_cal, X_cal)
         np.fill_diagonal(D, np.inf)  # Ignore self-matches
-        
+
         # 2. Initialize Lookup Tables
         self.lookup_same = np.full(n_cal, np.inf)
         self.lookup_other = np.full(n_cal, np.inf)
-        
+
         # 3. Fill Tables using vectorized operations per class
         classes = np.unique(y_cal)
         for c in classes:
             # Indices for this class and other classes
             idx_same = np.where(y_cal == c)[0]
             idx_other = np.where(y_cal != c)[0]
-            
+
             if len(idx_same) > 0:
                 # Update 'same' lookup: min distance to other samples of SAME class
                 if len(idx_same) > 1:
@@ -816,14 +818,14 @@ class FastNNRatio(NonconformityMeasure):
                 else:
                     # Singleton class: no same-class neighbor available
                     self.lookup_same[idx_same] = np.inf
-                
+
                 # Update 'other' lookup: min distance to samples of OTHER classes
                 if len(idx_other) > 0:
                     self.lookup_other[idx_same] = np.min(D[np.ix_(idx_same, idx_other)], axis=1)
-        
+
         # 4. Compute Baseline Scores (alpha0)
         self.alpha0 = self.lookup_same / (self.lookup_other + 1e-8)
-        
+
         # Replace infs (singleton classes) with a high penalty score
         self.alpha0[np.isinf(self.alpha0)] = 1e9
     
@@ -857,76 +859,62 @@ class FastNNRatio(NonconformityMeasure):
             dist_same = np.min(dists[mask_same])
         else:
             return 1e9  # Penalty: proposed class y has no examples
-        
+
         # 2. Find nearest OTHER class neighbor
         mask_other = (self.y_cal != y)
         if np.any(mask_other):
             dist_other = np.min(dists[mask_other])
         else:
             dist_other = 1e-8  # Should not happen if >1 class
-        
+
         return dist_same / (dist_other + 1e-8)
     
+    def score_x_cv(self, x: np.ndarray, y: int) -> float:
+        """Score for CV+/Jackknife+: ratio using current calibration (no hypothetical addition)."""
+        return self.score_x(x, y)
+
     def updated_calibration_scores_for(self, x: np.ndarray, y: int, precomputed_dists: np.ndarray = None) -> np.ndarray:
         """
         Update scores of EXISTING calibration points after hypothetically adding (x, y).
-        
+
         The Optimization:
         We do NOT recalculate nearest neighbors or re-sort.
         We simply compare dist(cal_i, x) against lookup_table[i].
-        
+
         Args:
             x: Test point features
             y: Candidate label
             precomputed_dists: Optional precomputed distances from x to all calibration points.
                                If provided, avoids redundant distance computation.
-        
+
         Complexity: O(N) - fully vectorized
         """
         if self.alpha0 is None:
             raise ValueError("Must call fit() first")
-        
+
         # Start with baseline scores
         updated_scores = self.alpha0.copy()
-        
+
         # Use precomputed distances if available, otherwise compute
         if precomputed_dists is not None:
             dists_x = precomputed_dists
         else:
             dists_x = euclidean_distances([x], self.X_cal).flatten()
-        
-        # ---------------------------------------------------------
+
         # CASE A: Update points belonging to the SAME class (y)
         # For these points, x is a new candidate for "Same Class Neighbor"
-        # ---------------------------------------------------------
         idx_same = np.where(self.y_cal == y)[0]
         if len(idx_same) > 0:
-            # 1. Get current best "same" distances from lookup
-            current_same = self.lookup_same[idx_same]
-            
-            # 2. Check if new point x is closer
-            new_same = np.minimum(current_same, dists_x[idx_same])
-            
-            # 3. Recalculate score (Ratio = Same / Other)
-            # Note: Denominator (Other) does NOT change for these points
+            new_same = np.minimum(self.lookup_same[idx_same], dists_x[idx_same])
             updated_scores[idx_same] = new_same / (self.lookup_other[idx_same] + 1e-8)
-        
-        # ---------------------------------------------------------
+
         # CASE B: Update points belonging to OTHER classes (!= y)
         # For these points, x is a new candidate for "Other Class Neighbor"
-        # ---------------------------------------------------------
         idx_other = np.where(self.y_cal != y)[0]
         if len(idx_other) > 0:
-            # 1. Get current best "other" distances from lookup
-            current_other = self.lookup_other[idx_other]
-            
-            # 2. Check if new point x is closer
-            new_other = np.minimum(current_other, dists_x[idx_other])
-            
-            # 3. Recalculate score (Ratio = Same / Other)
-            # Note: Numerator (Same) does NOT change for these points
+            new_other = np.minimum(self.lookup_other[idx_other], dists_x[idx_other])
             updated_scores[idx_other] = self.lookup_same[idx_other] / (new_other + 1e-8)
-        
+
         return updated_scores
 
 
@@ -1051,6 +1039,10 @@ class HypersphericalNNRatio(NonconformityMeasure):
             np.array([max_same_sim]), np.array([max_other_sim])
         )[0])
 
+    def score_x_cv(self, x: np.ndarray, y: int) -> float:
+        """Score for CV+/Jackknife+: geodesic ratio using current calibration."""
+        return self.score_x(x, y)
+
     # ------------------------------------------------------------------
     # updated calibration scores after hypothetical addition of (x, y)
     # ------------------------------------------------------------------
@@ -1085,6 +1077,709 @@ class HypersphericalNNRatio(NonconformityMeasure):
         scores = self._geodesic_ratio(updated_same, updated_other)
         scores[~np.isfinite(scores)] = 1e9
         return scores
+
+
+class MahalNNRatio(NonconformityMeasure):
+    """
+    Point-to-Point Mahalanobis Nearest-Neighbor Ratio NCM.
+
+    Identical in structure to FastNNRatio but replaces Euclidean distance with
+    Mahalanobis distance using a pooled within-class diagonal covariance (LDA-style).
+
+    Score:
+        alpha_i = min_{j: y_j=y_i, j!=i} mahal(xi, xj)
+                  / min_{k: y_k!=y_i}       mahal(xi, xk)
+
+    where  mahal(a, b) = sqrt( sum_d  (a_d - b_d)^2 / (pooled_var_d + reg) )
+
+    This is equivalent to running nn_ratio in a "whitened" feature space where each
+    dimension d is rescaled by 1/sqrt(pooled_var_d).  Dimensions with high within-class
+    variance are compressed (less informative); tight dimensions are amplified.
+
+    Why pooled (LDA-style) variance?
+    - With K=100 classes and n_cal=300 points, per-class has only ~3 samples in 768D
+      => completely unreliable.
+    - Pooled var uses all n_cal points (one shared estimator): ~100x more stable.
+
+    Full CP safety (exchangeability):
+    - No centroid is ever computed or shifted.
+    - update(x*, y*) only adjusts lookup_same / lookup_other by comparing the new
+      Mahalanobis distances against existing min-lookup tables — exactly like FastNNRatio.
+    - Adding (x*, y*) changes distances to x* but NOT the whitening metric (pooled_var
+      is fixed from fit()).  All n+1 scores share the same metric => exchangeable.
+    """
+
+    def __init__(self, reg: float = 1e-4):
+        self.reg = reg
+        self.X_cal = None
+        self.y_cal = None
+        self.inv_std = None      # (d,) element-wise 1/sqrt(pooled_var + reg)
+        self.lookup_same = None  # (n_cal,) min Mahal dist to same-class neighbor
+        self.lookup_other = None # (n_cal,) min Mahal dist to other-class neighbor
+        self.alpha0 = None
+        # Cache: per-test-point Mahalanobis distances (same x, different y_candidates)
+        self._mcache_key = None
+        self._mcache_dists = None
+
+    def _compute_mahal_dists_from_x(self, x: np.ndarray,
+                                     precomputed_dists=None) -> np.ndarray:
+        """Mahalanobis distances from x to all cal points, with per-x caching.
+
+        Uses x.ctypes.data (stable pointer into X_test's buffer) as cache key,
+        so the O(n*d) computation runs once per test point across all y-candidates.
+        Using id(precomputed_dists) is NOT safe — CPython can reuse the same memory
+        address for different temporary arrays within the same predict() call.
+        """
+        cache_key = x.ctypes.data
+        if cache_key != self._mcache_key:
+            diff = (x - self.X_cal) * self.inv_std
+            self._mcache_dists = np.sqrt(np.maximum((diff * diff).sum(axis=1), 0))
+            self._mcache_key = cache_key
+        return self._mcache_dists
+
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        self.X_cal = X_cal
+        self.y_cal = y_cal
+        n_cal = len(X_cal)
+        classes = np.unique(y_cal)
+
+        # 1. Pooled within-class diagonal variance
+        residuals = X_cal.copy()
+        for c in classes:
+            idx = np.where(y_cal == c)[0]
+            residuals[idx] -= X_cal[idx].mean(axis=0)
+        pooled_var = (residuals ** 2).mean(axis=0)
+        self.inv_std = 1.0 / np.sqrt(pooled_var + self.reg)
+
+        # 2. Whitened calibration matrix for fast pairwise distance
+        X_w = X_cal * self.inv_std   # (n_cal, d)
+
+        # 3. Full pairwise Mahalanobis distance matrix (= Euclidean in whitened space)
+        sq = np.sum(X_w ** 2, axis=1, keepdims=True)   # (n_cal, 1)
+        D_sq = sq + sq.T - 2.0 * (X_w @ X_w.T)         # (n_cal, n_cal)
+        D = np.sqrt(np.maximum(D_sq, 0))
+        np.fill_diagonal(D, np.inf)
+
+        # 4. Build lookup tables exactly like FastNNRatio
+        self.lookup_same  = np.full(n_cal, np.inf)
+        self.lookup_other = np.full(n_cal, np.inf)
+        for c in classes:
+            idx_same  = np.where(y_cal == c)[0]
+            idx_other = np.where(y_cal != c)[0]
+            if len(idx_same) > 1:
+                self.lookup_same[idx_same] = D[np.ix_(idx_same, idx_same)].min(axis=1)
+            if len(idx_other) > 0:
+                self.lookup_other[idx_same] = D[np.ix_(idx_same, idx_other)].min(axis=1)
+
+        # 5. Baseline calibration scores
+        self.alpha0 = self.lookup_same / (self.lookup_other + 1e-8)
+        self.alpha0[~np.isfinite(self.alpha0)] = 1e9
+
+    def get_calibration_scores(self) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+
+    def score_x(self, x: np.ndarray, y: int,
+                precomputed_dists: np.ndarray = None, **kwargs) -> float:
+        dists = self._compute_mahal_dists_from_x(x, precomputed_dists)
+        mask_same  = (self.y_cal == y)
+        mask_other = (self.y_cal != y)
+        if not np.any(mask_same):
+            return 1e9
+        d_same  = np.min(dists[mask_same])
+        d_other = np.min(dists[mask_other]) if np.any(mask_other) else 1e-8
+        return float(d_same / (d_other + 1e-8))
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int,
+                                       precomputed_dists: np.ndarray = None,
+                                       **kwargs) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        dists_x = self._compute_mahal_dists_from_x(x, precomputed_dists)
+        updated = self.alpha0.copy()
+
+        # CASE A: same-class points — x is a new same-class neighbor candidate
+        idx_same = np.where(self.y_cal == y)[0]
+        if len(idx_same) > 0:
+            new_same = np.minimum(self.lookup_same[idx_same], dists_x[idx_same])
+            updated[idx_same] = new_same / (self.lookup_other[idx_same] + 1e-8)
+
+        # CASE B: other-class points — x is a new other-class neighbor candidate
+        idx_other = np.where(self.y_cal != y)[0]
+        if len(idx_other) > 0:
+            new_other = np.minimum(self.lookup_other[idx_other], dists_x[idx_other])
+            updated[idx_other] = self.lookup_same[idx_other] / (new_other + 1e-8)
+
+        return updated
+
+
+class WhitenedGeodesicNNRatio(NonconformityMeasure):
+    """
+    Whitened Geodesic NN Ratio NCM: pooled whitening + L2 renorm + geodesic arccos.
+
+    Combines two orthogonal improvements over plain nn_ratio:
+    1. Dimension whitening (pooled within-class var) — amplifies discriminative dims
+    2. Geodesic (arccos) metric on the re-normalized unit sphere — natural for SSL
+
+    Pipeline per embedding x:
+        x' = x * inv_std              (dimension-wise whitening, inv_std = 1/sqrt(pv+reg))
+        z  = x' / ||x'||              (project back onto unit sphere S^{d-1})
+        score = arccos(max_same_cos(z)) / (arccos(max_other_cos(z)) + eps)
+
+    Full CP safety:
+    - Whitening is fixed at fit() time (pooled_var does not change with x*).
+    - After whitening + renorm, points live on a new unit sphere; Full CP update
+      is identical to HypersphericalNNRatio: only lookup_same_sim / lookup_other_sim
+      change by a max() comparison — no centroid shift.
+    """
+
+    def __init__(self, reg: float = 1e-4):
+        """
+        Args:
+            reg: Whitening regularization floor (adaptive version used in fit()).
+        """
+        self.reg = reg
+        self.inv_std = None
+        self.X_cal_wn = None        # whitened + L2-normalized cal embeddings (n_cal, d)
+        self.y_cal = None
+        self.lookup_same_sim  = None  # (n_cal,) max cosine sim to same-class neighbor
+        self.lookup_other_sim = None  # (n_cal,) max cosine sim to other-class neighbor
+        self.alpha0 = None
+        # Cache: per-test-point whitened similarities
+        self._wcache_key = None
+        self._wcache_sims = None
+
+    @staticmethod
+    def _geodesic_ratio(same_sim: np.ndarray, other_sim: np.ndarray) -> np.ndarray:
+        """Compute arccos(same) / arccos(other) ratio."""
+        eps = 1e-8
+        d_same  = np.arccos(np.clip(same_sim,  -1.0, 1.0))
+        d_other = np.arccos(np.clip(other_sim, -1.0, 1.0))
+        return d_same / (d_other + eps)
+
+    def _whiten_normalize(self, X: np.ndarray) -> np.ndarray:
+        """Whiten then L2-normalize each row."""
+        X_w = X * self.inv_std
+        norms = np.linalg.norm(X_w, axis=1, keepdims=True)
+        return X_w / np.maximum(norms, 1e-10)
+
+    def _get_sims(self, x: np.ndarray, precomputed_dists=None) -> np.ndarray:
+        """Cosine sims from whitened-normalized x to all cal points, with caching.
+
+        Uses x.ctypes.data as cache key (stable view pointer into X_test's buffer).
+        """
+        cache_key = x.ctypes.data
+        if cache_key != self._wcache_key:
+            z = self._whiten_normalize(x.reshape(1, -1))[0]
+            self._wcache_sims = self.X_cal_wn @ z
+            self._wcache_key = cache_key
+        return self._wcache_sims
+
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        self.y_cal = y_cal
+        n_cal = len(X_cal)
+        classes = np.unique(y_cal)
+
+        # 1. Pooled within-class diagonal variance
+        residuals = X_cal.copy()
+        for c in classes:
+            idx = np.where(y_cal == c)[0]
+            residuals[idx] -= X_cal[idx].mean(axis=0)
+        pooled_var = (residuals ** 2).mean(axis=0)
+        # Fix 4: adaptive reg caps noise-amplification on well-separated datasets.
+        # Fixed reg=1e-4 lets 1/sqrt(var+reg) blow up for near-zero-var dims, amplifying
+        # float noise into apparent angular distances. Bounding reg >= 1% of median(pooled_var)
+        # limits the worst-case amplification factor to ~10×.
+        adaptive_reg = max(self.reg, 0.01 * float(np.median(pooled_var)))
+        self.inv_std = 1.0 / np.sqrt(pooled_var + adaptive_reg)
+
+        # 2. Whiten + L2-normalize calibration embeddings
+        self.X_cal_wn = self._whiten_normalize(X_cal)  # (n_cal, d)
+
+        # 3. Cosine similarity matrix in whitened space
+        S = self.X_cal_wn @ self.X_cal_wn.T
+        np.fill_diagonal(S, -np.inf)
+
+        # 4. Build lookup tables (same structure as HypersphericalNNRatio)
+        self.lookup_same_sim  = np.full(n_cal, -1.0)
+        self.lookup_other_sim = np.full(n_cal, -1.0)
+        for c in classes:
+            idx_same  = np.where(y_cal == c)[0]
+            idx_other = np.where(y_cal != c)[0]
+            if len(idx_same) > 1:
+                self.lookup_same_sim[idx_same] = S[np.ix_(idx_same, idx_same)].max(axis=1)
+            if len(idx_other) > 0:
+                self.lookup_other_sim[idx_same] = S[np.ix_(idx_same, idx_other)].max(axis=1)
+
+        self.alpha0 = self._geodesic_ratio(self.lookup_same_sim, self.lookup_other_sim)
+        self.alpha0[~np.isfinite(self.alpha0)] = 1e9
+
+    def get_calibration_scores(self) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+
+    def score_x(self, x: np.ndarray, y: int,
+                precomputed_dists: np.ndarray = None, **kwargs) -> float:
+        sims = self._get_sims(x, precomputed_dists)
+        mask_same  = (self.y_cal == y)
+        if not np.any(mask_same):
+            return 1e9
+        max_same  = float(np.max(sims[mask_same]))
+        max_other = float(np.max(sims[~mask_same])) if np.any(~mask_same) else -1.0
+        return float(self._geodesic_ratio(np.array([max_same]), np.array([max_other]))[0])
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int,
+                                       precomputed_dists: np.ndarray = None,
+                                       **kwargs) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        sims_x = self._get_sims(x, precomputed_dists)
+
+        updated_same  = self.lookup_same_sim.copy()
+        updated_other = self.lookup_other_sim.copy()
+
+        idx_same = np.where(self.y_cal == y)[0]
+        if len(idx_same) > 0:
+            updated_same[idx_same] = np.maximum(self.lookup_same_sim[idx_same], sims_x[idx_same])
+
+        idx_other = np.where(self.y_cal != y)[0]
+        if len(idx_other) > 0:
+            updated_other[idx_other] = np.maximum(self.lookup_other_sim[idx_other], sims_x[idx_other])
+
+        scores = self._geodesic_ratio(updated_same, updated_other)
+        scores[~np.isfinite(scores)] = 1e9
+        return scores
+
+
+class GeodesicTopKMeanNCM(NonconformityMeasure):
+    """
+    Geodesic Top-k Mean NCM: whitened geodesic ratio using k-NN averaged cosine similarity.
+
+    Addresses the Trojan Horse degeneracy of 1-NN ratio NCMs on well-separated datasets.
+
+    Three modes controlled by `topk_same` / `topk_other`:
+
+    Symmetric  (topk_same=True,  topk_other=True):   "geodesic_topk_mean"
+        score = arccos(mean_k(sim_same)) / (arccos(mean_k(sim_other)) + eps)
+        Top-k on both sides. Best at small cal; slightly worse than whitened_geodesic
+        at large cal because denominator grows with averaging.
+
+    Asymmetric (topk_same=False, topk_other=True):   "geodesic_topk_asym"  ← recommended
+        score = arccos(max(sim_same)) / (arccos(mean_k(sim_other)) + eps)
+        1-NN numerator keeps correct-class scores tight; k-NN mean denominator dilutes
+        the Trojan Horse collapse. Best of both worlds: smaller sets at all cal sizes.
+
+    Sym-wrong  (topk_same=True,  topk_other=False):  not registered — hurts efficiency.
+
+    k selection (adaptive): k = max(1, min(K_MAX, n_cal // n_classes)).
+    At k=1 all modes reduce to WhitenedGeodesicNNRatio.
+
+    FCP O(N) compatibility: CASE A update is O(1) per calibration point.
+    """
+
+    K_MAX = 5  # cap; diminishing Trojan-Horse protection beyond k=5
+
+    def __init__(self, reg: float = 1e-4, k: Optional[int] = None,
+                 topk_same: bool = True, topk_other: bool = True,
+                 numerator_only: bool = False, whiten: bool = True):
+        """
+        Args:
+            reg:            Whitening regularization floor.
+            k:              Neighbors for mean pooling. None → adaptive.
+            topk_same:      If True, average same-class sims (numerator). Default True.
+            topk_other:     If True, average other-class sims (denominator). Default True.
+            numerator_only: If True, score = d_same only (no ratio). Avoids denominator
+                            collapse on well-separated datasets. Ignores topk_other.
+            whiten:         If False, skip pooled whitening (ablation). Default True.
+        """
+        self.reg           = reg
+        self.k_override    = k
+        self.topk_same     = topk_same
+        self.topk_other    = topk_other
+        self.numerator_only = numerator_only
+        self.whiten     = whiten
+        self.k          = None      # resolved at fit()
+        self.inv_std    = None
+        self.X_cal_wn   = None
+        self.y_cal      = None
+        # Same-class lookup — top-k or 1-NN
+        self.sum_same_sims  = None   # topk_same only
+        self.kth_same_sim   = None   # topk_same only
+        self._k_same_eff    = None   # topk_same only
+        self.lookup_same_sim = None  # not topk_same (max sim)
+        # Other-class lookup — top-k or 1-NN
+        self.sum_other_sims  = None  # topk_other only
+        self.kth_other_sim   = None  # topk_other only
+        self._k_other_eff    = None  # topk_other only
+        self.lookup_other_sim = None  # not topk_other (max sim)
+        self.alpha0 = None
+        # Test-point similarity cache
+        self._wcache_key  = None
+        self._wcache_sims = None
+
+    # ------------------------------------------------------------------
+    # Preprocessing helpers (identical to WhitenedGeodesicNNRatio)
+    # ------------------------------------------------------------------
+
+    def _whiten_normalize(self, X: np.ndarray) -> np.ndarray:
+        X_w = X * self.inv_std
+        norms = np.linalg.norm(X_w, axis=1, keepdims=True)
+        return X_w / np.maximum(norms, 1e-10)
+
+    def _get_sims(self, x: np.ndarray) -> np.ndarray:
+        cache_key = x.ctypes.data
+        if cache_key != self._wcache_key:
+            z = self._whiten_normalize(x.reshape(1, -1))[0]
+            self._wcache_sims = self.X_cal_wn @ z
+            self._wcache_key  = cache_key
+        return self._wcache_sims
+
+    # ------------------------------------------------------------------
+    # Top-k helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _topk_stats_block(S_block: np.ndarray, k: int):
+        """
+        For each row in S_block compute (sum_topk, kth_sim, k_eff).
+        -inf entries are excluded (used for the diagonal of same-class blocks).
+        Returns three (n_rows,) arrays.
+        """
+        n_rows = S_block.shape[0]
+        sums   = np.zeros(n_rows)
+        kths   = np.full(n_rows, -1.0)
+        k_effs = np.zeros(n_rows)
+        for i in range(n_rows):
+            row   = S_block[i]
+            valid = row[np.isfinite(row)]
+            ke    = min(k, len(valid))
+            if ke == 0:
+                continue
+            if ke < len(valid):
+                top = valid[np.argpartition(valid, -ke)[-ke:]]
+            else:
+                top = valid
+            sums[i]   = top.sum()
+            kths[i]   = top.min()
+            k_effs[i] = ke
+        return sums, kths, k_effs
+
+    @staticmethod
+    def _d_topk(sim_sum: np.ndarray, k_eff: np.ndarray) -> np.ndarray:
+        """arccos of mean-k sim."""
+        return np.arccos(np.clip(sim_sum / np.maximum(k_eff, 1), -1.0, 1.0))
+
+    @staticmethod
+    def _d_1nn(max_sim: np.ndarray) -> np.ndarray:
+        """arccos of max sim (1-NN geodesic distance)."""
+        return np.arccos(np.clip(max_sim, -1.0, 1.0))
+
+    def _score_ratio(self,
+                     same_sum, same_k, same_max,
+                     other_sum, other_k, other_max) -> np.ndarray:
+        """Compute score using the mode flags (topk_same / topk_other / numerator_only)."""
+        d_same = self._d_topk(same_sum, same_k) if self.topk_same else self._d_1nn(same_max)
+        if self.numerator_only:
+            return d_same
+        eps = 1e-8
+        d_other = self._d_topk(other_sum, other_k) if self.topk_other else self._d_1nn(other_max)
+        return d_same / (d_other + eps)
+
+    # ------------------------------------------------------------------
+    # Core interface
+    # ------------------------------------------------------------------
+
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        self.y_cal = y_cal
+        n_cal   = len(X_cal)
+        classes = np.unique(y_cal)
+
+        # Adaptive k
+        n_per_class = n_cal // len(classes)
+        self.k = self.k_override if self.k_override is not None \
+                 else max(1, min(self.K_MAX, n_per_class))
+
+        # Pooled whitening (Fix 4: adaptive reg) — skip if whiten=False (ablation)
+        if self.whiten:
+            residuals = X_cal.copy()
+            for c in classes:
+                idx = np.where(y_cal == c)[0]
+                residuals[idx] -= X_cal[idx].mean(axis=0)
+            pooled_var    = (residuals ** 2).mean(axis=0)
+            adaptive_reg  = max(self.reg, 0.01 * float(np.median(pooled_var)))
+            self.inv_std  = 1.0 / np.sqrt(pooled_var + adaptive_reg)
+        else:
+            self.inv_std = np.ones(X_cal.shape[1], dtype=np.float64)
+
+        # Whiten + L2-normalize
+        self.X_cal_wn = self._whiten_normalize(X_cal)
+
+        # Cosine similarity matrix
+        S = self.X_cal_wn @ self.X_cal_wn.T
+        np.fill_diagonal(S, -np.inf)
+
+        # Build lookup tables
+        k = self.k
+        if self.topk_same:
+            self.sum_same_sims  = np.zeros(n_cal)
+            self.kth_same_sim   = np.full(n_cal, -1.0)
+            self._k_same_eff    = np.zeros(n_cal)
+        else:
+            self.lookup_same_sim = np.full(n_cal, -1.0)
+
+        if not self.numerator_only:
+            if self.topk_other:
+                self.sum_other_sims = np.zeros(n_cal)
+                self.kth_other_sim  = np.full(n_cal, -1.0)
+                self._k_other_eff   = np.zeros(n_cal)
+            else:
+                self.lookup_other_sim = np.full(n_cal, -1.0)
+
+        for c in classes:
+            idx_same  = np.where(y_cal == c)[0]
+            idx_other = np.where(y_cal != c)[0]
+
+            # Same-class block (diagonal is -inf → excluded by _topk_stats_block)
+            S_same = S[np.ix_(idx_same, idx_same)]
+            if self.topk_same:
+                s, th, ke = self._topk_stats_block(S_same, k)
+                self.sum_same_sims[idx_same] = s
+                self.kth_same_sim[idx_same]  = th
+                self._k_same_eff[idx_same]   = ke
+            else:
+                # max per row, excluding -inf self
+                self.lookup_same_sim[idx_same] = np.where(
+                    np.isfinite(S_same), S_same, -np.inf
+                ).max(axis=1)
+
+            if not self.numerator_only and len(idx_other) > 0:
+                S_other = S[np.ix_(idx_same, idx_other)]
+                if self.topk_other:
+                    s, th, ke = self._topk_stats_block(S_other, k)
+                    self.sum_other_sims[idx_same] = s
+                    self.kth_other_sim[idx_same]  = th
+                    self._k_other_eff[idx_same]   = ke
+                else:
+                    self.lookup_other_sim[idx_same] = S_other.max(axis=1)
+
+        _z = np.zeros(n_cal)
+        self.alpha0 = self._score_ratio(
+            self.sum_same_sims,  self._k_same_eff,   self.lookup_same_sim,
+            getattr(self, 'sum_other_sims',  _z),
+            getattr(self, '_k_other_eff',    _z + 1),
+            getattr(self, 'lookup_other_sim', _z - 1),
+        )
+        self.alpha0[~np.isfinite(self.alpha0)] = 1e9
+
+    def get_calibration_scores(self) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+
+    def score_x(self, x: np.ndarray, y: int, **kwargs) -> float:
+        sims = self._get_sims(x)
+        k    = self.k
+        mask_same  = (self.y_cal == y)
+        mask_other = ~mask_same
+        if not np.any(mask_same):
+            return 1e9
+
+        def _topk_scalar(sim_arr):
+            ke = min(k, len(sim_arr))
+            if ke == 0:
+                return 0.0, 0.0
+            top = sim_arr[np.argpartition(sim_arr, -ke)[-ke:]] if ke < len(sim_arr) else sim_arr
+            return float(top.sum()), float(ke)
+
+        # Same-class
+        if self.topk_same:
+            sum_s, ke_s = _topk_scalar(sims[mask_same])
+            max_s = None
+        else:
+            sum_s = ke_s = None
+            max_s = float(np.max(sims[mask_same]))
+
+        # Other-class
+        if not self.numerator_only and np.any(mask_other):
+            if self.topk_other:
+                sum_o, ke_o = _topk_scalar(sims[mask_other])
+                max_o = None
+            else:
+                sum_o = ke_o = None
+                max_o = float(np.max(sims[mask_other]))
+        else:
+            sum_o = ke_o = None; max_o = -1.0
+
+        return float(self._score_ratio(
+            np.array([sum_s  if sum_s  is not None else 0.0]),
+            np.array([ke_s   if ke_s   is not None else 1.0]),
+            np.array([max_s  if max_s  is not None else -1.0]),
+            np.array([sum_o  if sum_o  is not None else 0.0]),
+            np.array([ke_o   if ke_o   is not None else 1.0]),
+            np.array([max_o  if max_o  is not None else -1.0]),
+        )[0])
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int,
+                                        **kwargs) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        sims_x = self._get_sims(x)
+        k      = self.k
+
+        # -- Same-class update --
+        idx_same = np.where(self.y_cal == y)[0]
+        if self.topk_same:
+            upd_sum_same = self.sum_same_sims.copy()
+            upd_k_same   = self._k_same_eff.copy()
+            if len(idx_same) > 0:
+                sim  = sims_x[idx_same]
+                full = self._k_same_eff[idx_same] >= k
+                enter = full & (sim > self.kth_same_sim[idx_same])
+                upd_sum_same[idx_same[enter]] += sim[enter] - self.kth_same_sim[idx_same[enter]]
+                grow = ~full
+                upd_sum_same[idx_same[grow]] += sim[grow]
+                upd_k_same[idx_same[grow]]   += 1
+            upd_max_same = None
+        else:
+            upd_sum_same = upd_k_same = None
+            upd_max_same = self.lookup_same_sim.copy()
+            if len(idx_same) > 0:
+                upd_max_same[idx_same] = np.maximum(
+                    self.lookup_same_sim[idx_same], sims_x[idx_same]
+                )
+
+        # -- Other-class update (skipped when numerator_only) --
+        if self.numerator_only:
+            upd_sum_other = upd_k_other = upd_max_other = None
+        else:
+            idx_other = np.where(self.y_cal != y)[0]
+            if self.topk_other:
+                upd_sum_other = self.sum_other_sims.copy()
+                upd_k_other   = self._k_other_eff.copy()
+                if len(idx_other) > 0:
+                    sim  = sims_x[idx_other]
+                    full = self._k_other_eff[idx_other] >= k
+                    enter = full & (sim > self.kth_other_sim[idx_other])
+                    upd_sum_other[idx_other[enter]] += sim[enter] - self.kth_other_sim[idx_other[enter]]
+                    grow = ~full
+                    upd_sum_other[idx_other[grow]] += sim[grow]
+                    upd_k_other[idx_other[grow]]   += 1
+                upd_max_other = None
+            else:
+                upd_sum_other = upd_k_other = None
+                upd_max_other = self.lookup_other_sim.copy()
+                if len(idx_other) > 0:
+                    upd_max_other[idx_other] = np.maximum(
+                        self.lookup_other_sim[idx_other], sims_x[idx_other]
+                    )
+
+        def _arr(v, fallback):
+            return v if v is not None else np.full(len(self.y_cal), fallback)
+
+        scores = self._score_ratio(
+            _arr(upd_sum_same,  0.0), _arr(upd_k_same,  1.0), _arr(upd_max_same,  -1.0),
+            _arr(upd_sum_other, 0.0), _arr(upd_k_other, 1.0), _arr(upd_max_other, -1.0),
+        )
+        scores[~np.isfinite(scores)] = 1e9
+        return scores
+
+
+class TemperedDensityRatioNCM(NonconformityMeasure):
+    """Non-parametric log-density-ratio NCM on the unit sphere.
+
+    S(x, y) = log KDE_all(x) - log KDE_y(x)
+
+    where  KDE_c(x)   = sum_{x_j in C_c} exp(sim(x, x_j) / tau)
+    and    KDE_all(x) = sum_c KDE_c(x)  (sum over ALL calibration points).
+
+    Equivalent to -log p(y|x) under a von Mises-Fisher mixture on the sphere:
+    low score  = x is well explained by class y relative to all other classes.
+
+    Key properties:
+    - tau -> 0  : recovers 1-NN ratio (same limit as geodesic_topk_asym at k=1)
+    - tau -> inf: uniform kernel, no class discrimination
+    - tau ~ 0.1 : standard in contrastive learning; good default for DINOv2
+
+    Transductive FCP update is O(n_cal) via np.logaddexp — no re-fit needed.
+    """
+
+    def __init__(self, tau: float = 0.1):
+        self.tau = tau
+        self.X_norm = None       # (n, d) L2-normalised calibration embeddings
+        self.y_cal = None        # (n,) integer labels
+        self._lse_same = None    # (n,) logsumexp(sim(x_i, C_{y_i}) / tau) at fit time
+        self._lse_all = None     # (n,) logsumexp(sim(x_i, X_cal)  / tau) at fit time
+        self._cache_key = None
+        self._cache_sims_tau = None  # (n,) cached sim(x*, X_norm) / tau
+
+    # ------------------------------------------------------------------
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        norms = np.linalg.norm(X_cal, axis=1, keepdims=True)
+        self.X_norm = X_cal / np.maximum(norms, 1e-10)
+        self.y_cal = y_cal
+
+        # Full pairwise similarity matrix / tau  — shape (n, n)
+        S = (self.X_norm @ self.X_norm.T) / self.tau   # (n, n)
+        np.fill_diagonal(S, -np.inf)                    # exclude self-similarity
+
+        n = len(y_cal)
+        self._lse_all  = scipy_logsumexp(S, axis=1)    # (n,)
+        self._lse_same = np.empty(n)
+        for i in range(n):
+            self._lse_same[i] = scipy_logsumexp(S[i, y_cal == y_cal[i]])
+
+    def get_calibration_scores(self) -> np.ndarray:
+        return self._lse_all - self._lse_same
+
+    # ------------------------------------------------------------------
+    def _sims_tau(self, x: np.ndarray) -> np.ndarray:
+        """Cached (n,) vector of sim(x, X_cal) / tau."""
+        key = x.ctypes.data
+        if key == self._cache_key:
+            return self._cache_sims_tau
+        x_norm = x / max(float(np.linalg.norm(x)), 1e-10)
+        sims = (self.X_norm @ x_norm) / self.tau
+        self._cache_key = key
+        self._cache_sims_tau = sims
+        return sims
+
+    # ------------------------------------------------------------------
+    def score_x(self, x: np.ndarray, y: int, precomputed_dists=None) -> float:
+        """Transductive score: x scores against existing calibration members only (no self)."""
+        sims = self._sims_tau(x)
+        same_mask = self.y_cal == y
+        if same_mask.sum() == 0:
+            return 1e9
+        lse_same_x = scipy_logsumexp(sims[same_mask])
+        lse_all_x  = scipy_logsumexp(sims)
+        return float(lse_all_x - lse_same_x)
+
+    def score_x_cv(self, x: np.ndarray, y: int) -> float:
+        """CV+: no transduction — x is NOT added to the calibration set."""
+        sims = self._sims_tau(x)
+        same_mask = self.y_cal == y
+        if same_mask.sum() == 0:
+            return 1e9
+        return float(scipy_logsumexp(sims) - scipy_logsumexp(sims[same_mask]))
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int,
+                                        precomputed_dists=None) -> np.ndarray:
+        """O(n) update via logaddexp — no re-fit."""
+        sims = self._sims_tau(x)                             # (n,)
+
+        # Every cal point gains exp(sims[i]) in its denominator (all-class pool)
+        lse_all_upd = np.logaddexp(self._lse_all, sims)     # (n,)
+
+        # Only same-class cal points gain exp(sims[i]) in their numerator
+        lse_same_upd = self._lse_same.copy()
+        same_mask = self.y_cal == y
+        lse_same_upd[same_mask] = np.logaddexp(
+            self._lse_same[same_mask], sims[same_mask]
+        )
+
+        return lse_all_upd - lse_same_upd
 
 
 class SoftmaxNonconformity(NonconformityMeasure):
@@ -1165,27 +1860,16 @@ class SoftmaxNonconformity(NonconformityMeasure):
 
 
 class FullConformalPredictor:
-    
+
     def __init__(
         self,
         nonconformity_measure: NonconformityMeasure,
         alpha: float = 0.1,
-        similarity_matrix: np.ndarray = None,
-        sim_classes: np.ndarray = None,
-        lambda_cs: float = 0.0,
     ):
         """
         Args:
             nonconformity_measure: Nonconformity scoring function
             alpha: Significance level (e.g., 0.1 for 90% confidence)
-            similarity_matrix: (n_classes, n_classes) class similarity matrix
-                from ``build_class_similarity_matrix``.  If provided together
-                with ``lambda_cs > 0``, the predictor applies the model-specific
-                class similarity penalty at test time (Eq. 5 from the paper).
-            sim_classes: Array of class labels corresponding to the rows/cols
-                of ``similarity_matrix``.
-            lambda_cs: Penalty weight for class similarity.
-                0 = disabled (default).
         """
         self.ncm = nonconformity_measure
         self.alpha = alpha
@@ -1193,14 +1877,6 @@ class FullConformalPredictor:
         self.y_cal = None
         self.classes = None
         self.cal_scores = None  # Cached calibration scores
-
-        # Class similarity penalty (paper: "Enhancing CP via Class Similarity")
-        self.similarity_matrix = similarity_matrix
-        self.lambda_cs = lambda_cs
-        if similarity_matrix is not None and sim_classes is not None:
-            self._sim_class_to_idx = {int(c): i for i, c in enumerate(sim_classes)}
-        else:
-            self._sim_class_to_idx = None
         
     def calibrate(self, X_cal: np.ndarray, y_cal: np.ndarray,
                   all_classes: np.ndarray = None):
@@ -1237,38 +1913,6 @@ class FullConformalPredictor:
         print(f"Calibration scores (base) - min: {self.cal_scores.min():.4f}, max: {self.cal_scores.max():.4f}, mean: {self.cal_scores.mean():.4f}, std: {self.cal_scores.std():.4f}")
         print(f"Timing: fit={fit_time:.2f}s, score_cal={score_time:.2f}s")
 
-        # --- Class similarity: LOO 1-NN penalty on calibration scores ---
-        self._cs_cal_penalty = None  # stored for reuse on updated scores
-        if self.lambda_cs > 0 and self.similarity_matrix is not None and self._sim_class_to_idx is not None:
-            n_cal = len(X_cal)
-            # Compute pairwise distances for LOO 1-NN
-            D_cal = euclidean_distances(X_cal, X_cal)
-            np.fill_diagonal(D_cal, np.inf)  # exclude self
-            loo_nn_idx = np.argmin(D_cal, axis=1)  # LOO nearest neighbour
-            y_hat_loo = y_cal[loo_nn_idx]           # LOO predicted class
-
-            # Compute penalty for each cal point
-            self._cs_cal_penalty = np.zeros(n_cal, dtype=float)
-            for i in range(n_cal):
-                yi_idx = self._sim_class_to_idx.get(int(y_cal[i]))
-                yh_idx = self._sim_class_to_idx.get(int(y_hat_loo[i]))
-                if yi_idx is not None and yh_idx is not None:
-                    sim = self.similarity_matrix[yi_idx, yh_idx]
-                    self._cs_cal_penalty[i] = self.lambda_cs * (1.0 - sim)
-
-            self.cal_scores = self.cal_scores + self._cs_cal_penalty
-
-            loo_acc = np.mean(y_hat_loo == y_cal)
-            avg_penalty = self._cs_cal_penalty.mean()
-            nonzero_frac = np.mean(self._cs_cal_penalty > 0)
-            print(f"Class similarity penalty: lambda_cs={self.lambda_cs:.3f}, "
-                  f"LOO-1NN acc={loo_acc:.3f}, "
-                  f"avg penalty={avg_penalty:.4f}, "
-                  f"nonzero={nonzero_frac:.1%}")
-            print(f"Calibration scores (penalized) - min: {self.cal_scores.min():.4f}, "
-                  f"max: {self.cal_scores.max():.4f}, "
-                  f"mean: {self.cal_scores.mean():.4f}, "
-                  f"std: {self.cal_scores.std():.4f}")
     
     def predict(
         self,
@@ -1307,12 +1951,6 @@ class FullConformalPredictor:
         
         iterator = tqdm(range(n_test), desc="Full CP") if verbose else range(n_test)
         
-        # Check if class similarity penalty is active
-        use_cs = (self.lambda_cs > 0
-                  and self.similarity_matrix is not None
-                  and self._sim_class_to_idx is not None
-                  and self._cs_cal_penalty is not None)
-
         for i in iterator:
             x_test = X_test[i]
             pred_set = []
@@ -1322,15 +1960,6 @@ class FullConformalPredictor:
             precomputed_dists = None
             if hasattr(self.ncm, 'X_cal') and self.ncm.X_cal is not None:
                 precomputed_dists = euclidean_distances([x_test], self.ncm.X_cal).flatten()
-
-            # --- Determine y_hat for test point via 1-NN (if CS active) ---
-            if use_cs:
-                if precomputed_dists is not None:
-                    nn_idx = np.argmin(precomputed_dists)
-                else:
-                    dists_tmp = euclidean_distances([x_test], self.X_cal).flatten()
-                    nn_idx = np.argmin(dists_tmp)
-                y_hat_test = int(self.y_cal[nn_idx])
 
             # For each candidate label, compute p-value
             for y_candidate in self.classes:
@@ -1348,20 +1977,6 @@ class FullConformalPredictor:
                     test_score = self.ncm.score_x(x_test, yc)
                     updated_scores = self.ncm.updated_calibration_scores_for(x_test, yc)
 
-                if use_cs:
-                    # Penalise TEST score: lambda * (1 - M[y_candidate, y_hat_test])
-                    yc_idx = self._sim_class_to_idx.get(yc)
-                    yhat_idx = self._sim_class_to_idx.get(y_hat_test)
-                    if yc_idx is not None and yhat_idx is not None:
-                        sim = self.similarity_matrix[yc_idx, yhat_idx]
-                        test_score = test_score + self.lambda_cs * (1.0 - sim)
-
-                    # Penalise UPDATED calibration scores with the same
-                    # LOO penalties computed during calibrate().
-                    # This restores exchangeability: cal points are penalised
-                    # at the same rate as the test point.
-                    updated_scores = updated_scores + self._cs_cal_penalty
-
                 n_greater = np.sum(updated_scores >= test_score)
                 p_value = (n_greater + 1) / (n_cal + 1)
 
@@ -1370,15 +1985,14 @@ class FullConformalPredictor:
                 if p_value > self.alpha:
                     pred_set.append(yc)
 
-            # Debug: warn if empty
+            # Empty prediction sets are valid under CP: they represent the ~alpha fraction
+            # of test points that the predictor correctly does NOT cover.  The CP guarantee
+            # is probabilistic (coverage >= 1-alpha over randomness), NOT that every
+            # individual set must be non-empty.  The old fallback (add all classes) was
+            # artificially inflating empirical coverage above the theoretical upper bound
+            # 1-alpha + 1/(n_cal+1) on well-separated datasets like CIFAR-10 with DINOv2.
             if len(pred_set) == 0:
                 empty_count += 1
-                if empty_count <= 3 and verbose:  # Show first 3 warnings
-                    best_p = max(p_vals.values())
-                    best_class = max(p_vals, key=p_vals.get)
-                    print(f"\nWarning: Empty prediction set for test example {i}")
-                    print(f"  Best p-value: {best_p:.4f} (class {best_class}), alpha: {self.alpha}")
-                    print(f"  Cal scores range: [{self.cal_scores.min():.4f}, {self.cal_scores.max():.4f}]")
 
             prediction_sets.append(pred_set)
             set_sizes.append(len(pred_set))
@@ -1800,7 +2414,15 @@ class CrossValidationPlusPredictor:
         self.fold_ncms = []
 
         self._actual_folds = actual_folds
-        skf = StratifiedKFold(n_splits=actual_folds, shuffle=True, random_state=42)
+
+        # Use non-stratified KFold when StratifiedKFold cannot be applied
+        # (i.e. some class has fewer members than n_splits)
+        if min_class_size < actual_folds:
+            from sklearn.model_selection import KFold
+            print(f"  CV+ note: using non-stratified KFold (min class size={min_class_size} < n_folds={actual_folds})")
+            skf = KFold(n_splits=actual_folds, shuffle=True, random_state=42)
+        else:
+            skf = StratifiedKFold(n_splits=actual_folds, shuffle=True, random_state=42)
 
         start_time = time.time()
 
@@ -1975,63 +2597,18 @@ class CrossValidationPlusPredictor:
         return metrics
 
 
-def build_class_similarity_matrix(
-    X: np.ndarray,
-    y: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Build model-specific class similarity matrix M from embedding centroids.
-
-    Reference: "Enhancing Conformal Prediction via Class Similarity" (Eq. 5-6).
-
-    M_{c,c'} = <h_bar_c - h_bar_G, h_bar_c' - h_bar_G>
-               / (||h_bar_c - h_bar_G|| * ||h_bar_c' - h_bar_G||)
-
-    where h_bar_c is the centroid of class c and h_bar_G is the global mean.
-
-    Args:
-        X: Feature embeddings (N, d)
-        y: Class labels (N,)
-
-    Returns:
-        (M, classes) where M is (n_classes, n_classes) similarity matrix
-        in [-1, 1] and classes is the sorted array of unique labels.
-    """
-    classes = np.unique(y)
-    n_classes = len(classes)
-    d = X.shape[1]
-
-    # Compute class centroids
-    centroids = np.zeros((n_classes, d))
-    for idx, c in enumerate(classes):
-        centroids[idx] = X[y == c].mean(axis=0)
-
-    # Global mean
-    global_mean = centroids.mean(axis=0)
-
-    # Center centroids
-    centered = centroids - global_mean  # (n_classes, d)
-
-    # Normalise
-    norms = np.linalg.norm(centered, axis=1, keepdims=True)
-    norms = np.maximum(norms, 1e-10)  # avoid division by zero
-    centered_normed = centered / norms
-
-    # Cosine similarity of centered centroids
-    M = centered_normed @ centered_normed.T  # (n_classes, n_classes)
-
-    return M, classes
-
-
-def create_ncm(ncm_type: str, k: int = 5, lambda_reg: float = 1.0) -> NonconformityMeasure:
+def create_ncm(ncm_type: str, k: int = 5, lambda_reg: float = 1.0,
+               reg: float = 1e-4, tau: float = 0.1) -> NonconformityMeasure:
     """
     Factory function to create NCM instances.
 
     Args:
         ncm_type: One of 'knn', 'simplified_knn', 'centroid',
-                  'relative_centroid', 'ridge', 'nn_ratio'
+                  'relative_centroid', 'ridge', 'nn_ratio', 'geodesic_nn_ratio',
+                  'softmax', 'mahal_nn_ratio', 'whitened_geodesic'
         k: Number of neighbors (for knn, simplified_knn)
         lambda_reg: Regularization parameter (for ridge)
+        reg: Variance regularisation for Mahalanobis NCMs
     """
     if ncm_type == "knn":
         return KNNNonconformity(k=k, metric='euclidean')
@@ -2049,6 +2626,36 @@ def create_ncm(ncm_type: str, k: int = 5, lambda_reg: float = 1.0) -> Nonconform
         return HypersphericalNNRatio()
     elif ncm_type == "softmax":
         return SoftmaxNonconformity()
+    elif ncm_type == "mahal_nn_ratio":
+        return MahalNNRatio(reg=reg)
+    elif ncm_type == "whitened_geodesic":
+        return WhitenedGeodesicNNRatio(reg=reg)
+    elif ncm_type == "geodesic_topk_mean":
+        # Symmetric: topk on both same and other
+        return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
+                                   topk_same=True, topk_other=True)
+    elif ncm_type == "geodesic_topk_asym":
+        # Asymmetric: 1-NN for same (tight numerator), topk for other (Trojan Horse fix)
+        return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
+                                   topk_same=False, topk_other=True)
+    elif ncm_type == "unwhitened_topk_mean":
+        # Ablation: symmetric topk WITHOUT whitening
+        return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
+                                   topk_same=True, topk_other=True, whiten=False)
+    elif ncm_type == "unwhitened_topk_asym":
+        # Ablation: asymmetric topk WITHOUT whitening
+        return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
+                                   topk_same=False, topk_other=True, whiten=False)
+    elif ncm_type == "geodesic_topk":
+        # Numerator-only: mean of top-k same-class geodesic distances, no ratio
+        return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
+                                   topk_same=True, numerator_only=True)
+    elif ncm_type == "geodesic_1nn":
+        # Numerator-only: 1-NN same-class geodesic distance, no ratio
+        return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
+                                   topk_same=False, numerator_only=True)
+    elif ncm_type == "tempered_density_ratio":
+        return TemperedDensityRatioNCM(tau=tau)
     else:
         raise ValueError(f"Unknown NCM type: {ncm_type}")
 

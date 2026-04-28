@@ -1,18 +1,39 @@
 """
-Download datasets (CIFAR-10, CIFAR-100, STL-10, EuroSAT) and save as image files in ImageFolder structure.
+Download datasets and save as image files in ImageFolder structure.
+
+Supported datasets:
+  cifar10       -- 10 classes, 32x32
+  cifar100      -- 100 classes, 32x32
+  stl10         -- 10 classes, 96x96
+  eurosat       -- 10 classes, 64x64
+  flowers102    -- 102 classes, variable size (~80 images/class after merging all splits)
+  cub200        -- 200 classes, variable size (~59 images/class, train+test merged)
+  miniimagenet  -- 100 classes, 84x84 (600/class, all splits merged). Requires: pip install learn2learn
+  tiny_imagenet -- 200 classes, 64x64 (500/class train only). Living-17 substitute. No extra deps.
+
+NOTE — Living17 (BREEDS benchmark):
+  Living17 is a subset of ImageNet and cannot be downloaded without the full ImageNet dataset
+  (~150 GB, registration required at image-net.org). Use tiny_imagenet (200 ImageNet classes,
+  freely downloadable) or miniimagenet as substitutes for class-similarity experiments.
 
 Usage:
-    python src/download_datasets.py --dataset cifar10 --output_dir data/cifar10 --num_per_class 200
-    python src/download_datasets.py --dataset cifar100 --output_dir data/cifar100 --num_per_class 100
-    python src/download_datasets.py --dataset stl10 --output_dir data/stl10 --num_per_class 200
-    python src/download_datasets.py --dataset eurosat --output_dir data/eurosat --num_per_class 200
+    python src/download_datasets.py --dataset cifar10        --output_dir data/cifar10        --num_per_class 200
+    python src/download_datasets.py --dataset cifar100       --output_dir data/cifar100       --num_per_class 100
+    python src/download_datasets.py --dataset stl10          --output_dir data/stl10          --num_per_class 200
+    python src/download_datasets.py --dataset eurosat        --output_dir data/eurosat        --num_per_class 200
+    python src/download_datasets.py --dataset flowers102     --output_dir data/flowers102     --num_per_class 60
+    python src/download_datasets.py --dataset cub200         --output_dir data/cub200         --num_per_class 50
+    python src/download_datasets.py --dataset miniimagenet   --output_dir data/miniimagenet   --num_per_class 500
+    python src/download_datasets.py --dataset tiny_imagenet  --output_dir data/tiny_imagenet  --num_per_class 500
 """
 
 import argparse
 import os
+import tarfile
 from pathlib import Path
 from PIL import Image
 from torchvision import datasets
+from torchvision.datasets.utils import download_url
 from tqdm import tqdm
 
 
@@ -43,19 +64,170 @@ DATASET_INFO = {
                     'Pasture', 'PermanentCrop', 'Residential', 'River', 'SeaLake'],
         "size": "64x64",
     },
+    "flowers102": {
+        "num_classes": 102,
+        "size": "variable (~500px)",
+        "note": "All splits merged (train+val+test): ~80 images/class total",
+    },
+    "cub200": {
+        "num_classes": 200,
+        "size": "variable (~400-600px)",
+        "note": "Train+test merged: ~59 images/class total",
+    },
+    "miniimagenet": {
+        "num_classes": 100,
+        "size": "84x84",
+        "note": "All splits merged (train+val+test): 600/class. Requires: pip install learn2learn",
+    },
+    "tiny_imagenet": {
+        "num_classes": 200,
+        "size": "64x64",
+        "note": "Train split only: 500/class. Living17 substitute. No extra deps.",
+    },
 }
+
+# URL for CUB-200-2011 (Caltech official release)
+CUB200_URL = "https://data.caltech.edu/records/65de6-vp158/files/CUB_200_2011.tgz"
+CUB200_FILENAME = "CUB_200_2011.tgz"
+
+# URL for Tiny ImageNet (Stanford CS231N)
+TINY_IMAGENET_URL = "http://cs231n.stanford.edu/tiny-imagenet-200.zip"
+TINY_IMAGENET_FILENAME = "tiny-imagenet-200.zip"
+
+
+def download_miniimagenet(args, output_dir):
+    """Download mini-ImageNet via learn2learn and save in ImageFolder format.
+
+    Downloads all three splits (train/validation/test) and merges them.
+    Each split contains DIFFERENT classes (64 train / 16 val / 20 test = 100 total),
+    so we build a global label mapping across all synset IDs before saving.
+    Result: 100 classes × 600 images each.
+    Requires: pip install learn2learn
+    """
+    try:
+        import learn2learn as l2l
+    except ImportError:
+        raise ImportError(
+            "learn2learn is required for mini-ImageNet.\n"
+            "Install with:  pip install learn2learn\n"
+            "Then re-run this script."
+        )
+
+    print("\nDownloading mini-ImageNet via learn2learn (train + validation + test)...")
+    print("  Note: each split contains different classes (64/16/20 = 100 total).")
+
+    # 1. Load all three splits (download=True fetches missing cache files)
+    splits = {}
+    for split in ["train", "validation", "test"]:
+        print(f"  Loading split: {split} ...")
+        splits[split] = l2l.vision.datasets.MiniImagenet(
+            root=args.download_dir, mode=split, download=True,
+            transform=None,  # keep as PIL Image; default transform converts to Tensor
+        )
+        print(f"    {len(splits[split])} images, {len(splits[split].class_idx)} classes")
+
+    # 2. Build global synset → label mapping (stable alphabetical sort = reproducible)
+    all_synsets = set()
+    for ds in splits.values():
+        all_synsets.update(ds.class_idx.keys())
+    global_class_list = sorted(all_synsets)          # 100 synset IDs
+    global_label = {syn: i for i, syn in enumerate(global_class_list)}
+    print(f"  Global class map: {len(global_class_list)} unique synsets")
+
+    # 3. Merge: remap each sample's local label → global label
+    merged = []
+    for split, ds in splits.items():
+        local_to_synset = {v: k for k, v in ds.class_idx.items()}
+        for img, local_lbl in ds:
+            syn = local_to_synset[int(local_lbl)]
+            merged.append((img, global_label[syn]))
+
+    print(f"  Total images across all splits: {len(merged)}")
+    save_dataset_as_images(merged, output_dir, global_class_list, args.num_per_class)
+
+
+def download_tiny_imagenet(args, output_dir):
+    """Download Tiny ImageNet-200 from Stanford and save in ImageFolder format.
+
+    Source: http://cs231n.stanford.edu/tiny-imagenet-200.zip
+    200 classes × 500 images (64×64). Train split only.
+    Class names are derived from the included words.txt (WordNet descriptions).
+    No extra dependencies required.
+    """
+    import zipfile
+    import urllib.request
+
+    download_dir = Path(args.download_dir)
+    zip_path = download_dir / TINY_IMAGENET_FILENAME
+    extract_dir = download_dir / "tiny-imagenet-200"
+
+    # --- Download ---
+    if not zip_path.exists():
+        print(f"\nDownloading Tiny ImageNet-200 (~240 MB) from Stanford CS231N...")
+        print(f"  URL: {TINY_IMAGENET_URL}")
+
+        def _progress(block_num, block_size, total_size):
+            downloaded = block_num * block_size
+            if total_size > 0:
+                pct = min(100.0, downloaded * 100.0 / total_size)
+                print(f"\r  Progress: {pct:5.1f}%  ({downloaded//1_000_000} / {total_size//1_000_000} MB)",
+                      end="", flush=True)
+
+        urllib.request.urlretrieve(TINY_IMAGENET_URL, str(zip_path), _progress)
+        print()
+    else:
+        print(f"\nFound existing archive: {zip_path}")
+
+    # --- Extract ---
+    if not extract_dir.exists():
+        print(f"Extracting {TINY_IMAGENET_FILENAME} ...")
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            zf.extractall(str(download_dir))
+        print("Extraction complete.")
+    else:
+        print(f"Found existing extracted data: {extract_dir}")
+
+    # --- Build synset → readable name map from words.txt ---
+    words_file = extract_dir / "words.txt"
+    synset_to_name = {}
+    if words_file.exists():
+        with open(words_file) as f:
+            for line in f:
+                parts = line.strip().split("\t", 1)
+                if len(parts) == 2:
+                    synset_id, description = parts
+                    # Use first synonym, sanitize for filesystem
+                    first_word = description.split(",")[0].strip()
+                    synset_to_name[synset_id] = _sanitize_name(first_word)
+
+    # --- Load train split (already in ImageFolder structure) ---
+    train_dir = extract_dir / "train"
+    print(f"Loading train images from {train_dir} ...")
+    ds = datasets.ImageFolder(root=str(train_dir))
+
+    # Map numeric labels back to synset IDs, then to readable names
+    synset_ids = ds.classes  # e.g. ['n01443537', 'n01629819', ...]
+    class_names = []
+    for sid in synset_ids:
+        name = synset_to_name.get(sid, sid)  # fallback to synset ID
+        # Append synset suffix to guarantee uniqueness when names collide
+        class_names.append(f"{name}_{sid}")
+
+    print(f"  {len(class_names)} classes, {len(ds)} images total")
+    save_dataset_as_images(ds, output_dir, class_names, args.num_per_class)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Download dataset and save as images")
     parser.add_argument("--dataset", type=str, default="cifar10",
-                       choices=["cifar10", "cifar100", "stl10", "eurosat"],
+                       choices=["cifar10", "cifar100", "stl10", "eurosat", "flowers102",
+                                "cub200", "miniimagenet", "tiny_imagenet"],
                        help="Dataset to download")
     parser.add_argument("--output_dir", type=str, default=None,
                        help="Output directory (default: data/<dataset>)")
     parser.add_argument("--split", type=str, default="train",
                        choices=["train", "test", "both"],
-                       help="Which split to download (cifar10/cifar100/stl10 only)")
+                       help="Which split to download (cifar10/cifar100/stl10 only; ignored for eurosat/flowers102/cub200)")
     parser.add_argument("--num_per_class", type=int, default=None,
                        help="Limit number of images per class (None = all)")
     parser.add_argument("--download_dir", type=str, default="./dataset_download",
@@ -66,60 +238,65 @@ def parse_args():
 def save_dataset_as_images(dataset, output_dir, class_names, num_per_class=None):
     """
     Save dataset as individual image files in ImageFolder structure.
-    
+
     Args:
         dataset: Dataset object (iterable of (image, label))
         output_dir: Root directory to save images
-        class_names: List of class names
+        class_names: List of class names indexed by integer label
         num_per_class: Maximum images per class (None = all)
     """
     n_classes = len(class_names)
     output_path = Path(output_dir)
-    
-    # Create directories for each class
+
     for class_name in class_names:
         (output_path / class_name).mkdir(parents=True, exist_ok=True)
-    
+
     class_counts = {i: 0 for i in range(n_classes)}
-    
+
     print(f"Saving images to {output_dir}...")
-    
+
     for idx, (image, label) in enumerate(tqdm(dataset, desc="Processing images")):
         if num_per_class is not None and class_counts[label] >= num_per_class:
             if all(count >= num_per_class for count in class_counts.values()):
                 break
             continue
-        
-        # Convert to PIL if needed (STL-10 returns numpy arrays)
+
+        # Convert to PIL if needed
         if not isinstance(image, Image.Image):
-            image = Image.fromarray(image)
-        
+            import torch
+            if isinstance(image, torch.Tensor):
+                # learn2learn MiniImagenet: float Tensor (C,H,W) → uint8 (H,W,C)
+                image = Image.fromarray(image.permute(1, 2, 0).to(torch.uint8).numpy())
+            else:
+                # STL-10 and others: numpy array (H,W,C)
+                image = Image.fromarray(image)
+
         class_name = class_names[label]
         filename = f"{class_name}_{class_counts[label]:05d}.png"
         filepath = output_path / class_name / filename
-        
+
         image.save(filepath)
         class_counts[label] += 1
-    
+
     print("\nDataset saved successfully!")
     print(f"Total images: {sum(class_counts.values())}")
     print("\nImages per class:")
     for i, class_name in enumerate(class_names):
-        print(f"  {class_name:24s}: {class_counts[i]:5d}")
-    
+        print(f"  {class_name:40s}: {class_counts[i]:5d}")
+
     return class_counts
 
 
 def download_cifar10(args, output_dir):
     """Download and save CIFAR-10."""
     class_names = DATASET_INFO["cifar10"]["classes"]
-    
+
     if args.split in ["train", "both"]:
         print("\nDownloading CIFAR-10 training set...")
         ds = datasets.CIFAR10(root=args.download_dir, train=True, download=True, transform=None)
         out = output_dir if args.split == "train" else f"{output_dir}/train"
         save_dataset_as_images(ds, out, class_names, args.num_per_class)
-    
+
     if args.split in ["test", "both"]:
         print("\nDownloading CIFAR-10 test set...")
         ds = datasets.CIFAR10(root=args.download_dir, train=False, download=True, transform=None)
@@ -130,13 +307,13 @@ def download_cifar10(args, output_dir):
 def download_cifar100(args, output_dir):
     """Download and save CIFAR-100."""
     class_names = DATASET_INFO["cifar100"]["classes"]
-    
+
     if args.split in ["train", "both"]:
         print("\nDownloading CIFAR-100 training set...")
         ds = datasets.CIFAR100(root=args.download_dir, train=True, download=True, transform=None)
         out = output_dir if args.split == "train" else f"{output_dir}/train"
         save_dataset_as_images(ds, out, class_names, args.num_per_class)
-    
+
     if args.split in ["test", "both"]:
         print("\nDownloading CIFAR-100 test set...")
         ds = datasets.CIFAR100(root=args.download_dir, train=False, download=True, transform=None)
@@ -147,13 +324,13 @@ def download_cifar100(args, output_dir):
 def download_stl10(args, output_dir):
     """Download and save STL-10."""
     class_names = DATASET_INFO["stl10"]["classes"]
-    
+
     if args.split in ["train", "both"]:
         print("\nDownloading STL-10 training set...")
         ds = datasets.STL10(root=args.download_dir, split='train', download=True, transform=None)
         out = output_dir if args.split == "train" else f"{output_dir}/train"
         save_dataset_as_images(ds, out, class_names, args.num_per_class)
-    
+
     if args.split in ["test", "both"]:
         print("\nDownloading STL-10 test set...")
         ds = datasets.STL10(root=args.download_dir, split='test', download=True, transform=None)
@@ -164,30 +341,105 @@ def download_stl10(args, output_dir):
 def download_eurosat(args, output_dir):
     """Download and save EuroSAT (no train/test split, single dataset)."""
     class_names = DATASET_INFO["eurosat"]["classes"]
-    
+
     print("\nDownloading EuroSAT dataset...")
     ds = datasets.EuroSAT(root=args.download_dir, download=True, transform=None)
     save_dataset_as_images(ds, output_dir, class_names, args.num_per_class)
 
 
+def _sanitize_name(name: str) -> str:
+    """Replace characters illegal on Windows filesystems with underscores."""
+    import re
+    return re.sub(r'[\\/:*?"<>|]', '_', name).strip()
+
+
+def download_flowers102(args, output_dir):
+    """Download Oxford Flowers-102 and merge all splits.
+
+    Split sizes: train=10/class, val=10/class, test=~60/class → ~80/class total.
+    All three splits are merged into a single output directory so that
+    --num_per_class 60 gives a usable per-class count.
+    The --split argument is ignored for this dataset.
+    """
+    print("\nDownloading Oxford Flowers-102 (all splits: train + val + test)...")
+
+    class_names = None
+    merged = []  # list of (PIL Image, int label) across all splits
+
+    for split in ["train", "val", "test"]:
+        print(f"  Loading split: {split}")
+        ds = datasets.Flowers102(root=args.download_dir, split=split, download=True, transform=None)
+        if class_names is None:
+            # torchvision >=0.12 exposes ds.classes; fall back to generic names
+            if hasattr(ds, 'classes') and ds.classes:
+                class_names = [_sanitize_name(c) for c in ds.classes]
+            else:
+                class_names = [f"class_{i:03d}" for i in range(102)]
+        merged.extend(ds)
+
+    print(f"  Total images across all splits: {len(merged)}")
+    save_dataset_as_images(merged, output_dir, class_names, args.num_per_class)
+
+
+def download_cub200(args, output_dir):
+    """Download CUB-200-2011 from Caltech and save in ImageFolder format.
+
+    Downloads the official tgz (~1.1 GB), extracts it, and loads the
+    images/ subfolder as an ImageFolder dataset (already organised by class).
+    Train and test splits are merged so --num_per_class 50 gives ~50/class.
+    The --split argument is ignored for this dataset.
+    """
+    download_dir = Path(args.download_dir)
+    tgz_path = download_dir / CUB200_FILENAME
+    extract_dir = download_dir / "CUB_200_2011"
+    images_dir = download_dir / "CUB_200_2011" / "images"
+
+    # --- Download ---
+    if not tgz_path.exists():
+        print(f"\nDownloading CUB-200-2011 (~1.1 GB) from Caltech...")
+        download_url(CUB200_URL, root=str(download_dir), filename=CUB200_FILENAME)
+    else:
+        print(f"\nFound existing archive: {tgz_path}")
+
+    # --- Extract ---
+    if not images_dir.exists():
+        print(f"Extracting {CUB200_FILENAME}...")
+        with tarfile.open(tgz_path, "r:gz") as tar:
+            tar.extractall(path=str(download_dir))
+        print("Extraction complete.")
+    else:
+        print(f"Found existing extracted data: {images_dir}")
+
+    # --- Load as ImageFolder (already in class-subfolder structure) ---
+    print("Loading images via ImageFolder...")
+    ds = datasets.ImageFolder(root=str(images_dir))
+    class_names = ds.classes  # e.g. ['001.Black_footed_Albatross', ...]
+    print(f"  {len(class_names)} classes, {len(ds)} images total")
+
+    save_dataset_as_images(ds, output_dir, class_names, args.num_per_class)
+
+
 def main():
     args = parse_args()
-    
-    # Default output directory
+
     output_dir = args.output_dir or f"data/{args.dataset}"
-    
+
     info = DATASET_INFO[args.dataset]
-    print("="*70)
+    n_classes = len(info["classes"]) if "classes" in info else info["num_classes"]
+
+    print("=" * 70)
     print(f"DATASET DOWNLOADER: {args.dataset.upper()}")
-    print("="*70)
-    print(f"  Classes: {len(info['classes'])}")
+    print("=" * 70)
+    print(f"  Classes: {n_classes}")
     print(f"  Image size: {info['size']}")
+    if "note" in info:
+        print(f"  Note: {info['note']}")
     print(f"  Output: {output_dir}")
     if args.num_per_class:
-        print(f"  Limit: {args.num_per_class} per class ({args.num_per_class * len(info['classes'])} total)")
-    
+        print(f"  Limit: {args.num_per_class} per class ({args.num_per_class * n_classes} total)")
+
     Path(args.download_dir).mkdir(exist_ok=True)
-    
+
     if args.dataset == "cifar10":
         download_cifar10(args, output_dir)
     elif args.dataset == "cifar100":
@@ -196,16 +448,24 @@ def main():
         download_stl10(args, output_dir)
     elif args.dataset == "eurosat":
         download_eurosat(args, output_dir)
-    
-    print("\n" + "="*70)
+    elif args.dataset == "flowers102":
+        download_flowers102(args, output_dir)
+    elif args.dataset == "cub200":
+        download_cub200(args, output_dir)
+    elif args.dataset == "miniimagenet":
+        download_miniimagenet(args, output_dir)
+    elif args.dataset == "tiny_imagenet":
+        download_tiny_imagenet(args, output_dir)
+
+    print("\n" + "=" * 70)
     print("DOWNLOAD COMPLETE!")
-    print("="*70)
+    print("=" * 70)
     print(f"\nImages saved to: {output_dir}")
     print(f"\nNext steps:")
     print(f"  1. Extract features:")
-    print(f"     python src/extract_features.py --data_dir {output_dir} --model dinov2-base --num_per_class 200")
+    print(f"     python src/extract_features.py --data_dir {output_dir} --model dinov2-base --output_name embeddings_{args.dataset}.pt")
     print(f"  2. Run conformal prediction:")
-    print(f"     python src/run_conformal_experiment.py --embeddings_path output/embeddings.pt")
+    print(f"     python src/run_conformal_experiment.py --embeddings_path output/embeddings_{args.dataset}.pt")
 
 
 if __name__ == "__main__":

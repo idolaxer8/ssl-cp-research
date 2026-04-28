@@ -37,6 +37,9 @@ def get_args():
                         help=f"Model preset: {preset_list}, or full timm model name")
     parser.add_argument("--num_per_class", type=int, default=None,
                         help="Limit number of images per class (None = all)")
+    parser.add_argument("--input_size", type=int, default=None,
+                        help="Override preset input size (e.g. 336 for DINOv2 at lower res). "
+                             "Must be a multiple of 14 for ViT-B/14 models.")
     return parser.parse_args()
 
 def get_transform(input_size: int):
@@ -59,10 +62,16 @@ def main():
     else:
         model_name, input_size = args.model, 224  # default input size for unknown models
         print(f"Using custom timm model: {model_name} (input: {input_size}x{input_size})")
+    if args.input_size is not None:
+        print(f"Overriding input size: {input_size} -> {args.input_size}")
+        input_size = args.input_size
 
     # 1. Load SSL Model
     print(f"Loading model: {model_name}...")
-    model = timm.create_model(model_name, pretrained=True, num_classes=0)
+    create_kwargs = {"pretrained": True, "num_classes": 0}
+    if args.input_size is not None:
+        create_kwargs["img_size"] = input_size  # override fixed input size (interpolates pos embeddings)
+    model = timm.create_model(model_name, **create_kwargs)
     model = model.to(device)
     model.eval()
 
