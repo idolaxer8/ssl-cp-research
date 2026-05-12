@@ -18,6 +18,7 @@ from conformal_prediction import (
     create_ncm,
     cal_test_split,
     train_cal_test_split,
+    stratified_cal_test_split,
 )
 
 
@@ -35,16 +36,14 @@ def parse_args():
     # Conformal prediction
     parser.add_argument("--alpha", type=float, default=0.1,
                        help="Significance level (target miscoverage rate)")
-    parser.add_argument("--ncm", type=str, default="knn",
-                       choices=["knn", "simplified_knn", "centroid", "relative_centroid", "ridge",
-                                "nn_ratio", "geodesic_nn_ratio", "mahal_nn_ratio", "whitened_geodesic", "softmax"],
+    parser.add_argument("--ncm", type=str, default="geodesic_topk_mean",
+                       choices=["mahal_nn_ratio", "whitened_geodesic",
+                                "geodesic_topk_mean", "geodesic_topk_asym", "softmax"],
                        help="NCM for Full CP (and CV+ unless --ncm_cv is set)")
     parser.add_argument("--ncm_cv", type=str, default=None,
-                       choices=["knn", "simplified_knn", "centroid", "relative_centroid", "ridge",
-                                "nn_ratio", "geodesic_nn_ratio", "mahal_nn_ratio", "whitened_geodesic", "softmax"],
+                       choices=["mahal_nn_ratio", "whitened_geodesic",
+                                "geodesic_topk_mean", "geodesic_topk_asym", "softmax"],
                        help="NCM for CV+ (defaults to --ncm if not set)")
-    parser.add_argument("--lambda_reg", type=float, default=1.0,
-                       help="Regularization parameter for ridge NCM")
     parser.add_argument("--k", type=int, default=5,
                        help="Number of neighbors for k-NN nonconformity")
     
@@ -81,6 +80,10 @@ def parse_args():
     parser.add_argument("--num_per_class", type=int, default=None,
                        help="Limit number of images per class for baseline comparison (None = match embeddings)")
     
+    # Split strategy
+    parser.add_argument("--balanced", action="store_true",
+                       help="Use stratified balanced cal/test split (equal samples per class)")
+
     # Misc
     parser.add_argument("--seed", type=int, default=42,
                        help="Random seed")
@@ -237,7 +240,7 @@ def compare_k_values(X_cal, y_cal, X_test, y_test, args, output_dir: str):
     
     for k in k_values:
         print(f"\nEvaluating k={k}...")
-        ncm = create_ncm(args.ncm, k=k, lambda_reg=args.lambda_reg)
+        ncm = create_ncm(args.ncm, k=k)
         cp = FullConformalPredictor(ncm, alpha=args.alpha)
         cp.calibrate(X_cal, y_cal)
         metrics = cp.evaluate(X_test, y_test, verbose=False)
@@ -394,7 +397,7 @@ def compare_ssl_vs_baseline(X_ssl, y_ssl, X_raw, y_raw, args, output_dir: str):
         print(f"  Feature dimension: {X_cal.shape[1]}")
         
         # Create NCM and predictor
-        ncm = create_ncm(args.ncm, k=args.k, lambda_reg=args.lambda_reg)
+        ncm = create_ncm(args.ncm, k=args.k)
         cp = FullConformalPredictor(ncm, alpha=args.alpha)
         cp.calibrate(X_cal, y_cal)
         
@@ -553,7 +556,7 @@ def compare_full_cp_vs_split_cp(
             )
             
             # Create NCM
-            ncm = create_ncm(args.ncm, k=args.k, lambda_reg=args.lambda_reg)
+            ncm = create_ncm(args.ncm, k=args.k)
 
             print("  Running Full CP...")
             t_start_full = time.time()
@@ -956,7 +959,7 @@ def compare_cp_methods(
             # ---------- FULL CP ----------
             # softmax NCM doesn't support Full CP (no hypothetical update)
             if args.ncm != "softmax":
-                ncm = create_ncm(args.ncm, k=args.k, lambda_reg=args.lambda_reg)
+                ncm = create_ncm(args.ncm, k=args.k)
                 print(f"    Full CP...")
                 t0 = time.time()
                 cp_full = FullConformalPredictor(ncm, alpha=args.alpha)
@@ -976,7 +979,7 @@ def compare_cp_methods(
                       f"T={t_full:.2f}s")
 
             # ---------- CV+ ----------
-            ncm_factory = lambda: create_ncm(ncm_cv_type, k=args.k, lambda_reg=args.lambda_reg)
+            ncm_factory = lambda: create_ncm(ncm_cv_type, k=args.k)
             print(f"    CV+...")
             t0 = time.time()
             cp_cv = CrossValidationPlusPredictor(
@@ -1244,19 +1247,32 @@ def main():
     print(f"  Shape: {embeddings.shape}, Labels: {len(np.unique(labels))} classes")
     
     # 2. Split data (Full CP uses only calibration + test)
-    print(f"\n[2/5] Splitting data (cal={args.cal_ratio}, test={1-args.cal_ratio})...")
-    X_cal, y_cal, X_test, y_test = cal_test_split(
-        embeddings, labels,
-        cal_ratio=args.cal_ratio,
-        random_state=args.seed
-    )
+    if args.balanced:
+        n_total = len(embeddings)
+        cal_size = int(n_total * args.cal_ratio)
+        test_size = n_total - cal_size
+        print(f"\n[2/5] Stratified balanced split (cal={cal_size}, test={test_size})...")
+        X_cal, y_cal, X_test, y_test = stratified_cal_test_split(
+            embeddings, labels,
+            cal_size=cal_size,
+            test_size=test_size,
+            balanced=True,
+            random_state=args.seed
+        )
+    else:
+        print(f"\n[2/5] Splitting data (cal={args.cal_ratio}, test={1-args.cal_ratio})...")
+        X_cal, y_cal, X_test, y_test = cal_test_split(
+            embeddings, labels,
+            cal_ratio=args.cal_ratio,
+            random_state=args.seed
+        )
     
     # 3. Create nonconformity measure
     if args.ncm in ["knn", "simplified_knn"]:
         print(f"\n[3/5] Creating nonconformity measure: {args.ncm} (k={args.k})...")
     else:
         print(f"\n[3/5] Creating nonconformity measure: {args.ncm}...")
-    ncm = create_ncm(args.ncm, k=args.k, lambda_reg=args.lambda_reg)
+    ncm = create_ncm(args.ncm, k=args.k)
     
     # 3b. Optional: Compare both methods
     if args.compare_methods:
@@ -1264,8 +1280,8 @@ def main():
         print("="*70)
         
         methods = {
-            'k-NN': create_ncm('knn', k=args.k),
-            'Simplified k-NN': create_ncm('simplified_knn', k=args.k)
+            'mahal_nn_ratio': create_ncm('mahal_nn_ratio', k=args.k),
+            'geodesic_topk_mean': create_ncm('geodesic_topk_mean', k=args.k)
         }
         
         comparison_results = {}

@@ -57,10 +57,6 @@ def run_fcp_with_macs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
         if get_superclass(y_cal[i]) != get_superclass(y_hat_loo[i]):
             cal_penalty[i] = lam
 
-    # Add penalty to cached calibration scores
-    base_cal_scores = cp.cal_scores.copy()
-    cp.cal_scores = base_cal_scores + cal_penalty
-
     # --- Predict with MA-CS penalty on test scores ---
     n_test = len(X_test)
     prediction_sets = []

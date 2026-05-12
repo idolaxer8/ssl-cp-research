@@ -29,7 +29,7 @@ from conformal_prediction import (
 # Defaults
 # ---------------------------------------------------------------------------
 NCM_FULL_CP = "geodesic_topk_mean"
-NCM_CV_PLUS = "geodesic_nn_ratio"
+NCM_CV_PLUS = "mahal_nn_ratio"
 ALPHA = 0.1
 N_TRIALS = 5
 N_FOLDS = 5

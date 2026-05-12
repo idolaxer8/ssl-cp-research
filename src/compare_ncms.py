@@ -1,5 +1,5 @@
 """
-Compare Full CP NCMs: nn_ratio, geodesic_nn_ratio, mahal_nn_ratio, whitened_geodesic.
+Compare Full CP NCMs: mahal_nn_ratio, whitened_geodesic, geodesic_topk_mean, geodesic_topk_asym.
 Sweeps calibration set sizes on a given embeddings file.
 
 Usage:
@@ -47,7 +47,7 @@ def stratified_split(embeddings, labels, n_cal, n_test, rng):
     return np.array(cal_idx), np.array(test_idx)
 
 
-def run_one(X, y, ncm_name, cal_size, test_size, alpha, n_trials, seed, tau=0.1):
+def run_one(X, y, ncm_name, cal_size, test_size, alpha, n_trials, seed):
     """Run n_trials of FCP with given NCM and cal_size. Returns (coverage, set_size, time_s)."""
     rng = np.random.default_rng(seed)
     coverages, set_sizes, times = [], [], []
@@ -60,7 +60,7 @@ def run_one(X, y, ncm_name, cal_size, test_size, alpha, n_trials, seed, tau=0.1)
         X_cal, y_cal   = X[cal_idx], y[cal_idx]
         X_test, y_test = X[test_idx], y[test_idx]
 
-        ncm = create_ncm(ncm_name, tau=tau)
+        ncm = create_ncm(ncm_name)
         cp  = FullConformalPredictor(ncm, alpha=alpha)
 
         t0 = time.time()
@@ -94,8 +94,6 @@ def main():
                         help="Comma-separated calibration sizes to sweep")
     parser.add_argument("--output_dir", default="output")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--tau", type=float, default=0.1,
-                        help="Temperature for tempered_density_ratio NCM")
     args = parser.parse_args()
 
     # Load
@@ -113,23 +111,16 @@ def main():
         alpha_list = [float(a) for a in args.alphas.split(",")]
 
     cal_sizes = [int(s) for s in args.cal_sizes.split(",")]
-    ncm_names = ["nn_ratio", "geodesic_nn_ratio", "mahal_nn_ratio",
-                 "whitened_geodesic", "geodesic_topk_mean", "geodesic_topk_asym",
-                 "tempered_density_ratio"]
-    colors    = {"nn_ratio":                "#1f77b4",
-                 "geodesic_nn_ratio":       "#ff7f0e",
-                 "mahal_nn_ratio":          "#2ca02c",
+    ncm_names = ["mahal_nn_ratio", "whitened_geodesic",
+                 "geodesic_topk_mean", "geodesic_topk_asym"]
+    colors    = {"mahal_nn_ratio":          "#2ca02c",
                  "whitened_geodesic":       "#9467bd",
                  "geodesic_topk_mean":      "#d62728",
-                 "geodesic_topk_asym":      "#8c564b",
-                 "tempered_density_ratio":  "#e377c2"}
-    labels_map = {"nn_ratio":               "nn_ratio (baseline)",
-                  "geodesic_nn_ratio":      "geodesic_nn_ratio",
-                  "mahal_nn_ratio":         "mahal_nn_ratio",
+                 "geodesic_topk_asym":      "#8c564b"}
+    labels_map = {"mahal_nn_ratio":         "mahal_nn_ratio (baseline)",
                   "whitened_geodesic":      "whitened_geodesic",
                   "geodesic_topk_mean":     "geodesic_topk_mean (sym)",
-                  "geodesic_topk_asym":     "geodesic_topk_asym (new)",
-                  "tempered_density_ratio": f"tempered_density_ratio (tau={args.tau})"}
+                  "geodesic_topk_asym":     "geodesic_topk_asym (asym)"}
 
     os.makedirs(args.output_dir, exist_ok=True)
     dataset_tag = os.path.splitext(os.path.basename(args.embeddings_path))[0]
@@ -145,7 +136,7 @@ def main():
             for cal_size in cal_sizes:
                 print(f"  {ncm_name:25s}  cal={cal_size:4d} ...", end="", flush=True)
                 cov, sz, t = run_one(X, y, ncm_name, cal_size, args.test_size,
-                                      alpha, args.n_trials, args.seed, tau=args.tau)
+                                      alpha, args.n_trials, args.seed)
                 results[ncm_name]["cov"].append(cov)
                 results[ncm_name]["sz"].append(sz)
                 results[ncm_name]["t"].append(t)
@@ -163,10 +154,9 @@ def main():
         for ncm_name in ncm_names:
             c   = colors[ncm_name]
             lbl = labels_map[ncm_name]
-            ls  = (0, (5, 2)) if ncm_name == 'tempered_density_ratio' \
-                  else '--' if ncm_name in ('mahal_nn_ratio', 'whitened_geodesic') \
+            ls  = '--' if ncm_name in ('mahal_nn_ratio', 'whitened_geodesic') \
                   else '-.' if ncm_name == 'geodesic_topk_asym' \
-                  else (0, (3, 1, 1, 1)) if ncm_name.startswith('lda_') else '-'
+                  else '-'
             axes[0].plot(cal_sizes, results[ncm_name]["cov"], marker='o',
                          color=c, label=lbl, linewidth=2, linestyle=ls)
             axes[1].plot(cal_sizes, results[ncm_name]["sz"],  marker='o',

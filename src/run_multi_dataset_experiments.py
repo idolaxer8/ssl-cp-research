@@ -107,7 +107,7 @@ DATASETS = {
 }
 
 NCM_FULL_CP = "whitened_geodesic"   # best NCM from compare_ncms experiments
-NCM_CV_PLUS = "geodesic_nn_ratio"   # faster & more principled than softmax for CV+
+NCM_CV_PLUS = "mahal_nn_ratio"   # faster & more principled than softmax for CV+
 ALPHA = 0.1
 N_TRIALS = 5
 N_FOLDS = 5
@@ -341,7 +341,7 @@ def agg(results: dict, method: str, metric: str):
 
 METHOD_STYLES = {
     "full_cp":  {"label": "Full CP (whitened_geodesic)",  "color": "#1f77b4", "ls": "-",  "lw": 2.5, "marker": "o"},
-    "cv_plus":  {"label": "CV+ (geodesic_nn_ratio)",      "color": "#ff7f0e", "ls": "--", "lw": 2.0, "marker": "s"},
+    "cv_plus":  {"label": "CV+ (mahal_nn_ratio)",      "color": "#ff7f0e", "ls": "--", "lw": 2.0, "marker": "s"},
     "split_cp": {"label": "Split CP (softmax)",           "color": "#2ca02c", "ls": ":",  "lw": 2.0, "marker": "^"},
 }
 
@@ -605,7 +605,7 @@ def parse_args():
     p.add_argument("--skip_base", action="store_true",
                    help="Skip base experiment")
     p.add_argument("--ncm_full", type=str, default=NCM_FULL_CP,
-                   choices=["nn_ratio", "geodesic_nn_ratio", "mahal_nn_ratio", "whitened_geodesic",
+                   choices=["mahal_nn_ratio", "whitened_geodesic",
                             "geodesic_topk_mean", "geodesic_topk_asym"],
                    help="NCM for Full CP")
     p.add_argument("--alpha", type=float, default=ALPHA,
@@ -720,15 +720,6 @@ def main():
                     out_path=str(out_dir / f"multi_alpha_{ncm_tag}.png"),
                 )
 
-
-            # Multi-alpha CS summary plot
-            if multi_alpha and ds_alpha_cs_results:
-                plot_multi_alpha(
-                    ds_name=f"{ds_name} + CS",
-                    alpha_results=ds_alpha_cs_results,
-                    ncm_full=f"{ncm_tag} + CS",
-                    out_path=str(out_dir_cs / f"multi_alpha_{ncm_tag}_cs.png"),
-                )
 
     # ---- Cross-dataset summary ----
     if all_results:
