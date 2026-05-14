@@ -208,19 +208,233 @@ See `archive/findings_archive.md §10` for stale results tracker, reviewer predi
 
 ---
 
-## 10. Future Directions
+## 10. PCA Dimensionality Reduction (Unlabeled Pool)
 
-1. **MA-CS multi-dataset + adaptive λ** — most novel contribution. See §3.
-2. **MS-CS multi-dataset** — test on CUB-200, miniImageNet. See §4.
-3. **PCA dimensionality reduction** — active investigation, shows promise.
-4. **RAPS baseline implementation** — required for paper.
+PCA fit on unlabeled pool (n >> d=768) preserves FCP exchangeability — projection is unsupervised w.r.t. cal/test. Stratified splits used throughout (equal samples/class).
+
+### CIFAR-100 (100 classes, PCA on 10K unlabeled)
+
+| dim | cal=400 sz | cal=600 sz | cal=800 sz |
+|-----|-----------|-----------|-----------|
+| PCA-32 | 4.55 | 4.71 | 2.96 |
+| PCA-64 | 2.74 | 2.80 | 2.04 |
+| **PCA-128** | **2.18** | **2.36** | **1.64** |
+| PCA-256 | 2.85 | 2.99 | 1.77 |
+| PCA-512 | 5.19 | 4.58 | 2.44 |
+| Full-768 | 4.11 | 4.11 | 2.16 |
+
+**PCA-128 optimal**: 24% smaller sets than full-768 at cal=800. Coverage valid (91.0%). U-shape: too few dims loses info, too many reintroduces noise.
+
+### CUB-200 (200 classes, PCA on 5600 unlabeled carved 28/class)
+
+| dim | cal=600 sz | cal=800 sz | cal=1000 sz | cal=1500 sz |
+|-----|-----------|-----------|------------|------------|
+| PCA-128 | 2.85 | 2.32 | 2.29 | 1.87 |
+| PCA-256 | 2.62 | 2.10 | 2.03 | 1.76 |
+| **PCA-512** | **2.64** | **2.07** | **2.04** | **1.70** |
+| Full-768 | 2.87 | 2.34 | 2.46 | 1.90 |
+
+**PCA-512 optimal**: 11% smaller sets at cal=1500. Fine-grained dataset needs more dims. Coverage valid (90.4-92.6%).
+
+### miniImageNet (100 classes, PCA on 10K unlabeled carved 100/class)
+
+| dim | cal=400 sz | cal=600 sz | cal=800 sz |
+|-----|-----------|-----------|-----------|
+| PCA-64 | 1.32 | 1.36 | 1.15 |
+| **PCA-128** | **1.08** | **1.13** | **1.05** |
+| PCA-256 | 1.12 | 1.17 | 1.07 |
+| Full-768 | 1.24 | 1.28 | 1.11 |
+
+**PCA-128 optimal**: 5% smaller sets at cal=800 (already near-perfect at 1.11). Coverage valid (92.2%).
+
+### Control: PCA on cal data (CIFAR-100)
+
+| dim | cal=400 cov | cal=600 cov | cal=800 cov |
+|-----|------------|------------|------------|
+| PCA-128 | 0.876 | 0.915 | 0.900 |
+| PCA-256 | 0.816 | 0.886 | 0.888 |
+| PCA-512 | — | 0.816 | 0.851 |
+
+**Cal-based PCA under-covers** at high dims (n_cal < n_features → PCA axes overfit). Confirms unlabeled pool is essential.
+
+### Summary
+
+| Dataset | Best PCA dim | Reduction vs full-768 | Mechanism |
+|---------|-------------|----------------------|-----------|
+| CIFAR-100 | 128 | **24%** | Noise removal in coarse-grained classes |
+| CUB-200 | 512 | **11%** | Fine-grained needs more dims |
+| miniImageNet | 128 | **5%** | Already near-perfect baseline |
+
+PCA-128 is the default recommendation for K=100 coarse-grained datasets. Fine-grained (CUB-200) benefits from PCA-512. Diminishing returns when baseline is already small (miniImageNet).
+
+---
+
+## 11. FCP+PCA vs SplitCP vs SemiCP (Multi-Dataset)
+
+Head-to-head comparison: FCP with PCA (unlabeled) vs SplitCP vs SemiCP (Zhou et al. 2025, NNM augmentation). SemiCP uses logistic regression softmax head trained on 50% of cal budget, scores augmented via nearest-neighbor matching to unlabeled pool. **Stratified train/cal split** (critical fix from earlier non-stratified version). 5 trials, α=0.1. NCM: `geodesic_topk_asym`.
+
+### 11a. CIFAR-100 (100 classes, PCA-128 on 10K unlabeled)
+
+| Cal | SCP-THR | SemiCP-THR | FCP | **FCP+PCA** |
+|-----|---------|------------|-----|-------------|
+| 300 | 3.44 (86%) | 4.10 (87%) | 11.20 (91%) | **5.74 (91%)** |
+| 400 | 2.64 (87%) | 2.81 (88%) | 4.66 (91%) | **3.01 (91%)** |
+| 600 | 2.13 (86%) | 2.30 (87%) | 2.45 (91%) | **1.85 (90%)** |
+| 800 | 1.80 (87%) | 1.85 (88%) | 1.95 (91%) | **1.62 (91%)** |
+| 1000 | 1.63 (88%) | 1.61 (88%) | 1.77 (91%) | **1.52 (90%)** |
+
+### 11b. miniImageNet (100 classes, PCA-128 on 10K carved unlabeled)
+
+| Cal | SCP-THR | SemiCP-THR | FCP | **FCP+PCA** |
+|-----|---------|------------|-----|-------------|
+| 300 | 1.43 (81%) | 1.90 (84%) | 3.60 (89%) | **2.18 (89%)** |
+| 400 | 1.40 (87%) | 1.66 (88%) | 1.52 (90%) | **1.23 (90%)** |
+| 600 | 1.13 (88%) | 1.18 (88%) | 1.11 (90%) | **1.07 (90%)** |
+| 800 | 1.10 (89%) | 1.09 (89%) | 1.11 (91%) | **1.01 (89%)** |
+| 1000 | 1.04 (90%) | 1.04 (90%) | 1.02 (89%) | **1.00 (90%)** |
+
+### 11c. CUB-200 (200 classes, PCA-512 on 5600 carved unlabeled)
+
+| Cal | SCP-THR | SemiCP-THR | FCP | **FCP+PCA** |
+|-----|---------|------------|-----|-------------|
+| 600 | 2.12 (86%) | 2.42 (87%) | **3.31 (93%)** | 3.85 (93%) |
+| 800 | 2.21 (89%) | 2.32 (90%) | **2.11 (91%)** | 2.18 (91%) |
+| 1000 | 1.82 (89%) | 1.83 (89%) | **1.73 (90%)** | 1.73 (91%) |
+| 1500 | 1.41 (88%) | 1.42 (88%) | **1.46 (90%)** | 1.44 (90%) |
+
+### 11d. Key findings
+
+1. **FCP+PCA dominates on CIFAR-100 and miniImageNet** (coarse-grained, 100 classes). At cal=800: FCP+PCA sz=1.62 vs SCP-THR sz=1.80 (CIFAR-100), FCP+PCA sz=1.01 vs SCP-THR sz=1.10 (miniImageNet).
+2. **CUB-200 is different**: FCP wins over FCP+PCA at cal=600 (sz=3.31 vs 3.85). PCA-512 preserves 98.2% variance but doesn't help — fine-grained bird features need full dimensionality at low cal. At cal≥1000, FCP and FCP+PCA converge.
+3. **NNM augmentation (SemiCP) is neutral to harmful** across all 3 datasets. SemiCP-THR ≈ SCP-THR at all cal sizes; NNM never helps significantly.
+4. **APS/RAPS are useless** with logistic regression on K≥100 classes: APS produces near-trivial sets (43-73), RAPS overcoveres with sets of 8-28. THR is the only viable SCP score function.
+
+### 11e. SCP under-coverage analysis (fundamental limitation)
+
+**SCP-THR under-covers** (82-89%) at cal≤800 across all datasets. Root cause: **the stratified train/cal split breaks exchangeability**.
+
+The Split CP coverage guarantee requires the score function (classifier) to be independent of the calibration data. The stratified train/cal split assigns points to train vs cal based on CLASS LABELS, creating a dependency: which data the classifier sees depends on the labels of cal points too. This violates the exchangeability assumption.
+
+**Controlled experiment** (miniImageNet, cal=300, 50 trials):
+
+| Cal Selection | Train/Cal Split | Coverage | Set Size |
+|---------------|-----------------|----------|----------|
+| Random | Random | **90.0%** ✓ | 100.00 (trivial!) |
+| Stratified | Random | 89.5% ✓ | ~similar |
+| Random | **Stratified** | 82.3% ❌ | 1.55 |
+| Stratified | **Stratified** | 81.4% ❌ | 1.55 |
+
+The stratified train/cal split is the sole cause. But removing it creates a worse problem: with a random split at cal=300, some classes are absent from training → classifier gives 0 probability → cal scores = 1.0 → q̂ = 1.0 → ALL 100 classes in every set (sz=100, trivially valid but useless).
+
+**The SCP dilemma at K≥100, low cal:**
+- Random split: valid coverage, trivial sets (sz=K)
+- Stratified split: informative sets, invalid coverage
+
+**FCP avoids this entirely** — no train/cal split needed, NCM is computed transductively, exchangeability is preserved by construction.
+
+---
+
+## 12. Autoencoder Bottleneck vs PCA (CIFAR-100)
+
+Autoencoder (1-hidden-layer MLP, MSE reconstruction loss) trained on the same 10K unlabeled pool as PCA. Equally exchangeability-safe (unsupervised, no labels). Tests whether nonlinear manifold structure in DINOv2 embeddings can beat PCA's linear projection.
+
+### 12a. AE dimension sweep (3 trials, geodesic_topk_mean)
+
+| dim | cal=400 sz | cal=600 sz | cal=800 sz |
+|-----|-----------|-----------|-----------|
+| **AE-32** | **2.35** | **2.32** | 1.70 |
+| AE-64 | 2.46 | 2.40 | 1.73 |
+| AE-128 | 2.47 | 2.38 | **1.69** |
+| AE-256 | 3.40 | 2.77 | 1.91 |
+| AE-512 | 7.42 | 5.22 | 2.76 |
+| Full-768 | 4.49 | 4.55 | 2.23 |
+
+U-shape similar to PCA, but **AE optimal dim is much lower** (32 vs PCA's 128). AE-512 catastrophic (overfitting: near-identity mapping preserves noise). AE-32 and AE-128 essentially tied at cal=800.
+
+### 12b. Head-to-head comparison (5 trials, each at optimal dim)
+
+| Cal | FCP (768d) | FCP+PCA-128 | FCP+AE-32 | FCP+MS-CS |
+|-----|-----------|-------------|-----------|-----------|
+| 300 | 10.91 | **4.97** | 5.08 | 7.93 |
+| 400 | 4.76 | 2.85 | **2.64** | 3.51 |
+| 600 | 2.58 | **1.76** | 1.90 | 2.09 |
+| 800 | 2.25 | **1.68** | 1.80 | 1.95 |
+| 1000 | 1.91 | **1.56** | 1.61 | 1.77 |
+
+Coverage: all methods valid (89-93%) at all cal sizes.
+
+### 12c. Key findings
+
+1. **AE-32 wins at cal=400** (sz=2.64 vs PCA sz=2.85, 7% smaller). At extreme scarcity, nonlinear compression into a very compact space helps.
+2. **PCA-128 wins at cal≥600** (cal=800: PCA sz=1.68 vs AE sz=1.80, 7% better). Linear projection is slightly more efficient with adequate data.
+3. **Both dominate baseline FCP and MS-CS** at all cal sizes (25-55% smaller sets than full-768).
+4. **DINOv2 embeddings are approximately linear** — the nonlinear bottleneck doesn't find meaningful additional structure. PCA is near-optimal.
+5. **AE adds 25s training overhead** (vs 0.2s PCA). Not justified given marginal or negative improvement.
+
+**Conclusion**: PCA remains the recommended dimensionality reduction for FCP on DINOv2 embeddings. AE is a useful negative result — confirms the manifold is well-approximated by a linear subspace.
+
+---
+
+## 13. NCM Comparison After Dimensionality Reduction (CIFAR-100)
+
+6 NCMs compared across 3 reductions (full-768, PCA-128, AE-32) on same balanced stratified splits. 3 trials, α=0.1.
+
+### 13a. Best NCM per reduction (by set size, coverage ≥ 89%)
+
+| Cal | full-768 | PCA-128 | AE-32 |
+|-----|----------|---------|-------|
+| 300 | topk_mean: 6.53 | unwhitened_topk_mean: 3.96 | topk_mean: 3.18 |
+| 400 | **topk_asym: 3.03** | **topk_asym: 1.91** | **topk_asym: 1.95** |
+| 600 | **topk_asym: 2.17** | **topk_asym: 1.81** | **topk_asym: 1.79** |
+| 800 | **topk_asym: 2.20** | **topk_asym: 1.79** | **topk_asym: 1.81** |
+
+### 13b. Whitening ablation after PCA-128
+
+| Cal | topk_asym (whitened) | unwhitened_topk_asym | Whitening benefit |
+|-----|---------------------|---------------------|-------------------|
+| 400 | **1.91** | 2.17 | **12%** |
+| 600 | **1.81** | 1.90 | **5%** |
+| 800 | **1.79** | 1.90 | **6%** |
+
+Whitening is **NOT redundant** after PCA. PCA removes noise dimensions (total variance), whitening rescales by within-class variance — complementary operations.
+
+### 13c. Key findings
+
+1. **`geodesic_topk_asym` dominates at cal≥400** across all reductions (full, PCA, AE). Confirms it as the universal best NCM.
+2. **PCA-128 + topk_asym = 1.79 at cal=800** — best overall pipeline. 19% smaller than full-768 topk_asym (2.20), 8% smaller than PCA + topk_mean (1.94).
+3. **Whitening still helps 5-12%** after PCA reduction — not redundant.
+4. **AE-32 ≈ PCA-128 at cal≥600** (within 0.02 set size). AE-32 wins at cal=300 (3.18 vs 3.96, 20% smaller).
+5. **Unwhitened variants competitive at cal=300** only (unwhitened_topk_mean: 3.96 on PCA-128, best at that cal size). At cal≥400 whitened variants dominate.
+
+### Winning pipeline: DINOv2 → PCA-128 (unlabeled) → whitened geodesic topk_asym (k=5) → FCP
+
+Results saved: `output/ncm_comparison/`
+
+---
+
+## 14. Future Directions
+
+### P0 — Must complete
+1. ~~**PCA + NCM combination**~~ — **DONE** (§13). PCA-128 + topk_asym = 1.79 at cal=800 (best pipeline).
+2. ~~**SemiCP multi-dataset**~~ — **DONE** (§11). FCP+PCA dominates on CIFAR-100 & miniImageNet. CUB-200: FCP wins (PCA-512 doesn't help fine-grained). NNM always neutral.
+3. **MA-CS multi-dataset + adaptive λ** — most novel contribution. See §3.
+4. **MS-CS multi-dataset** — test on CUB-200, miniImageNet. See §4.
+
+### P1 — Stronger semi-supervised baselines (literature review, 2026-05-13)
+5. **PPI-RCPS** (Einbinder et al. 2024, arXiv 2412.11174) — Prediction-Powered Inference for threshold tuning with unlabeled data. Orthogonal approach: optimizes conformal quantile rather than augmenting scores. Moderate effort.
+6. **SSCP** (Seedat et al., AISTATS 2023, arXiv 2302.12238) — Self-supervised pretext tasks to improve NCM. Different paradigm from PCA dim reduction. Note: designed for regression, needs adaptation for classification sets.
+7. **Transductive Standardization** (Fan & Sesia 2025, arXiv 2512.15383) — Validates O(1/n) exchangeability for data-dependent standardization (relevant to our whitening theory).
+8. **Pseudo-Label CP** (Angelman et al. 2025) — Source-free calibration using pseudo-labels on unlabeled pool. Tests whether pseudo-labels > NNM matching for unlabeled data use.
 
 ### Negative results (archived)
 
 - Pool augmentation: breaks exchangeability. See `archive/findings_archive.md §11.5`.
 - LDA projection: structural under-coverage. See `archive/findings_archive.md §8`.
 - Original CS penalty: data leakage. See `archive/findings_archive.md §4`.
+- PCA on cal data: under-coverage at high dims. See §10 control experiment.
+- Pseudo-label trained head: same failure as LDA (label-dependent projection). See `archive/findings_archive.md §8`.
+- Autoencoder bottleneck: matches PCA at best, slightly worse at cal≥600. DINOv2 manifold is approximately linear. See §12.
 
 ---
 
-*Last updated: 2026-05-12*
+*Last updated: 2026-05-13*

@@ -56,8 +56,14 @@ python src/run_conformal_experiment.py --embeddings_path output/embeddings.pt --
 
 **Predictors**:
 - `FullConformalPredictor` -- Full (transductive) CP
-- `SoftmaxSplitCP` -- Inductive/split CP with softmax classifier
+- `SoftmaxSplitCP` -- Inductive/split CP with softmax classifier (THR score)
+- `SemiCP` -- Semi-supervised CP with NNM augmentation (THR/APS/RAPS scores; Zhou et al. 2025)
 - `CrossValidationPlusPredictor` -- CV+/Jackknife+
+
+**Score functions** (used by `SemiCP`):
+- `compute_cp_scores(probs, y_indices, score_fn)` -- batch score computation
+- `compute_cp_sets(probs, q_hat, score_fn)` -- prediction set construction
+- Score types: `THR` (1 - p(y)), `APS` (cumulative sorted probs), `RAPS` (APS + rank penalty)
 
 **Utilities**:
 - `create_ncm(ncm_type, k)` -- factory function
@@ -71,6 +77,7 @@ python src/run_conformal_experiment.py --embeddings_path output/embeddings.pt --
 ### Active experiment scripts
 - `src/macs_experiment.py` -- MA-CS binary superclass penalty (Fargion et al. 2025)
 - `src/mscs_unlabeled_experiment.py` -- MS-CS with unlabeled data (k-means clustering)
+- `src/semicp_experiment.py` -- SemiCP vs FCP comparison (Zhou et al. 2025)
 - `src/pca_experiment.py` -- PCA dimensionality reduction
 - `src/compare_ncms.py` -- NCM comparison
 - `src/compare_backbones.py` -- SSL backbone comparison
@@ -84,3 +91,4 @@ Completed/failed investigations: pool augmentation, LATA score smoothing, split 
 - Run from repo root or ensure `src/` is on Python path.
 - `output/` and `data/` are gitignored; `.pt` files are not tracked.
 - GPU used automatically via `torch.cuda.is_available()`.
+- **Stratified sampling**: All experiment scripts must use stratified (balanced) splits for cal/test/unlabeled — equal samples per class. Random splits cause class imbalance that distorts FCP results, especially with many classes (K>=100). Use `stratified_cal_test_split` from `conformal_prediction.py` or equivalent stratified logic.

@@ -4,9 +4,12 @@ PCA Dimensionality Reduction experiment for Full Conformal Prediction.
 Compares FCP performance (coverage, set size, runtime) at various PCA dimensions
 vs the full 768-D baseline. PCA is unsupervised so it preserves exchangeability.
 
+All splits are stratified (equal samples per class) to ensure fair comparison.
+
 Usage:
     python src/pca_experiment.py --embeddings_path output/embeddings_cifar100.pt
     python src/pca_experiment.py --embeddings_path output/embeddings_cifar100.pt --dims 32,64,128,256,512 --cal_sizes 400,600,800
+    python src/pca_experiment.py --embeddings_path output/embeddings_cub200.pt --pca_source unlabeled --unlabeled_per_class 15
 """
 
 import sys
@@ -27,6 +30,7 @@ from conformal_prediction import (
     FullConformalPredictor,
     create_ncm,
 )
+from autoencoder_utils import EmbeddingAutoencoder
 
 
 def parse_args():
@@ -55,8 +59,66 @@ def parse_args():
                              "If not provided, unlabeled pool is carved from the main embeddings.")
     parser.add_argument("--unlabeled_per_class", type=int, default=None,
                         help="Per-class budget for unlabeled pool when carving from main embeddings. "
-                             "Default: use all remaining data after cal+test allocation.")
+                             "Default: half of available after cal+test allocation.")
+    parser.add_argument("--reduction", type=str, default="pca", choices=["pca", "ae"],
+                        help="Reduction method: 'pca' (linear) or 'ae' (autoencoder)")
     return parser.parse_args()
+
+
+def stratified_split(X, y, sizes, rng):
+    """Split X, y into len(sizes)+1 stratified parts.
+
+    sizes: list of ints — number of samples for each split.
+    Returns: list of (X_part, y_part) for each size, plus the remainder.
+
+    Each split gets ceil(size/K) per class (capped by available).
+    """
+    classes = np.unique(y)
+    K = len(classes)
+
+    # Build per-class index pools (shuffled)
+    class_pools = {}
+    for c in classes:
+        idx = np.where(y == c)[0]
+        rng.shuffle(idx)
+        class_pools[c] = list(idx)
+
+    parts = []
+    for size in sizes:
+        per_class = max(1, size // K)
+        chosen = []
+        # First pass: take per_class from each class
+        for c in classes:
+            take = min(per_class, len(class_pools[c]))
+            chosen.extend(class_pools[c][:take])
+            class_pools[c] = class_pools[c][take:]
+
+        # If we need more (due to rounding), take extras round-robin
+        deficit = size - len(chosen)
+        if deficit > 0:
+            for c in classes:
+                if deficit <= 0:
+                    break
+                if len(class_pools[c]) > 0:
+                    chosen.append(class_pools[c].pop(0))
+                    deficit -= 1
+
+        chosen = np.array(chosen[:size])
+        rng.shuffle(chosen)
+        parts.append((X[chosen], y[chosen]))
+
+    # Remainder
+    remaining = []
+    for c in classes:
+        remaining.extend(class_pools[c])
+    remaining = np.array(remaining)
+    if len(remaining) > 0:
+        rng.shuffle(remaining)
+        parts.append((X[remaining], y[remaining]))
+    else:
+        parts.append((np.empty((0, X.shape[1])), np.empty(0, dtype=y.dtype)))
+
+    return parts
 
 
 def main():
@@ -96,39 +158,45 @@ def main():
 
     all_classes = np.unique(labels)
     n_classes = len(all_classes)
+    min_class_count = min(int(np.sum(labels == c)) for c in all_classes)
 
-    print(f"Embeddings: {embeddings.shape}, Classes: {n_classes}")
+    # Compute per-class budgets
+    max_cal = max(cal_sizes)
+    test_per_class = math.ceil(args.test_size / n_classes)
+    max_cal_per_class = math.ceil(max_cal / n_classes)
+    labeled_per_class = test_per_class + max_cal_per_class
+
+    if carve_unlabeled:
+        if args.unlabeled_per_class is not None:
+            unlabeled_per_class = args.unlabeled_per_class
+        else:
+            # Default: half of remaining after labeled allocation
+            unlabeled_per_class = max(10, (min_class_count - labeled_per_class) // 2)
+
+        total_per_class = labeled_per_class + unlabeled_per_class
+        if total_per_class > min_class_count:
+            # Reduce unlabeled to fit
+            unlabeled_per_class = min_class_count - labeled_per_class
+            if unlabeled_per_class < 5:
+                print(f"WARNING: only {unlabeled_per_class}/class for unlabeled pool. "
+                      f"Consider using a separate unlabeled file or reducing cal/test sizes.")
+            total_per_class = min_class_count
+
+        print(f"Budget per class: {labeled_per_class} labeled (test={test_per_class} + cal={max_cal_per_class}), "
+              f"{unlabeled_per_class} unlabeled, {total_per_class} total (available: {min_class_count})")
+    else:
+        total_per_class = min(labeled_per_class, min_class_count)
+        unlabeled_per_class = 0
+        print(f"Budget per class: {total_per_class} (test={test_per_class} + cal={max_cal_per_class}), "
+              f"available: {min_class_count}")
+
+    print(f"\nEmbeddings: {embeddings.shape}, Classes: {n_classes}")
     print(f"PCA dims: {dims} + full ({orig_dim})")
     print(f"Cal sizes: {cal_sizes}, Test size: {args.test_size}")
     print(f"NCM: {args.ncm}, Alpha: {args.alpha}, Trials: {args.n_trials}")
-    print(f"PCA source: {args.pca_source}")
+    print(f"Reduction: {args.reduction}, PCA source: {args.pca_source}")
 
-    # Pre-compute pool budget
-    max_cal = max(cal_sizes)
-    max_needed = args.test_size + max_cal
-    min_class_count = min(int(np.sum(labels == c)) for c in all_classes)
-
-    if carve_unlabeled:
-        # Need extra samples for unlabeled pool
-        unlabeled_per_class = args.unlabeled_per_class or max(10, min_class_count - math.ceil(max_needed / n_classes))
-        labeled_per_class = math.ceil(max_needed / n_classes)
-        num_per_class = labeled_per_class + unlabeled_per_class
-        if num_per_class > min_class_count:
-            # Reduce unlabeled budget to fit
-            num_per_class = min_class_count
-            unlabeled_per_class = num_per_class - labeled_per_class
-            if unlabeled_per_class < 5:
-                print(f"WARNING: only {unlabeled_per_class}/class for unlabeled pool. "
-                      f"Consider using a separate unlabeled file.")
-        print(f"Carving: {labeled_per_class}/class for cal+test, "
-              f"{unlabeled_per_class}/class for unlabeled PCA pool")
-    else:
-        num_per_class = math.ceil(max_needed / n_classes)
-        if num_per_class > min_class_count:
-            num_per_class = min_class_count
-            max_needed = num_per_class * n_classes
-
-    # Results storage: results[dim][cal_size] = {coverages: [], set_sizes: [], times: []}
+    # Results storage
     results = {}
     for d in dims_with_full:
         results[d] = {}
@@ -137,31 +205,33 @@ def main():
 
     for trial in range(args.n_trials):
         trial_seed = args.seed + trial * 1000
-        np.random.seed(trial_seed)
+        rng = np.random.RandomState(trial_seed)
 
-        # Stratified subsample
+        # Stratified subsample: total_per_class from each class
         pool_indices = []
         for c in all_classes:
             c_idx = np.where(labels == c)[0]
-            chosen = np.random.choice(c_idx, size=num_per_class, replace=False)
+            chosen = rng.choice(c_idx, size=total_per_class, replace=False)
             pool_indices.append(chosen)
         pool_indices = np.concatenate(pool_indices)
-        np.random.shuffle(pool_indices)
+        rng.shuffle(pool_indices)
 
         X_pool_all = embeddings[pool_indices]
         y_pool_all = labels[pool_indices]
 
+        # Carve unlabeled pool (stratified) if needed
         if carve_unlabeled:
-            # Carve unlabeled pool (stratified): take unlabeled_per_class from each class
             unlabeled_idx = []
             labeled_idx = []
             for c in all_classes:
                 c_mask = np.where(y_pool_all == c)[0]
-                unlabeled_idx.append(c_mask[:unlabeled_per_class])
-                labeled_idx.append(c_mask[unlabeled_per_class:])
+                # Shuffle within class to randomize which go to unlabeled vs labeled
+                c_mask_shuffled = c_mask.copy()
+                rng.shuffle(c_mask_shuffled)
+                unlabeled_idx.append(c_mask_shuffled[:unlabeled_per_class])
+                labeled_idx.append(c_mask_shuffled[unlabeled_per_class:])
             unlabeled_idx = np.concatenate(unlabeled_idx)
             labeled_idx = np.concatenate(labeled_idx)
-            np.random.shuffle(labeled_idx)
 
             unlabeled_emb = X_pool_all[unlabeled_idx]
             X_pool = X_pool_all[labeled_idx]
@@ -173,55 +243,69 @@ def main():
             X_pool = X_pool_all
             y_pool = y_pool_all
 
-        # Fixed test set
-        X_test_full = X_pool[-args.test_size:]
-        y_test = y_pool[-args.test_size:]
-        X_remain_full = X_pool[:-args.test_size]
-        y_remain = y_pool[:-args.test_size]
+        # Stratified test/cal split
+        splits = stratified_split(X_pool, y_pool, [args.test_size, max_cal], rng)
+        (X_test_full, y_test) = splits[0]
+        (X_remain_full, y_remain) = splits[1]
+        # splits[2] is remainder (unused)
+
+        actual_test = len(y_test)
+        actual_remain = len(y_remain)
 
         print(f"\n{'='*60}")
-        print(f"Trial {trial+1}/{args.n_trials} (seed={trial_seed})")
+        print(f"Trial {trial+1}/{args.n_trials} (seed={trial_seed}, "
+              f"test={actual_test}, remain={actual_remain})")
         print(f"{'='*60}")
 
         for cal_size in cal_sizes:
-            if cal_size > len(X_remain_full):
-                print(f"  cal={cal_size}: skipped (insufficient data)")
+            if cal_size > actual_remain:
+                print(f"  cal={cal_size}: skipped (need {cal_size}, have {actual_remain})")
                 continue
 
-            X_cal_full = X_remain_full[:cal_size]
-            y_cal = y_remain[:cal_size]
+            # Stratified cal subset from remain
+            if cal_size == actual_remain:
+                X_cal_full = X_remain_full
+                y_cal = y_remain
+            else:
+                cal_split = stratified_split(X_remain_full, y_remain, [cal_size], rng)
+                (X_cal_full, y_cal) = cal_split[0]
+
+            n_cal_classes = len(np.unique(y_cal))
+
+            red_tag = "PCA" if args.reduction == "pca" else "AE"
 
             for dim in dims_with_full:
                 if dim == orig_dim:
-                    # Baseline: no PCA
                     X_cal = X_cal_full
                     X_test = X_test_full
                     label = f"full-{orig_dim}"
                 else:
-                    # Fit PCA
                     if args.pca_source == "cal":
-                        pca_fit_data = X_cal_full
+                        fit_data = X_cal_full
                     elif args.pca_source == "unlabeled" and unlabeled_emb is not None:
-                        pca_fit_data = unlabeled_emb
+                        fit_data = unlabeled_emb
                     elif args.pca_source == "pool":
-                        pca_fit_data = X_pool
+                        fit_data = np.vstack([X_cal_full, X_test_full])
                     else:
-                        pca_fit_data = X_cal_full
+                        fit_data = X_cal_full
 
-                    # Skip if dim exceeds what PCA can handle
-                    max_components = min(pca_fit_data.shape[0], pca_fit_data.shape[1])
-                    if dim > max_components:
-                        print(f"  cal={cal_size} {'PCA-'+str(dim):>10s}: "
-                              f"SKIPPED (dim={dim} > max_components={max_components})")
-                        continue
+                    if args.reduction == "pca":
+                        max_components = min(fit_data.shape[0], fit_data.shape[1])
+                        if dim > max_components:
+                            print(f"  cal={cal_size} {'PCA-'+str(dim):>10s}: "
+                                  f"SKIPPED (dim={dim} > max_components={max_components})")
+                            continue
+                        reducer = PCA(n_components=dim)
+                        reducer.fit(fit_data)
+                    else:
+                        reducer = EmbeddingAutoencoder(
+                            bottleneck_dim=dim, seed=trial_seed)
+                        reducer.fit(fit_data)
 
-                    pca = PCA(n_components=dim)
-                    pca.fit(pca_fit_data)
-                    X_cal = pca.transform(X_cal_full)
-                    X_test = pca.transform(X_test_full)
-                    label = f"PCA-{dim}"
+                    X_cal = reducer.transform(X_cal_full)
+                    X_test = reducer.transform(X_test_full)
+                    label = f"{red_tag}-{dim}"
 
-                # Run FCP
                 ncm = create_ncm(args.ncm, k=args.k)
                 cp = FullConformalPredictor(ncm, alpha=args.alpha)
                 t0 = time.time()
@@ -235,7 +319,7 @@ def main():
 
                 print(f"  cal={cal_size} {label:>10s}: "
                       f"cov={metrics['coverage']:.3f}  sz={metrics['avg_set_size']:.2f}  "
-                      f"t={elapsed:.1f}s")
+                      f"t={elapsed:.1f}s  ({n_cal_classes}/{n_classes} cal classes)")
 
     # --- Summary ---
     print(f"\n{'='*70}")
@@ -258,14 +342,12 @@ def main():
             cov = np.mean(d['coverages'])
             sz = np.mean(d['set_sizes'])
             t = np.mean(d['times'])
-            cov_std = np.std(d['coverages'])
             sz_std = np.std(d['set_sizes'])
             print(f"  {cov:.3f}/{sz:.2f}+/-{sz_std:.2f}/{t:.1f}s", end="")
         print()
 
     # --- Plot ---
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-
     colors = plt.cm.viridis(np.linspace(0.1, 0.9, len(dims_with_full)))
 
     for ax_idx, (metric, ylabel) in enumerate([
@@ -274,8 +356,9 @@ def main():
         ('times', 'Time (s)')
     ]):
         ax = axes[ax_idx]
+        red_label = "PCA" if args.reduction == "pca" else "AE"
         for i, dim in enumerate(dims_with_full):
-            label = f"PCA-{dim}" if dim < orig_dim else f"Full-{orig_dim}"
+            label = f"{red_label}-{dim}" if dim < orig_dim else f"Full-{orig_dim}"
             xs, ys, yerrs = [], [], []
             for cs in cal_sizes:
                 d = results[dim][cs]
@@ -290,27 +373,27 @@ def main():
 
         ax.set_xlabel('Calibration Size')
         ax.set_ylabel(ylabel)
-        if ax_idx == 1:  # coverage
-            ax.axhline(y=1 - args.alpha, color='red', linestyle='--', alpha=0.5, label=f'Target {1-args.alpha:.0%}')
+        if ax_idx == 1:
+            ax.axhline(y=1 - args.alpha, color='red', linestyle='--', alpha=0.5,
+                        label=f'Target {1-args.alpha:.0%}')
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
 
-    fig.suptitle(f'PCA Dimensionality Reduction for FCP ({args.ncm})\n'
-                 f'PCA source: {args.pca_source}', fontsize=12)
+    fig.suptitle(f'{args.reduction.upper()} Dimensionality Reduction for FCP ({args.ncm})\n'
+                 f'fit source: {args.pca_source}', fontsize=12)
     plt.tight_layout()
-    plot_path = Path(args.output_dir) / f"pca_comparison_{args.ncm}_{args.pca_source}.png"
+    plot_path = Path(args.output_dir) / f"{args.reduction}_comparison_{args.ncm}_{args.pca_source}.png"
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
     print(f"\nSaved plot to {plot_path}")
     plt.close()
 
-    # --- Dim vs set size at each cal size (bar chart) ---
+    # --- Dim vs set size bar chart ---
     fig2, ax2 = plt.subplots(figsize=(10, 5))
     bar_width = 0.8 / len(cal_sizes)
     x_pos = np.arange(len(dims_with_full))
 
     for j, cs in enumerate(cal_sizes):
-        means = []
-        stds = []
+        means, stds = [], []
         for dim in dims_with_full:
             d = results[dim][cs]
             if d['set_sizes']:
@@ -323,14 +406,15 @@ def main():
                 label=f'cal={cs}', capsize=2, alpha=0.8)
 
     ax2.set_xticks(x_pos + bar_width * (len(cal_sizes) - 1) / 2)
-    ax2.set_xticklabels([f"PCA-{d}" if d < orig_dim else f"Full-{orig_dim}" for d in dims_with_full])
+    red_label2 = "PCA" if args.reduction == "pca" else "AE"
+    ax2.set_xticklabels([f"{red_label2}-{d}" if d < orig_dim else f"Full-{orig_dim}" for d in dims_with_full])
     ax2.set_ylabel('Avg Set Size')
     ax2.set_xlabel('Embedding Dimension')
     ax2.legend()
     ax2.grid(True, alpha=0.3, axis='y')
-    ax2.set_title(f'Set Size vs PCA Dimension ({args.ncm}, PCA source: {args.pca_source})')
+    ax2.set_title(f'Set Size vs {args.reduction.upper()} Dimension ({args.ncm}, fit source: {args.pca_source})')
     plt.tight_layout()
-    bar_path = Path(args.output_dir) / f"pca_barplot_{args.ncm}_{args.pca_source}.png"
+    bar_path = Path(args.output_dir) / f"{args.reduction}_barplot_{args.ncm}_{args.pca_source}.png"
     plt.savefig(bar_path, dpi=150, bbox_inches='tight')
     print(f"Saved bar plot to {bar_path}")
     plt.close()
@@ -347,7 +431,7 @@ def main():
             return float(obj)
         return obj
 
-    json_path = Path(args.output_dir) / f"pca_results_{args.ncm}_{args.pca_source}.json"
+    json_path = Path(args.output_dir) / f"{args.reduction}_results_{args.ncm}_{args.pca_source}.json"
     with open(json_path, 'w') as f:
         json.dump(to_serializable({
             'dims': dims_with_full,
@@ -355,6 +439,7 @@ def main():
             'ncm': args.ncm,
             'alpha': args.alpha,
             'n_trials': args.n_trials,
+            'reduction': args.reduction,
             'pca_source': args.pca_source,
             'results': results,
         }), f, indent=2)
