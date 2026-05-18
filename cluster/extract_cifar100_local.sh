@@ -24,9 +24,11 @@ NUM_PER_CLASS=100                  # 100 classes x 100 = 10K images
 DATA_DIR=data/cifar100
 OUTPUT_NAME=embeddings_cifar100.pt
 MODEL=dinov2-base
-# RTX 6000 Ada (48GB) handles native 518 + batch 64 comfortably.
-INPUT_SIZE=518
-BATCH_SIZE=64
+# Defaults sized for a Run:AI fractional GPU slice (~5 GB VRAM).
+# Override at invocation if you have more — e.g.:
+#   INPUT_SIZE=518 BATCH_SIZE=64 bash cluster/extract_cifar100_local.sh
+INPUT_SIZE="${INPUT_SIZE:-336}"
+BATCH_SIZE="${BATCH_SIZE:-32}"
 
 # Optional: point at a venv. Leave empty to use the default `python` on PATH.
 VENV_PATH="${SSL_CP_VENV:-}"       # e.g. export SSL_CP_VENV=~/venvs/ssl-cp
