@@ -22,7 +22,7 @@ set -euo pipefail
 # Config — override via env vars before invoking
 # ============================================================================
 N_TRIALS="${N_TRIALS:-5}"
-NCM="${NCM:-geodesic_topk_asym}"               # best NCM per MEMORY.md
+NCM="${NCM:-geodesic_topk_mean}"               # symmetric variant — theory-friendly default
 CAL_SIZES="${CAL_SIZES:-300 400 600 800 1000}"
 ALPHA="${ALPHA:-0.1}"
 PCA_DIM="${PCA_DIM:-128}"
