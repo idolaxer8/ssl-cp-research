@@ -1,6 +1,30 @@
-# Cluster jobs (SLURM)
+# Cluster jobs
 
-Quick reference for running experiments on a SLURM cluster. All scripts are launched from the **repo root**.
+Two flavors are provided:
+
+| Script | When to use |
+|---|---|
+| `extract_cifar100_local.sh` | Single GPU machine you SSH directly into (no scheduler). Run inside `tmux` or with `nohup`. |
+| `extract_cifar100.sbatch`   | Real SLURM cluster. Submit with `sbatch`. |
+
+Run from the **repo root** in both cases.
+
+## Direct SSH machine (no scheduler) — fastest path
+
+```bash
+cd /storage/<you>/ssl-cp-research
+
+# Install deps once (system python or a venv):
+pip install -r requirements.txt
+# OR: python -m venv ~/venvs/ssl-cp && source ~/venvs/ssl-cp/bin/activate && pip install -r requirements.txt
+# (then `export SSL_CP_VENV=~/venvs/ssl-cp` before launching the script)
+
+tmux new -s extract
+bash cluster/extract_cifar100_local.sh
+# Ctrl-b d to detach. Reattach later: tmux attach -t extract
+```
+
+## SLURM reference (for the sbatch flavor below)
 
 ## First-time setup
 
