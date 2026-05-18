@@ -59,17 +59,17 @@ if ! python -c "import timm" 2>/dev/null; then
 fi
 
 # ============================================================================
-# Pre-flight: writable space check
+# Pre-flight: actual writable-space check (df lies on Lustre/PVC mounts)
 # ============================================================================
-AVAIL_KB=$(df -P . | awk 'NR==2 {print $4}')
-if [ "$AVAIL_KB" -lt 524288 ]; then     # < 512 MB free in cwd
-    echo "WARNING: only $((AVAIL_KB/1024)) MB free in $(pwd)."
-    echo "  Need ~250 MB for raw images + ~50 MB for embeddings tensor."
-    echo "  Free space or move repo to a different mount, then re-run."
+mkdir -p "$DATA_DIR" output cluster/logs
+PROBE="cluster/logs/.space_probe.$$"
+if ! dd if=/dev/zero of="$PROBE" bs=1M count=10 status=none 2>/dev/null; then
+    rm -f "$PROBE"
+    echo "ERROR: cannot write 10 MB probe in $(pwd)."
+    echo "  Real 'no space left' — free up storage or move repo to a writable mount."
     exit 1
 fi
-
-mkdir -p "$DATA_DIR" output cluster/logs
+rm -f "$PROBE"
 
 # ============================================================================
 # Pipeline
