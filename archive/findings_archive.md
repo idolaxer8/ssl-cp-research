@@ -406,3 +406,25 @@ See §4.3.4 in findings.md for the comparison table. Our MA-CS implementation us
 3. **Alternative**: Use NCM's own scores: y_hat = argmin_y s(x,y). More principled but requires computing all K scores before applying penalty (slower).
 
 Status: Open question. Current implementation works empirically (valid coverage maintained). Formal justification needed for paper.
+
+---
+
+## 15. PPI-RCPS — DEPRIORITIZED (2026-05-18)
+
+Implementation and references archived. Original plan: use Prediction-Powered Inference (Einbinder et al. 2024, arXiv:2412.11174) for adaptive λ-tuning of MS-CS.
+
+**Reason for deprioritization**:
+- PPI-RCPS is designed for split-CP threshold tuning. Our pipeline uses Full Conformal Prediction, which has no equivalent λ hyperparameter to tune via PPI.
+- Empirical results (findings.md §11) show FCP+PCA already dominates every semi-supervised split-CP baseline tested (SemiCP-THR/APS/RAPS). PPI-RCPS would optimize a method we've already shown to be a weaker pipeline.
+- The MS-CS λ value (0.05) selected manually works robustly across datasets; adaptive tuning is not a current bottleneck.
+
+**Files moved**:
+- `src/conformal_prediction.py::PPIRCPS` class → `src/archive/ppi_rcps.py`
+- `src/conformal_prediction.py::clopper_pearson_ucb` helper → `src/archive/ppi_rcps.py` (only used by PPIRCPS)
+
+**Documentation updates**:
+- `findings.md §14 P1 item #5`: marked deprioritized
+- `literature.md §6 (Einbinder row)` and reading priority: marked deprioritized
+- `docs/literature_update_semicp_2026-05.md`: relevance score lowered ★★★→★☆☆
+
+**To re-activate**: copy `PPIRCPS` and `clopper_pearson_ucb` back into `src/conformal_prediction.py`. The `compute_cp_scores` dependency is still in the library.

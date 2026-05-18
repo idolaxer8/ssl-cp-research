@@ -77,80 +77,56 @@ SPLIT_TRAIN_RATIO = 0.5
 # Stratified split utility
 # ---------------------------------------------------------------------------
 
+def balanced_sample(X, y, all_classes, n_total, rng):
+    """Sample exactly n_total // K per class (balanced). Returns indices."""
+    K = len(all_classes)
+    per_class = n_total // K
+    idx = []
+    for c in all_classes:
+        c_idx = np.where(y == c)[0]
+        chosen = rng.choice(c_idx, min(per_class, len(c_idx)), replace=False)
+        idx.append(chosen)
+    idx = np.concatenate(idx)
+    return rng.permutation(idx)
+
+
 def stratified_split(X, y, all_classes, cal_size, test_size, rng,
                      unlabeled_size=0):
     """
-    Stratified split: pool -> cal + test (+ optional unlabeled carve-out).
+    Balanced split: pool -> cal + test (+ optional unlabeled carve-out).
+    Each subset gets exactly size // K per class.
 
     Returns (X_cal, y_cal, X_test, y_test, X_unlabeled_out).
     X_unlabeled_out is empty array if unlabeled_size=0.
     """
-    n_classes = len(all_classes)
-    needed = cal_size + test_size + unlabeled_size
-    num_per_class = math.ceil(needed / n_classes)
-    min_count = min(np.sum(y == c) for c in all_classes)
-    num_per_class = min(num_per_class, min_count)
+    K = len(all_classes)
+    cal_per_class = cal_size // K
+    test_per_class = test_size // K
 
-    pool_idx = []
+    cal_idx, test_idx = [], []
     for c in all_classes:
         c_idx = np.where(y == c)[0]
-        chosen = rng.choice(c_idx, num_per_class, replace=False)
-        pool_idx.append(chosen)
-    pool_idx = np.concatenate(pool_idx)
-    rng.shuffle(pool_idx)
+        c_idx = rng.permutation(c_idx)
+        cal_idx.append(c_idx[:cal_per_class])
+        test_idx.append(c_idx[cal_per_class:cal_per_class + test_per_class])
+    cal_idx = rng.permutation(np.concatenate(cal_idx))
+    test_idx = rng.permutation(np.concatenate(test_idx))
 
-    X_pool, y_pool = X[pool_idx], y[pool_idx]
-
-    # Carve test
-    X_test, y_test = X_pool[-test_size:], y_pool[-test_size:]
-    X_rem, y_rem = X_pool[:-test_size], y_pool[:-test_size]
-
-    # Carve unlabeled (if needed)
     X_unlabeled_out = np.empty((0, X.shape[1]))
-    if unlabeled_size > 0:
-        u_size = min(unlabeled_size, len(X_rem) - cal_size)
-        if u_size > 0:
-            X_unlabeled_out = X_rem[-u_size:]
-            X_rem = X_rem[:-u_size]
-            y_rem = y_rem[:-u_size]
-
-    # Stratified cal from remainder (guarantee >= 1 per class)
-    rem_classes = np.unique(y_rem)
-    first = np.array([rng.choice(np.where(y_rem == c)[0], 1, replace=False)[0]
-                      for c in rem_classes])
-    rest = np.setdiff1d(np.arange(len(X_rem)), first)
-    n_extra = cal_size - len(rem_classes)
-    if n_extra > 0:
-        extra = rng.choice(rest, min(n_extra, len(rest)), replace=False)
-        cal_idx = np.concatenate([first, extra])
-    else:
-        cal_idx = first[:cal_size]
-    cal_idx = rng.permutation(cal_idx)
-
-    return X_rem[cal_idx], y_rem[cal_idx], X_test, y_test, X_unlabeled_out
+    return X[cal_idx], y[cal_idx], X[test_idx], y[test_idx], X_unlabeled_out
 
 
 # ---------------------------------------------------------------------------
 # Single-trial runner
 # ---------------------------------------------------------------------------
 
-def stratified_train_cal_split(X, y, all_classes, train_ratio, rng):
-    """Split into train / cal, ensuring >=1 per class in train."""
-    train_idx, cal_idx = [], []
-    for c in all_classes:
-        c_mask = np.where(y == c)[0]
-        c_mask = rng.permutation(c_mask)
-        n_c = len(c_mask)
-        if n_c <= 1:
-            train_idx.extend(c_mask)
-            continue
-        n_tr = max(1, round(train_ratio * n_c))
-        if n_tr >= n_c:
-            n_tr = n_c - 1
-        train_idx.extend(c_mask[:n_tr])
-        cal_idx.extend(c_mask[n_tr:])
-    return (X[np.array(train_idx)], y[np.array(train_idx)],
-            X[np.array(cal_idx)], y[np.array(cal_idx)])
+def random_train_cal_split(X, y, train_ratio, rng):
+    """Random (non-stratified) split to preserve exchangeability for SCP."""
+    n = len(X)
+    perm = rng.permutation(n)
+    n_tr = int(round(train_ratio * n))
+    tr, ca = perm[:n_tr], perm[n_tr:]
+    return X[tr], y[tr], X[ca], y[ca]
 
 
 def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
@@ -169,16 +145,16 @@ def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
     n_cal = len(X_cal)
     n_classes = len(all_classes)
 
-    # --- Stratified train/cal split for SCP/SemiCP ---
-    X_train, y_train, X_cal_split, y_cal_split = stratified_train_cal_split(
-        X_cal, y_cal, all_classes, split_train_ratio, rng)
+    # --- Random train/cal split for SCP/SemiCP (preserves exchangeability) ---
+    X_train, y_train, X_cal_split, y_cal_split = random_train_cal_split(
+        X_cal, y_cal, split_train_ratio, rng)
     n_train = len(X_train)
     n_cal_split_len = len(X_cal_split)
 
     scp_methods = ["SCP-THR", "SCP-APS", "SCP-RAPS",
                    "SemiCP-THR", "SemiCP-APS", "SemiCP-RAPS"]
 
-    if n_train < n_classes or n_cal_split_len < 1:
+    if n_train < 2 or n_cal_split_len < 2:
         for method in scp_methods:
             results[method] = {
                 'coverage': np.nan, 'avg_set_size': np.nan,
@@ -515,20 +491,9 @@ def main():
                     y_test_t = y_test_ext
                     X_test_pca_t = X_test_pca_ext
 
-                    # Stratified cal from labeled pool (use remaining after carve)
+                    # Balanced cal from labeled pool (cs // K per class)
                     X_src, y_src = X_labeled_remaining, y_labeled_remaining
-                    first_per_class = np.array([
-                        rng.choice(np.where(y_src == c)[0], 1, replace=False)[0]
-                        for c in all_classes
-                    ])
-                    remaining = np.setdiff1d(np.arange(len(X_src)), first_per_class)
-                    n_extra = cs - n_classes
-                    if n_extra > 0:
-                        extra = rng.choice(remaining, min(n_extra, len(remaining)), replace=False)
-                        cal_idx = np.concatenate([first_per_class, extra])
-                    else:
-                        cal_idx = first_per_class[:cs]
-                    cal_idx = rng.permutation(cal_idx)
+                    cal_idx = balanced_sample(X_src, y_src, all_classes, cs, rng)
                     X_cal_t = X_src[cal_idx]
                     y_cal_t = y_src[cal_idx]
 
@@ -602,18 +567,8 @@ def main():
                     if X_test_ext is not None:
                         X_test_t = X_test_ext
                         y_test_t = y_test_ext
-                        first_per_class = np.array([
-                            rng.choice(np.where(y_src == c)[0], 1, replace=False)[0]
-                            for c in all_classes
-                        ])
-                        remaining = np.setdiff1d(np.arange(len(X_src)), first_per_class)
-                        n_extra = ablation_cal - n_classes
-                        if n_extra > 0:
-                            extra = rng.choice(remaining, min(n_extra, len(remaining)), replace=False)
-                            cal_idx = np.concatenate([first_per_class, extra])
-                        else:
-                            cal_idx = first_per_class[:ablation_cal]
-                        cal_idx = rng.permutation(cal_idx)
+                        cal_idx = balanced_sample(X_src, y_src, all_classes,
+                                                  ablation_cal, rng)
                         X_cal_t = X_src[cal_idx]
                         y_cal_t = y_src[cal_idx]
                     else:

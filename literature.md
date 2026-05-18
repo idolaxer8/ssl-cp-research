@@ -58,7 +58,7 @@ Legend: `[ ]` unread · `[~]` in progress · `[x]` read
 | Status | Paper | Venue | Year | Link | Notes |
 |---|---|---|---|---|---|
 | [x] | **Zhou et al.** — "SemiCP" (NNM score) | CVPR | 2026 | [arXiv:2505.21147](https://arxiv.org/abs/2505.21147) | Pool augmentation for Split CP. We tested for FCP — negative result. |
-| [x] | **Einbinder et al.** — "PPI for Risk Control" | arXiv | 2024 | [arXiv:2412.11174](https://arxiv.org/abs/2412.11174) | PPI-based lambda tuning. Applicable to MS-CS. |
+| [x] | **Einbinder et al.** — "PPI for Risk Control" | arXiv | 2024 | [arXiv:2412.11174](https://arxiv.org/abs/2412.11174) | PPI-based lambda tuning. **Deprioritized 2026-05-18** — implementation archived to `src/archive/ppi_rcps.py`. Split-CP-oriented; orthogonal to our FCP pipeline. |
 | [x] | **Bozorgtabar et al.** — "LATA" (kNN graph smoothing) | arXiv | 2026 | [arXiv:2602.17535](https://arxiv.org/abs/2602.17535) | Graph smoothing on SSL embeddings. Tested — naive approach fails for FCP NCM scores. |
 
 ---
@@ -68,7 +68,7 @@ Legend: `[ ]` unread · `[~]` in progress · `[x]` read
 1. **RAPS** (Angelopoulos 2009.14193) — must implement as SCP baseline
 2. **Fillioux/Cherian** (2412.06082) — positioning vs closest work
 3. **Fargion** (2511.19359) — MA-CS theory we validate
-4. **Einbinder** (2412.11174) — PPI lambda selection for MS-CS
+4. ~~**Einbinder** (2412.11174)~~ — Deprioritized 2026-05-18 (see §6 note)
 5. **Fisch** (2102.08898) — few-shot framing
 6. **Wang & Isola** (2005.10242) — geodesic justification (review for paper)
 7. **Angelopoulos & Bates** (2107.07511) — tutorial for methods section
