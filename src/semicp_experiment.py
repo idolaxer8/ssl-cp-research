@@ -37,6 +37,10 @@ from conformal_prediction import (
     SoftmaxSplitCP,
     create_ncm,
 )
+from mscs_unlabeled_experiment import (
+    build_cluster_similarity_matrix,
+    run_fcp_with_mscs,
+)
 
 # ---------------------------------------------------------------------------
 # Dataset configurations
@@ -69,8 +73,12 @@ DATASETS = {
 
 ALPHA = 0.1
 SEED = 42
-NCM_FCP = "geodesic_topk_asym"
+NCM_FCP = "geodesic_topk_mean"
 SPLIT_TRAIN_RATIO = 0.5
+# MS-CS defaults — matched to ablation (cs_ablation.py)
+MSCS_LAMBDA = 0.05
+MSCS_N_CLUSTERS = 20
+MSCS_TAU_MULT = 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +139,9 @@ def random_train_cal_split(X, y, train_ratio, rng):
 
 def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
               alpha, ncm_fcp, split_train_ratio, rng,
-              pca_model=None, X_test_pca=None):
+              pca_model=None, X_test_pca=None, X_unlabeled_pca=None,
+              mscs_lambda=MSCS_LAMBDA, mscs_n_clusters=MSCS_N_CLUSTERS,
+              mscs_tau_mult=MSCS_TAU_MULT):
     """
     Run all methods for one trial and return a dict of metrics.
 
@@ -140,6 +150,7 @@ def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
     - SemiCP-THR/APS/RAPS: Split CP + NNM from unlabeled
     - FCP: Full Conformal Prediction (no unlabeled)
     - FCP+PCA: FCP on PCA-projected embeddings (if pca_model provided)
+    - FCP+PCA+MS-CS: FCP+PCA + MS-CS penalty (clusters built in PCA space)
     """
     results = {}
     n_cal = len(X_cal)
@@ -212,6 +223,23 @@ def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
             'time': time.time() - t0
         }
 
+    # --- FCP+PCA+MS-CS (the lead method — clusters built in PCA space) ---
+    if (pca_model is not None and X_test_pca is not None
+            and X_unlabeled_pca is not None and len(X_unlabeled_pca) > 0):
+        t0 = time.time()
+        X_cal_pca = pca_model.transform(X_cal)
+        # Build cluster-similarity matrix in PCA space (4x faster than 768d)
+        M, *_ = build_cluster_similarity_matrix(
+            X_unlabeled_pca, X_cal_pca, y_cal, all_classes,
+            mscs_n_clusters, tau=-mscs_tau_mult)
+        cov, sz = run_fcp_with_mscs(
+            X_cal_pca, y_cal, X_test_pca, y_test, all_classes,
+            ncm_fcp, alpha, mscs_lambda, M, exchangeable=False)
+        results["FCP+PCA+MS-CS"] = {
+            'coverage': cov, 'avg_set_size': sz,
+            'time': time.time() - t0
+        }
+
     return results
 
 
@@ -228,6 +256,7 @@ METHOD_STYLES = {
     "SemiCP-RAPS":  {"color": "#ff7f0e", "ls": "--", "marker": "D", "lw": 2.0},
     "FCP":          {"color": "#1f77b4", "ls": "-",  "marker": "o", "lw": 2.5},
     "FCP+PCA":      {"color": "#e377c2", "ls": "-",  "marker": "p", "lw": 2.5},
+    "FCP+PCA+MS-CS":{"color": "#bcbd22", "ls": "-",  "marker": "*", "lw": 3.0},
 }
 
 
@@ -455,12 +484,12 @@ def main():
 
         methods = ["SCP-THR", "SCP-APS", "SCP-RAPS",
                    "SemiCP-THR", "SemiCP-APS", "SemiCP-RAPS",
-                   "FCP", "FCP+PCA"]
+                   "FCP+PCA+MS-CS"]
 
         # ----------------------------------------------------------------
-        # Fit PCA on unlabeled pool (once)
+        # Fit PCA on unlabeled pool (once); pre-project unlabeled for MS-CS
         # ----------------------------------------------------------------
-        pca_model, X_test_pca_ext = None, None
+        pca_model, X_test_pca_ext, X_unlabeled_pca = None, None, None
         pca_dim = cfg.get("pca_dim", args.pca_dim)
         if X_unlabeled_ext is not None and len(X_unlabeled_ext) > 0:
             pca_model = PCA(n_components=pca_dim)
@@ -468,6 +497,7 @@ def main():
             explained = pca_model.explained_variance_ratio_.sum()
             print(f"PCA: {X_unlabeled_ext.shape[1]}d -> {pca_dim}d "
                   f"(explained variance: {explained:.3f})")
+            X_unlabeled_pca = pca_model.transform(X_unlabeled_ext)
             if X_test_ext is not None:
                 X_test_pca_ext = pca_model.transform(X_test_ext)
 
@@ -512,7 +542,8 @@ def main():
                 trial_results = run_trial(
                     X_cal_t, y_cal_t, X_test_t, y_test_t, X_u_t,
                     all_classes, args.alpha, NCM_FCP, SPLIT_TRAIN_RATIO,
-                    rng_split, pca_model=pca_model, X_test_pca=X_test_pca_t)
+                    rng_split, pca_model=pca_model, X_test_pca=X_test_pca_t,
+                    X_unlabeled_pca=X_unlabeled_pca)
 
                 for m in methods:
                     if m in trial_results:
