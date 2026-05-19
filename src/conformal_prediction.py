@@ -651,6 +651,220 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
         return scores
 
 
+class RBFDensityNCM(NonconformityMeasure):
+    """
+    RBF (Gaussian) kernel density NCM.
+
+    Score for point i:
+        alpha_i = -log Σ_{j ≠ i, y_j = y_i}  exp(-||x_i - x_j||² / (2 σ²))
+
+    Lower alpha = denser within-class neighborhood = more conforming.
+
+    Why this NCM:
+    - Nonlinear in x: can exploit curved class manifolds that a linear NCM
+      (whitened cosine) discards. Pairs with AE-style nonlinear features.
+    - O(n_cal/K) per-hypothesis update via logaddexp on a single
+      precomputed pairwise kernel matrix.
+
+    Exchangeability (O(1/n) approximation, same regime as MahalNNRatio /
+    WhitenedGeodesicNNRatio):
+    - The bandwidth σ is fit on calibration data only at fit() time (median
+      pairwise distance heuristic). For exact exchangeability σ should be
+      recomputed on the augmented bag {z_1, ..., z_n, (x*, y*)}; the asymmetry
+      is O(1/n²) and negligible for n >= 200. See Fan & Sesia (2025,
+      arXiv 2512.15383).
+    - Alternative: pass a precomputed σ from an independent unlabeled pool
+      (set sigma= at init) for an exactly-symmetric bandwidth.
+
+    FCP O(N) compatibility: per-hypothesis only n_cal/K calibration scores
+    change (those with y_i == y_hyp). All others reuse the baseline value.
+    """
+
+    def __init__(self, sigma: Optional[float] = None,
+                 bandwidth_rule: str = "median",
+                 sigma_scale: float = 1.0,
+                 ratio: bool = False,
+                 eps_log: float = 1e-30):
+        """
+        Args:
+            sigma: Kernel bandwidth. If None, set at fit() via bandwidth_rule.
+            bandwidth_rule: 'median' (median pairwise dist), 'knn' (median dist to
+                            k=10 NN), 'within_class_median' (median of same-class
+                            pairwise dist; exchangeable so long as labels are
+                            calibration-only).
+            sigma_scale: Multiplier on the auto-chosen sigma. 1.0 = use as-is.
+            ratio: If True, score = -log(Σ_same K) + log(Σ_other K) (log-odds).
+                   If False, score = -log(Σ_same K) (pure within-class density).
+            eps_log: Floor inside the log when a class has no neighbors at all.
+        """
+        self.sigma = sigma
+        self.bandwidth_rule = bandwidth_rule
+        self.sigma_scale = sigma_scale
+        self.ratio = ratio
+        self.eps_log = eps_log
+        # Fit state
+        self.X_cal = None
+        self.y_cal = None
+        self.gamma_ = None              # 1 / (2 sigma²)
+        self.K_cal_ = None              # (n_cal, n_cal) kernel matrix
+        self.baseline_lse_ = None       # (n_cal,) log Σ_{j≠i, y_j=y_i} K_ij
+        self.alpha0 = None
+        # Test-point cache: keyed by x.ctypes.data
+        self._test_cache_key = None
+        self._test_cache_k = None        # (n_cal,) K(x_test, x_j)
+
+    @staticmethod
+    def _pairwise_dist2(X: np.ndarray) -> np.ndarray:
+        sq = (X ** 2).sum(axis=1)
+        D2 = sq[:, None] + sq[None, :] - 2.0 * X @ X.T
+        return np.maximum(D2, 0.0)
+
+    @classmethod
+    def _auto_sigma(cls, X: np.ndarray, y: np.ndarray, rule: str,
+                    rng_seed: int = 42) -> float:
+        """Compute an auto bandwidth. All rules are symmetric in calibration
+        points (exchangeable up to the standard O(1/n) bandwidth approximation)."""
+        rng = np.random.default_rng(rng_seed)
+        D2 = cls._pairwise_dist2(X)
+        D = np.sqrt(D2)
+        np.fill_diagonal(D, np.inf)
+
+        if rule == "median":
+            iu = np.triu_indices_from(D, k=1)
+            d = D[iu]
+            return float(np.median(d[np.isfinite(d)]))
+        if rule == "knn":
+            k = min(10, len(X) - 1)
+            nn_d = np.partition(D, k - 1, axis=1)[:, :k]
+            # Median of mean k-NN distance per point
+            return float(np.median(nn_d.mean(axis=1)))
+        if rule == "within_class_median":
+            dists = []
+            for c in np.unique(y):
+                idx = np.where(y == c)[0]
+                if len(idx) < 2:
+                    continue
+                sub = D[np.ix_(idx, idx)]
+                iu = np.triu_indices_from(sub, k=1)
+                dists.append(sub[iu][np.isfinite(sub[iu])])
+            if not dists:
+                return float(np.median(D[np.isfinite(D)]))
+            return float(np.median(np.concatenate(dists)))
+        raise ValueError(f"Unknown bandwidth_rule: {rule}")
+
+    @staticmethod
+    def _row_logsumexp(sub: np.ndarray) -> np.ndarray:
+        """log-sum-exp over rows, treating -inf entries correctly."""
+        row_max = sub.max(axis=1)
+        finite = np.isfinite(row_max)
+        out = np.full(sub.shape[0], -np.inf)
+        if finite.any():
+            shifted = sub[finite] - row_max[finite, None]
+            out[finite] = np.log(np.exp(shifted).sum(axis=1)) + row_max[finite]
+        return out
+
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        self.X_cal = X_cal.astype(np.float64)
+        self.y_cal = np.asarray(y_cal)
+        n_cal, _ = X_cal.shape
+
+        # --- Bandwidth ---
+        if self.sigma is None:
+            auto = self._auto_sigma(self.X_cal, self.y_cal, self.bandwidth_rule)
+            self.sigma = max(auto * self.sigma_scale, 1e-6)
+        self.gamma_ = 1.0 / (2.0 * self.sigma ** 2)
+
+        # --- log-kernel matrix (cal × cal) ---
+        D2 = self._pairwise_dist2(self.X_cal)
+        self.logK_cal_ = -self.gamma_ * D2
+        np.fill_diagonal(self.logK_cal_, -np.inf)
+
+        # --- Baseline within-class log-sum-exp ---
+        self.baseline_lse_same_ = np.full(n_cal, -np.inf)
+        for c in np.unique(self.y_cal):
+            idx = np.where(self.y_cal == c)[0]
+            sub = self.logK_cal_[np.ix_(idx, idx)]
+            self.baseline_lse_same_[idx] = self._row_logsumexp(sub)
+
+        if self.ratio:
+            # --- Baseline cross-class log-sum-exp ---
+            self.baseline_lse_other_ = np.full(n_cal, -np.inf)
+            for c in np.unique(self.y_cal):
+                idx_in = np.where(self.y_cal == c)[0]
+                idx_out = np.where(self.y_cal != c)[0]
+                if len(idx_out) == 0:
+                    continue
+                sub = self.logK_cal_[np.ix_(idx_in, idx_out)]
+                self.baseline_lse_other_[idx_in] = self._row_logsumexp(sub)
+            # nonconformity = -log Σ_same + log Σ_other = log(other/same)
+            self.alpha0 = -self.baseline_lse_same_ + self.baseline_lse_other_
+        else:
+            self.alpha0 = -self.baseline_lse_same_
+        self.alpha0[~np.isfinite(self.alpha0)] = 1e9
+
+    def get_calibration_scores(self) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+
+    def _get_logk_test(self, x: np.ndarray) -> np.ndarray:
+        """Return log K(x_test, x_j) for j in cal. Cached on x.ctypes.data."""
+        key = x.ctypes.data
+        if key != self._test_cache_key:
+            d2 = ((self.X_cal - x[None, :]) ** 2).sum(axis=1)
+            self._test_cache_k = -self.gamma_ * d2
+            self._test_cache_key = key
+        return self._test_cache_k
+
+    @staticmethod
+    def _lse_vec(v: np.ndarray) -> float:
+        m = v.max()
+        if not np.isfinite(m):
+            return -np.inf
+        return float(np.log(np.exp(v - m).sum()) + m)
+
+    def score_x(self, x: np.ndarray, y: int) -> float:
+        """Nonconformity of (x, y)."""
+        logk = self._get_logk_test(x)
+        mask_same = (self.y_cal == y)
+        if not np.any(mask_same):
+            return 1e9
+        lse_same = self._lse_vec(logk[mask_same])
+        if not self.ratio:
+            return float(-lse_same)
+        mask_other = ~mask_same
+        lse_other = self._lse_vec(logk[mask_other]) if np.any(mask_other) else -np.inf
+        return float(-lse_same + (lse_other if np.isfinite(lse_other) else np.log(self.eps_log)))
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
+        """Augmented cal scores after adding (x, y).
+
+        Density form: only y_i = y points see a numerator update.
+        Ratio form: y_i = y see numerator update, y_i != y see denominator update.
+        """
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        logk = self._get_logk_test(x)
+        idx_same = np.where(self.y_cal == y)[0]
+
+        new_lse_same = self.baseline_lse_same_.copy()
+        if len(idx_same) > 0:
+            new_lse_same[idx_same] = np.logaddexp(
+                self.baseline_lse_same_[idx_same], logk[idx_same])
+
+        if not self.ratio:
+            scores = -new_lse_same
+        else:
+            idx_other = np.where(self.y_cal != y)[0]
+            new_lse_other = self.baseline_lse_other_.copy()
+            if len(idx_other) > 0:
+                new_lse_other[idx_other] = np.logaddexp(
+                    self.baseline_lse_other_[idx_other], logk[idx_other])
+            scores = -new_lse_same + new_lse_other
+        scores[~np.isfinite(scores)] = 1e9
+        return scores
+
+
 class SoftmaxNonconformity(NonconformityMeasure):
     """
     Logistic Regression (Softmax) nonconformity measure.
@@ -2060,6 +2274,9 @@ def create_ncm(ncm_type: str, k: int = 5,
         # Numerator-only: 1-NN same-class geodesic distance, no ratio
         return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
                                    topk_same=False, numerator_only=True)
+    elif ncm_type == "rbf_density":
+        # Gaussian-kernel density NCM. Bandwidth auto from cal median heuristic.
+        return RBFDensityNCM()
     else:
         raise ValueError(f"Unknown NCM type: {ncm_type}")
 

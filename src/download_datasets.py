@@ -96,54 +96,60 @@ TINY_IMAGENET_FILENAME = "tiny-imagenet-200.zip"
 
 
 def download_miniimagenet(args, output_dir):
-    """Download mini-ImageNet via learn2learn and save in ImageFolder format.
+    """Download mini-ImageNet via HuggingFace (timm/mini-imagenet).
 
-    Downloads all three splits (train/validation/test) and merges them.
-    Each split contains DIFFERENT classes (64 train / 16 val / 20 test = 100 total),
-    so we build a global label mapping across all synset IDs before saving.
-    Result: 100 classes × 600 images each.
-    Requires: pip install learn2learn
+    Avoids the abandoned learn2learn package (which fails to build on
+    Python 3.11+ due to a Cython-generated longintrepr.h dependency).
+
+    Source: https://huggingface.co/datasets/timm/mini-imagenet
+        100 classes, 50K train + 10K val + 5K test = 65K original-resolution
+        images. Crucially every split uses the SAME 100 classes (unlike
+        learn2learn's disjoint-class splits), so train can be the labeled
+        pool and val a naturally disjoint unlabeled pool.
+
+    Supports --split train|val|test|both|all (default: train).
     """
     try:
-        import learn2learn as l2l
+        from datasets import load_dataset
     except ImportError:
         raise ImportError(
-            "learn2learn is required for mini-ImageNet.\n"
-            "Install with:  pip install learn2learn\n"
-            "Then re-run this script."
+            "The 'datasets' library is required for mini-ImageNet.\n"
+            "Install with:  pip install datasets"
         )
 
-    print("\nDownloading mini-ImageNet via learn2learn (train + validation + test)...")
-    print("  Note: each split contains different classes (64/16/20 = 100 total).")
+    # Map our CLI vocabulary onto HF split names.
+    # Note: the parser only exposes train|test|both (see parse_args). We treat
+    # HF 'validation' as the disjoint pool a caller asks for with --split test.
+    split_map = {
+        "train": ["train"],
+        "test":  ["validation"],
+        "both":  ["train", "validation"],
+    }
+    split = getattr(args, "split", "train") or "train"
+    hf_splits = split_map.get(split, split_map["train"])
 
-    # 1. Load all three splits (download=True fetches missing cache files)
-    splits = {}
-    for split in ["train", "validation", "test"]:
-        print(f"  Loading split: {split} ...")
-        splits[split] = l2l.vision.datasets.MiniImagenet(
-            root=args.download_dir, mode=split, download=True,
-            transform=None,  # keep as PIL Image; default transform converts to Tensor
-        )
-        print(f"    {len(splits[split])} images, {len(splits[split].class_idx)} classes")
+    print(f"\nDownloading mini-ImageNet via HuggingFace timm/mini-imagenet")
+    print(f"  HF splits to materialize: {hf_splits}")
 
-    # 2. Build global synset → label mapping (stable alphabetical sort = reproducible)
-    all_synsets = set()
-    for ds in splits.values():
-        all_synsets.update(ds.class_idx.keys())
-    global_class_list = sorted(all_synsets)          # 100 synset IDs
-    global_label = {syn: i for i, syn in enumerate(global_class_list)}
-    print(f"  Global class map: {len(global_class_list)} unique synsets")
+    ds_dict = load_dataset("timm/mini-imagenet")
+    # Class names come from the label feature; stable order = label_id
+    label_feature = ds_dict[hf_splits[0]].features["label"]
+    class_names = list(label_feature.names)
+    print(f"  {len(class_names)} classes")
 
-    # 3. Merge: remap each sample's local label → global label
+    # Build merged (PIL, int label) list across requested HF splits
     merged = []
-    for split, ds in splits.items():
-        local_to_synset = {v: k for k, v in ds.class_idx.items()}
-        for img, local_lbl in ds:
-            syn = local_to_synset[int(local_lbl)]
-            merged.append((img, global_label[syn]))
+    for hs in hf_splits:
+        if hs not in ds_dict:
+            print(f"  WARNING: split {hs} not present in dataset — skipping")
+            continue
+        n = len(ds_dict[hs])
+        print(f"  Loading {hs}: {n} images")
+        for row in ds_dict[hs]:
+            merged.append((row["image"], int(row["label"])))
 
-    print(f"  Total images across all splits: {len(merged)}")
-    save_dataset_as_images(merged, output_dir, global_class_list, args.num_per_class)
+    print(f"  Total images materialized: {len(merged)}")
+    save_dataset_as_images(merged, output_dir, class_names, args.num_per_class)
 
 
 def download_tiny_imagenet(args, output_dir):

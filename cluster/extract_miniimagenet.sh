@@ -1,30 +1,34 @@
 #!/bin/bash
-# Extract DINOv2 embeddings for miniImageNet (Vinyals et al. 2016).
+# Extract DINOv2 embeddings for mini-ImageNet.
 #
-# miniImageNet: 100 classes from ImageNet, 600 images/class, 84x84 native.
-# Note: learn2learn's train/validation/test splits use DIFFERENT classes
-# (64/16/20 disjoint subsets), so there is no natural disjoint train/test
-# within the same 100-class label space. We extract the full merged pool
-# (~60K images, 100 global classes), and semicp_experiment.py / cs_ablation.py
-# carve the unlabeled pool internally from this pool via
-# `unlabeled_carve_per_class` (DATASETS dict already configured for this).
-#
-# Requires: learn2learn (auto-installed if missing).
+# Source: HuggingFace timm/mini-imagenet (avoids the abandoned learn2learn
+# package, which fails to build on Python 3.11+ due to a Cython/longintrepr.h
+# issue). 100 classes; HF train+val+test all use the same 100-class label
+# space, so we can split them cleanly:
+# - HF train (50K, 500/class)  -> labeled pool
+# - HF val   (10K, 100/class)  -> unlabeled pool (naturally disjoint)
+# - HF test  (5K,  50/class)   -> unused
 #
 # Usage (from repo root):
-#   bash cluster/extract_miniimagenet.sh
+#   bash cluster/extract_miniimagenet.sh                         # both stages
+#   STAGE=labeled bash cluster/extract_miniimagenet.sh           # labeled only
+#   STAGE=unlabeled bash cluster/extract_miniimagenet.sh         # unlabeled only
 
 set -euo pipefail
 
 # ============================================================================
 # Config
 # ============================================================================
-NUM_PER_CLASS="${NUM_PER_CLASS:-500}"            # 100 * 500 = 50K (matches local MEMORY layout)
-DATA_DIR="${DATA_DIR:-data/miniimagenet}"
-OUTPUT_NAME="${OUTPUT_NAME:-embeddings_miniimagenet.pt}"
+NUM_PER_CLASS_LABELED="${NUM_PER_CLASS_LABELED:-500}"     # full train: 100 * 500 = 50K
+NUM_PER_CLASS_UNLABELED="${NUM_PER_CLASS_UNLABELED:-100}" # full val:   100 * 100 = 10K
+DATA_DIR_LABELED="${DATA_DIR_LABELED:-data/miniimagenet}"
+DATA_DIR_UNLABELED="${DATA_DIR_UNLABELED:-data/miniimagenet_unlabeled}"
+OUTPUT_NAME_LABELED="${OUTPUT_NAME_LABELED:-embeddings_miniimagenet.pt}"
+OUTPUT_NAME_UNLABELED="${OUTPUT_NAME_UNLABELED:-embeddings_miniimagenet_unlabeled.pt}"
 MODEL=dinov2-base
 INPUT_SIZE="${INPUT_SIZE:-518}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
+STAGE="${STAGE:-both}"   # labeled | unlabeled | both
 SSL_CP_VENV="${SSL_CP_VENV:-/storage/ido/venvs/ssl-cp}"
 
 # ============================================================================
@@ -32,7 +36,7 @@ SSL_CP_VENV="${SSL_CP_VENV:-/storage/ido/venvs/ssl-cp}"
 # ============================================================================
 mkdir -p output cluster/logs
 echo "=================================================="
-echo "Job:      extract_miniimagenet"
+echo "Job:      extract_miniimagenet  (STAGE=$STAGE)"
 echo "Host:     $(hostname)"
 echo "Started:  $(date -Iseconds)"
 echo "=================================================="
@@ -42,35 +46,63 @@ if [ -n "$SSL_CP_VENV" ] && [ -d "$SSL_CP_VENV" ]; then
     source "$SSL_CP_VENV/bin/activate"
 fi
 
-# Ensure learn2learn is installed (the only nonstandard dep for miniImageNet)
-python -c "import learn2learn" 2>/dev/null || {
-    echo "Installing learn2learn..."
-    PIP_CACHE_DIR="${PIP_CACHE_DIR:-/storage/ido/pip-cache}" pip install --no-cache-dir learn2learn
+# Ensure the HuggingFace 'datasets' library is installed (no auth needed for
+# timm/mini-imagenet). Installs ~50MB on first run; subsequent runs no-op.
+python -c "import datasets" 2>/dev/null || {
+    echo "Installing 'datasets' library..."
+    PIP_CACHE_DIR="${PIP_CACHE_DIR:-/storage/ido/pip-cache}" pip install --no-cache-dir datasets
 }
 
 python -c "import torch; print('torch', torch.__version__, '| CUDA', torch.cuda.is_available(), '|', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
 
 # ============================================================================
-# Pipeline (single stage — merged 100-class pool; unlabeled carved by exp scripts)
+# Stage: labeled  (HF train split)
 # ============================================================================
-mkdir -p "$DATA_DIR"
-if [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
-    echo "[1/2] Downloading miniImageNet ($NUM_PER_CLASS/class merged across train/val/test)..."
-    python src/download_datasets.py \
-        --dataset miniimagenet \
-        --output_dir "$DATA_DIR" \
-        --num_per_class "$NUM_PER_CLASS"
-else
-    echo "[1/2] $DATA_DIR populated -- skipping download."
+if [ "$STAGE" = "labeled" ] || [ "$STAGE" = "both" ]; then
+    mkdir -p "$DATA_DIR_LABELED"
+    if [ -z "$(ls -A "$DATA_DIR_LABELED" 2>/dev/null)" ]; then
+        echo "[labeled 1/2] Downloading mini-ImageNet train split ($NUM_PER_CLASS_LABELED/class)..."
+        python src/download_datasets.py \
+            --dataset miniimagenet \
+            --split train \
+            --output_dir "$DATA_DIR_LABELED" \
+            --num_per_class "$NUM_PER_CLASS_LABELED"
+    else
+        echo "[labeled 1/2] $DATA_DIR_LABELED populated -- skipping download."
+    fi
+    echo "[labeled 2/2] Extracting embeddings -> output/$OUTPUT_NAME_LABELED ..."
+    python src/extract_features.py \
+        --data_dir "$DATA_DIR_LABELED" \
+        --output_name "$OUTPUT_NAME_LABELED" \
+        --model "$MODEL" \
+        --input_size "$INPUT_SIZE" \
+        --batch_size "$BATCH_SIZE"
 fi
 
-echo "[2/2] Extracting embeddings -> output/$OUTPUT_NAME ..."
-python src/extract_features.py \
-    --data_dir "$DATA_DIR" \
-    --output_name "$OUTPUT_NAME" \
-    --model "$MODEL" \
-    --input_size "$INPUT_SIZE" \
-    --batch_size "$BATCH_SIZE"
+# ============================================================================
+# Stage: unlabeled  (HF validation split, disjoint from train within the same
+#                    100-class label space)
+# ============================================================================
+if [ "$STAGE" = "unlabeled" ] || [ "$STAGE" = "both" ]; then
+    mkdir -p "$DATA_DIR_UNLABELED"
+    if [ -z "$(ls -A "$DATA_DIR_UNLABELED" 2>/dev/null)" ]; then
+        echo "[unlabeled 1/2] Downloading mini-ImageNet val split ($NUM_PER_CLASS_UNLABELED/class)..."
+        python src/download_datasets.py \
+            --dataset miniimagenet \
+            --split test \
+            --output_dir "$DATA_DIR_UNLABELED" \
+            --num_per_class "$NUM_PER_CLASS_UNLABELED"
+    else
+        echo "[unlabeled 1/2] $DATA_DIR_UNLABELED populated -- skipping download."
+    fi
+    echo "[unlabeled 2/2] Extracting embeddings -> output/$OUTPUT_NAME_UNLABELED ..."
+    python src/extract_features.py \
+        --data_dir "$DATA_DIR_UNLABELED" \
+        --output_name "$OUTPUT_NAME_UNLABELED" \
+        --model "$MODEL" \
+        --input_size "$INPUT_SIZE" \
+        --batch_size "$BATCH_SIZE"
+fi
 
 echo "=================================================="
 echo "Done:     $(date -Iseconds)"

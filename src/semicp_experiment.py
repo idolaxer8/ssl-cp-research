@@ -62,12 +62,14 @@ DATASETS = {
         "unlabeled_carve_per_class": 28,  # ~5600 total from ~50/class
     },
     "miniimagenet": {
+        # HuggingFace timm/mini-imagenet: train (labeled) + val (unlabeled) share
+        # the same 100-class label space, so val is a naturally disjoint pool —
+        # same train/test pattern as CIFAR-10/100.
         "labeled": "output/embeddings_miniimagenet.pt",
-        "unlabeled": None,
+        "unlabeled": "output/embeddings_miniimagenet_unlabeled.pt",
         "test": None,
         "n_classes": 100,
         "pca_dim": 128,
-        "unlabeled_carve_per_class": 100,  # 10K total from 500/class
     },
     "cifar10": {
         "labeled": "output/embeddings_cifar10.pt",
