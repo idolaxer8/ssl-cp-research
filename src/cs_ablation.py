@@ -23,33 +23,76 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from sklearn.decomposition import PCA
 
-from conformal_prediction import FullConformalPredictor, create_ncm
+from conformal_prediction import FullConformalPredictor, GeodesicTopKMeanNCM, create_ncm
 from mscs_unlabeled_experiment import build_cluster_similarity_matrix, run_fcp_with_mscs
 from autoencoder_utils import EmbeddingAutoencoder
 
+# GPU fast-path is available for any GeodesicTopKMeanNCM-family NCM
+# (see memory: gpu-fcp-path.md). Auto-detect once.
+_USE_GPU = torch.cuda.is_available()
+
 
 def balanced_split(X, y, all_classes, cal_size, test_size, rng):
+    """Carve cal + test from (X, y).
+
+    When cal_size >= K: stratified, exactly cal_size//K samples per class.
+    When cal_size <  K: stratified is impossible (fewer cal points than classes).
+        Fall back to random-uniform sampling for cal (some classes absent).
+        Test remains stratified at test_size//K per class, drawn from the
+        cal-leftover, so test composition stays comparable across cal sizes.
+    """
     K = len(all_classes)
-    cal_pc = cal_size // K
     test_pc = test_size // K
-    cal_idx, test_idx = [], []
+
+    if cal_size >= K:
+        cal_pc = cal_size // K
+        cal_idx, test_idx = [], []
+        for c in all_classes:
+            ci = np.where(y == c)[0]
+            ci = rng.permutation(ci)
+            cal_idx.append(ci[:cal_pc])
+            test_idx.append(ci[cal_pc:cal_pc + test_pc])
+        return (X[np.concatenate(cal_idx)], y[np.concatenate(cal_idx)],
+                X[np.concatenate(test_idx)], y[np.concatenate(test_idx)])
+
+    # cal_size < K — stratification impossible; random uniform cal + stratified test from rest.
+    all_idx = rng.permutation(len(X))
+    cal_idx = all_idx[:cal_size]
+    cal_mask = np.zeros(len(X), dtype=bool)
+    cal_mask[cal_idx] = True
+    test_idx = []
     for c in all_classes:
-        ci = np.where(y == c)[0]
+        ci = np.where((y == c) & (~cal_mask))[0]
         ci = rng.permutation(ci)
-        cal_idx.append(ci[:cal_pc])
-        test_idx.append(ci[cal_pc:cal_pc + test_pc])
-    return (X[np.concatenate(cal_idx)], y[np.concatenate(cal_idx)],
+        test_idx.append(ci[:test_pc])
+    return (X[cal_idx], y[cal_idx],
             X[np.concatenate(test_idx)], y[np.concatenate(test_idx)])
 
 
-def run_fcp(X_cal, y_cal, X_test, y_test, all_classes, ncm_name, alpha):
+def run_fcp(X_cal, y_cal, X_test, y_test, all_classes, ncm_name, alpha,
+            gpu_batch_size=256):
+    """Calibrate + evaluate FCP. Uses CUDA fast-path when the NCM family supports it."""
     t0 = time.time()
     ncm = create_ncm(ncm_name, k=5)
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
-    m = cp.evaluate(X_test, y_test, verbose=False)
+
+    if _USE_GPU and isinstance(ncm, GeodesicTopKMeanNCM):
+        # GPU path: predict on cuda, compute coverage/avg_set_size manually
+        # (FCP.evaluate currently doesn't expose device; we go around it.)
+        result = cp.predict(X_test, device="cuda",
+                            gpu_batch_size=gpu_batch_size, verbose=False)
+        prediction_sets = result["prediction_sets"]
+        set_sizes = result["set_sizes"]
+        coverage = float(np.mean([y_test[i] in ps for i, ps in enumerate(prediction_sets)]))
+        avg_set_size = float(np.mean(set_sizes))
+    else:
+        m = cp.evaluate(X_test, y_test, verbose=False)
+        coverage = m["coverage"]
+        avg_set_size = m["avg_set_size"]
+
     runtime = time.time() - t0
-    return m["coverage"], m["avg_set_size"], runtime
+    return coverage, avg_set_size, runtime
 
 
 def run_fcp_mscs(X_cal, y_cal, X_test, y_test, X_unlabeled,

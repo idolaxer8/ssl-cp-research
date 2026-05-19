@@ -77,14 +77,13 @@ def run_fcp_with_macs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
         for yc in all_classes:
             yc = int(yc)
             # Base test score
-            test_score = cp.ncm.score_x(x_test, yc, precomputed_dists=dists)
+            test_score = cp.ncm.score_x(x_test, yc)
             # MA-CS penalty
             if get_superclass(yc) != g_hat:
                 test_score += lam
 
             # Updated cal scores (base + cal_penalty already applied)
-            updated_scores = cp.ncm.updated_calibration_scores_for(
-                x_test, yc, precomputed_dists=dists) + cal_penalty
+            updated_scores = cp.ncm.updated_calibration_scores_for(x_test, yc) + cal_penalty
 
             # p-value
             n_greater = np.sum(updated_scores >= test_score)

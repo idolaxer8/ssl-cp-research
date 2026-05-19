@@ -69,6 +69,13 @@ DATASETS = {
         "pca_dim": 128,
         "unlabeled_carve_per_class": 100,  # 10K total from 500/class
     },
+    "cifar10": {
+        "labeled": "output/embeddings_cifar10.pt",
+        "unlabeled": "output/embeddings_cifar10_unlabeled.pt",  # CIFAR-10 test split, naturally disjoint
+        "test": None,
+        "n_classes": 10,
+        "pca_dim": 64,  # K=10 — lower-dim than CIFAR-100/miniImageNet (K=100)
+    },
 }
 
 ALPHA = 0.1

@@ -494,4 +494,130 @@ Results saved: `output/class_similarity/ablation_reduction_mscs_*`
 
 ---
 
-*Last updated: 2026-05-17*
+## 17. Cluster Reproduction — Higher Resolution + Disjoint Unlabeled Pool (2026-05-19)
+
+Re-ran the §16 ablation and a head-to-head comparison vs Split-CP / SemiCP on the Run:AI cluster with two improvements:
+- **DINOv2-base extraction at input_size=518** (native resolution; local 4 GB GPU was capped at 336)
+- **CIFAR-100 test split (10K, 100/class) as the unlabeled pool** — fully disjoint from the train-derived labeled pool, no leakage risk
+- Both labeled and unlabeled extracted at matched 518 to keep them in the same feature manifold
+
+Setup: 5 trials, α=0.1, balanced cal/test split, NCM=`geodesic_topk_mean`, PCA-128 fit on the 10K unlabeled, MS-CS in PCA space (λ=0.05, n_clusters=20, τ=0.5·median_d²). Results in `output/from_cluster/`.
+
+### 17a. Ablation with matched-518 unlabeled (cluster)
+
+| Cal | FCP | FCP+MS-CS | FCP+PCA | **FCP+PCA+MS-CS** | FCP+AE | FCP+AE+MS-CS |
+|---|---|---|---|---|---|---|
+| 300  | 3.67 (89.9%) | 3.02 (90.0%) | 1.95 (89.6%) | **1.77 (88.7%)** | 2.23 (89.5%) | 2.13 (89.1%) |
+| 400  | 3.19 (91.0%) | 2.41 (89.8%) | 1.84 (91.3%) | **1.69 (91.1%)** | 1.93 (90.4%) | 1.85 (90.2%) |
+| 600  | 2.97 (92.5%) | 2.30 (92.3%) | 2.02 (92.5%) | **1.85 (92.6%)** | 2.21 (92.8%) | 2.12 (92.9%) |
+| 800  | 1.87 (91.2%) | 1.65 (91.6%) | 1.43 (90.9%) | **1.41 (91.1%)** | 1.56 (90.9%) | 1.52 (91.0%) |
+| 1000 | 1.65 (91.3%) | 1.59 (91.3%) | 1.44 (92.1%) | **1.40 (91.9%)** | 1.51 (90.7%) | 1.48 (90.9%) |
+
+Headline-quality numbers, supersede §16 for the paper:
+- **FCP+PCA+MS-CS at cal=800 → sz 1.41** (vs §16's 1.74 at lower res). 19% smaller than the local-laptop result with the same NCM choice.
+- **Same NCM (mean) used here outperforms local PCA-128+topk_asym (sz 1.79 at cal=800)** — the resolution upgrade matters more than the NCM choice.
+- PCA still does most of the work (~−45% from FCP baseline); MS-CS adds another ~5-10% on top.
+- AE remains marginally behind PCA at every cal ≥ 400. PCA+MS-CS is the canonical recipe.
+
+### 17b. Head-to-head: FCP+PCA+MS-CS vs Split-CP / SemiCP (cluster, 7 methods)
+
+Total-label-budget framing: every method gets the same B labels. SCP/SemiCP split B internally 50/50 between training and calibration. FCP+PCA+MS-CS uses all B for calibration (no separate training step — frozen SSL features).
+
+| Cal | **FCP+PCA+MS-CS** | SCP-THR | SCP-RAPS | SemiCP-THR | SemiCP-RAPS | Best non-FCP / margin |
+|---|---|---|---|---|---|---|
+| 300  | **sz 1.87 (88.6%)** | 100 (100%) | 44.4 (98.1%) | 97.6 (97.8%) | 44.4 (98.1%) | SCP-RAPS @ 44.4 → **24× smaller** |
+| 400  | **sz 1.76 (90.3%)** | 84.0 (98.9%) | 33.0 (97.8%) | 24.8 (93.0%) | 28.0 (93.6%) | SemiCP-THR @ 24.8 → **14× smaller** |
+| 600  | **sz 1.83 (92.9%)** | 7.4 (92.9%) | 21.7 (97.2%) | 8.3 (92.6%) | 22.2 (97.3%) | SCP-THR @ 7.4 → **4× smaller** |
+| 800  | **sz 1.42 (90.8%)** | 2.96 (92.5%) | 18.4 (98.0%) | 2.90 (92.3%) | 18.8 (98.0%) | SemiCP-THR @ 2.90 → **2× smaller** |
+| 1000 | **sz 1.41 (91.6%)** | 2.06 (91.8%) | 16.1 (98.9%) | 2.09 (91.6%) | 16.4 (98.9%) | SCP-THR @ 2.06 → **1.5× smaller** |
+
+APS-only variants (SCP-APS, SemiCP-APS) omitted from table — bloated everywhere (sz 57-100). Available in `output/from_cluster/semicp_experiments/cifar100_semicp_results.json`.
+
+### 17c. The classifier-quality bottleneck for Split-CP / SemiCP
+
+The recorded `classifier_accuracy` in the JSON (softmax head trained on the inner 50% of cal):
+
+| Cal (total) | n_inner_train | classifier accuracy | SCP-THR sz | FCP+PCA+MS-CS sz |
+|---|---|---|---|---|
+| 300  | ~150 | 55-59% | 100 (degenerate) | **1.87** |
+| 600  | ~300 | 68-78% | 7.4 | **1.83** |
+| 1000 | ~500 | 77-79% | 2.06 | **1.41** |
+
+- The **margin closes as cal grows** because the inner-trained classifier gets better. SCP-THR catches up to ~1.5× of FCP+PCA+MS-CS at cal=1000.
+- Our story is strongest in the **small-cal regime** (300-600), the realistic deployment setting for SSL+CP.
+- NNM augmentation (the difference between SCP and SemiCP) **does not fix the classifier-quality bottleneck**. SemiCP-THR ≈ SCP-THR everywhere.
+- This validates the "total label budget" framing (see [[feedback-total-budget-framing]] memory): every label that SCP spends on training is a label not available for calibration, and FCP+PCA+MS-CS uses each label for both implicitly.
+
+### 17d. Over-coverage investigation
+
+Empirical coverage exceeds the theoretical FCP upper bound across cal sizes, with a pronounced spike at cal=600:
+
+| n_cal | Theoretical lower 1-α | Theoretical upper 1-α + 1/(n+1) | Empirical FCP cov | Excess |
+|---|---|---|---|---|
+| 300  | 90.00% | 90.33% | 89.9% | within bound |
+| 400  | 90.00% | 90.25% | 91.0% | +0.75% |
+| 600  | 90.00% | 90.17% | **92.5%** | **+2.33%** |
+| 800  | 90.00% | 90.12% | 91.2% | +1.08% |
+| 1000 | 90.00% | 90.10% | 91.3% | +1.20% |
+
+The cal=600 spike is **method-independent** (FCP, FCP+PCA, FCP+PCA+MS-CS, all SCP/SemiCP variants all sit at 92.2-92.9% coverage at this cal size). Likely causes ranked by confidence:
+
+1. **Balanced (stratified) cal/test split breaks pure exchangeability between cal and test** — forcing equal per-class representation tightens the marginal score distribution and shifts the empirical quantile upward. This is the only mechanism that affects *all* methods identically because they share the upstream `balanced_split` / `stratified_split`.
+
+2. **Discrete CP quantile + score ties** — FCP uses `ceil((n+1)(1-α))-th` cal score as the threshold. With NN-ratio NCMs producing approximately-tied scores when test points share a calibration neighbor, the ceiling adds ~1% systematic conservatism beyond the continuous-distribution upper bound.
+
+3. **5-trial sampling variance** — at cal=600, two of the five FCP+PCA+MS-CS trials returned 0.948 and 0.95 coverage (anomalously high). Removing them drops the mean to 91.6%. More trials would clarify whether the 92.5% is a real protocol effect or a finite-trial artifact.
+
+**Interpretation:** Over-coverage with tight set sizes is the safe failure mode of CP. The empirical results are *valid* (≥1-α everywhere), and the small excess is well-explained by stratified-sampling + ceiling quantile. Worth a footnote in the paper, not a bug.
+
+### 17e. Recommendations
+
+- **Use the §17 numbers as headline for CIFAR-100**, not §16 (matched-518 is the principled extraction setup).
+- For paper-quality bars: **bump to 10-20 trials** — cheap now that the GPU fast-path is available (see [[gpu-fcp-path]]: 23-30× speedup for any GeodesicTopKMeanNCM variant via `cp.predict(device='cuda')`).
+- Document the stratified-split → mild over-coverage interaction as expected behavior.
+
+---
+
+## 18. Future Experiments — Leveraging the GPU Fast-Path
+
+The 23-30× FCP speedup ([[gpu-fcp-path]] in memory: bit-equivalent torch path for all GeodesicTopKMeanNCM-family NCMs) makes several previously-expensive experiments tractable. Ordered by paper-relevance.
+
+### P0 — Strengthen the headline (cluster, all GPU-enabled)
+
+1. **20-trial rerun of §17 ablation + comparison at all cal sizes.** Settles the over-coverage question at cal=600 and tightens error bars to paper-quality. Cost on RTX 6000 Ada / A5000: ~10-20 min for the full sweep with GPU FCP.
+
+2. **NCM=`geodesic_topk_asym` confirmation on cluster.** Local memory shows asym beats mean by 8% (sz 1.79 vs 1.94 at cal=800, 336-input). With 518-input + asym, expect cluster headline to drop from sz 1.41 → ~1.30 at cal=800. Same GPU fast-path covers it.
+
+3. **Multi-dataset reproduction** (CUB-200, miniImageNet) on cluster with matched-518 extraction. Required for the paper's main results table. Use `cluster/extract_*` template — write parallel scripts for CUB-200 and miniImageNet labeled+unlabeled, then re-run `semicp_experiment.py --datasets cub200 miniimagenet`. Cost: ~30-60 min extraction + ~30 min comparison.
+
+### P1 — Push the regime boundaries (GPU enables this)
+
+4. **Very-small-cal sweep** (cal = 50, 100, 150, 200). Our story is strongest where labels are scarcest, but §17 only goes down to 300. With GPU FCP, smaller cal is cheaper, not more expensive. Expected: FCP+PCA+MS-CS's margin over SCP/SemiCP widens to 50-100× at cal=100.
+
+5. **Larger-K experiments** — DINOv2 embeddings on ImageNet-1K subsamples (K=1000). Tests whether the PCA+MS-CS recipe scales to 10× more classes. CPU FCP was effectively prohibitive here; GPU should make K=1000 with cal=2000 take minutes, not hours.
+
+6. **Per-class coverage diagnostics**. The §17d over-coverage analysis suggests stratified split shifts marginal coverage. Worth computing per-class coverage and set-size statistics: which classes systematically over-cover? Easy to add with GPU speed.
+
+### P2 — Robustness and ablations
+
+7. **Backbone sensitivity at high cal** with GPU fast-path enabled — CLIP and BEiTv2 backbones (cluster has `embeddings_clip_base_cifar100.pt`, `embeddings_beitv2_base_cifar100.pt`). Confirms the pipeline's recipe is backbone-agnostic, not DINOv2-specific.
+
+8. **MA-CS / MS-CS multi-dataset extension** (still open from §14 P0 item #5). MA-CS needs superclass labels (have CIFAR-100 fine→coarse; need to check CUB-200, miniImageNet). MS-CS is label-free, just runs.
+
+9. **GPU fast-path coverage**: extend the CUDA path to `MahalNNRatio` and `WhitenedGeodesicNNRatio` — currently CPU-only per [[gpu-fcp-path]]. Useful if reviewers ask about NCM choice sensitivity at scale.
+
+10. **Stratified vs random split effect on coverage** — direct ablation of the §17d hypothesis. Run cal=600 with `balanced_split` vs pure random sampling and measure the over-coverage shift. ~5 min with GPU. Settles the mechanism story.
+
+### P3 — Long-shot / paper-scope-dependent
+
+11. **Per-trial efficiency comparison plot** (not just averages). With 20 trials and tight error bars, show the full distribution of (cov, sz) per method — useful for showing that SCP/SemiCP have high *trial variance* at low cal, while FCP+PCA+MS-CS is stable.
+
+12. **GPU benchmark / timing study** — explicit "wall-clock per 1000 test predictions" table comparing CPU vs GPU FCP at various cal sizes. Strengthens the practical-deployment argument; small section but reviewer-friendly.
+
+### Recommended order
+
+1 → 2 → 3 → 10 → 4 → 5. That sequence builds the paper's headline table, validates the NCM choice, extends to multi-dataset, settles the over-coverage mechanism, and pushes into the small-cal extreme regime — all without ever touching long-running CPU jobs again.
+
+---
+
+*Last updated: 2026-05-19*

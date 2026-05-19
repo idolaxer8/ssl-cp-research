@@ -14,9 +14,6 @@ import torch
 import time
 from typing import Tuple, Dict, List, Optional
 from tqdm import tqdm
-from sklearn.neighbors import NearestNeighbors
-from sklearn.metrics.pairwise import euclidean_distances
-from scipy.special import logsumexp as scipy_logsumexp
 
 
 
@@ -89,14 +86,11 @@ class MahalNNRatio(NonconformityMeasure):
         self._mcache_key = None
         self._mcache_dists = None
 
-    def _compute_mahal_dists_from_x(self, x: np.ndarray,
-                                     precomputed_dists=None) -> np.ndarray:
+    def _compute_mahal_dists_from_x(self, x: np.ndarray) -> np.ndarray:
         """Mahalanobis distances from x to all cal points, with per-x caching.
 
         Uses x.ctypes.data (stable pointer into X_test's buffer) as cache key,
         so the O(n*d) computation runs once per test point across all y-candidates.
-        Using id(precomputed_dists) is NOT safe — CPython can reuse the same memory
-        address for different temporary arrays within the same predict() call.
         """
         cache_key = x.ctypes.data
         if cache_key != self._mcache_key:
@@ -148,9 +142,8 @@ class MahalNNRatio(NonconformityMeasure):
             raise ValueError("Must call fit() first")
         return self.alpha0.copy()
 
-    def score_x(self, x: np.ndarray, y: int,
-                precomputed_dists: np.ndarray = None, **kwargs) -> float:
-        dists = self._compute_mahal_dists_from_x(x, precomputed_dists)
+    def score_x(self, x: np.ndarray, y: int) -> float:
+        dists = self._compute_mahal_dists_from_x(x)
         mask_same  = (self.y_cal == y)
         mask_other = (self.y_cal != y)
         if not np.any(mask_same):
@@ -159,12 +152,10 @@ class MahalNNRatio(NonconformityMeasure):
         d_other = np.min(dists[mask_other]) if np.any(mask_other) else 1e-8
         return float(d_same / (d_other + 1e-8))
 
-    def updated_calibration_scores_for(self, x: np.ndarray, y: int,
-                                       precomputed_dists: np.ndarray = None,
-                                       **kwargs) -> np.ndarray:
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
         if self.alpha0 is None:
             raise ValueError("Must call fit() first")
-        dists_x = self._compute_mahal_dists_from_x(x, precomputed_dists)
+        dists_x = self._compute_mahal_dists_from_x(x)
         updated = self.alpha0.copy()
 
         # CASE A: same-class points — x is a new same-class neighbor candidate
@@ -235,7 +226,7 @@ class WhitenedGeodesicNNRatio(NonconformityMeasure):
         norms = np.linalg.norm(X_w, axis=1, keepdims=True)
         return X_w / np.maximum(norms, 1e-10)
 
-    def _get_sims(self, x: np.ndarray, precomputed_dists=None) -> np.ndarray:
+    def _get_sims(self, x: np.ndarray) -> np.ndarray:
         """Cosine sims from whitened-normalized x to all cal points, with caching.
 
         Uses x.ctypes.data as cache key (stable view pointer into X_test's buffer).
@@ -291,9 +282,8 @@ class WhitenedGeodesicNNRatio(NonconformityMeasure):
             raise ValueError("Must call fit() first")
         return self.alpha0.copy()
 
-    def score_x(self, x: np.ndarray, y: int,
-                precomputed_dists: np.ndarray = None, **kwargs) -> float:
-        sims = self._get_sims(x, precomputed_dists)
+    def score_x(self, x: np.ndarray, y: int) -> float:
+        sims = self._get_sims(x)
         mask_same  = (self.y_cal == y)
         if not np.any(mask_same):
             return 1e9
@@ -301,12 +291,10 @@ class WhitenedGeodesicNNRatio(NonconformityMeasure):
         max_other = float(np.max(sims[~mask_same])) if np.any(~mask_same) else -1.0
         return float(self._geodesic_ratio(np.array([max_same]), np.array([max_other]))[0])
 
-    def updated_calibration_scores_for(self, x: np.ndarray, y: int,
-                                       precomputed_dists: np.ndarray = None,
-                                       **kwargs) -> np.ndarray:
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
         if self.alpha0 is None:
             raise ValueError("Must call fit() first")
-        sims_x = self._get_sims(x, precomputed_dists)
+        sims_x = self._get_sims(x)
 
         updated_same  = self.lookup_same_sim.copy()
         updated_other = self.lookup_other_sim.copy()
@@ -555,7 +543,7 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
             raise ValueError("Must call fit() first")
         return self.alpha0.copy()
 
-    def score_x(self, x: np.ndarray, y: int, **kwargs) -> float:
+    def score_x(self, x: np.ndarray, y: int) -> float:
         sims = self._get_sims(x)
         k    = self.k
         mask_same  = (self.y_cal == y)
@@ -598,8 +586,7 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
             np.array([max_o  if max_o  is not None else -1.0]),
         )[0])
 
-    def updated_calibration_scores_for(self, x: np.ndarray, y: int,
-                                        **kwargs) -> np.ndarray:
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
         if self.alpha0 is None:
             raise ValueError("Must call fit() first")
         sims_x = self._get_sims(x)
@@ -720,8 +707,7 @@ class SoftmaxNonconformity(NonconformityMeasure):
             raise ValueError("Must call fit() first")
         return self.alpha0.copy()
 
-    def score_x(self, x: np.ndarray, y: int, **kwargs) -> float:
-        """Score a single point.  Ignores precomputed_dists (not applicable)."""
+    def score_x(self, x: np.ndarray, y: int) -> float:
         return self.score_x_cv(x, y)
 
     def score_x_cv(self, x: np.ndarray, y: int) -> float:
@@ -734,7 +720,7 @@ class SoftmaxNonconformity(NonconformityMeasure):
             return 1.0 - float(probs[self._class_to_idx[y]])
         return 1.0  # unseen class → max nonconformity
 
-    def updated_calibration_scores_for(self, x: np.ndarray, y: int, **kwargs) -> np.ndarray:
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
         raise NotImplementedError(
             "SoftmaxNonconformity does not support Full CP updates. "
             "Use with CV+ or Split CP only."
@@ -800,16 +786,23 @@ class FullConformalPredictor:
         self,
         X_test: np.ndarray,
         return_p_values: bool = False,
-        verbose: bool = True
+        verbose: bool = True,
+        device: str = "cpu",
+        gpu_batch_size: int = 256,
     ) -> Dict:
         """
         Compute prediction sets for test examples using Full CP.
-        
+
         Args:
             X_test: Test features (n_test, d)
             return_p_values: If True, return p-values for all classes
             verbose: Show progress bar
-            
+            device: "cpu" (default) runs the per-test Python loop. "cuda" dispatches
+                    to a vectorised torch path that supports GeodesicTopKMeanNCM
+                    (covers geodesic_topk_mean / _asym and their unwhitened/numerator-
+                    only ablations). Raises on other NCMs.
+            gpu_batch_size: Number of test points per GPU batch (only when device="cuda").
+
         Returns:
             Dictionary with:
             - 'prediction_sets': List of prediction sets (lists of labels)
@@ -819,7 +812,13 @@ class FullConformalPredictor:
         """
         if self.cal_scores is None:
             raise ValueError("Must call calibrate() before predict()")
-        
+
+        if device == "cuda":
+            return self._predict_geodesic_gpu(
+                X_test, return_p_values=return_p_values,
+                verbose=verbose, batch_size=gpu_batch_size,
+            )
+
         start_time = time.time()
         n_test = len(X_test)
         n_cal = len(self.X_cal)
@@ -836,32 +835,20 @@ class FullConformalPredictor:
         for i in iterator:
             x_test = X_test[i]
             pred_set = []
-            p_vals = {}  # Always compute for debugging
-            # Precompute distances once per test point for NCMs that support it (100x speedup)
-            precomputed_dists = None
-            if hasattr(self.ncm, 'X_cal') and self.ncm.X_cal is not None:
-                precomputed_dists = euclidean_distances([x_test], self.ncm.X_cal).flatten()
+            p_vals = {} if return_p_values else None
 
             # For each candidate label, compute p-value
             for y_candidate in self.classes:
                 yc = int(y_candidate)
 
-                # Compute base scores
-                if precomputed_dists is not None:
-                    try:
-                        test_score = self.ncm.score_x(x_test, yc, precomputed_dists=precomputed_dists)
-                        updated_scores = self.ncm.updated_calibration_scores_for(x_test, yc, precomputed_dists=precomputed_dists)
-                    except TypeError:
-                        test_score = self.ncm.score_x(x_test, yc)
-                        updated_scores = self.ncm.updated_calibration_scores_for(x_test, yc)
-                else:
-                    test_score = self.ncm.score_x(x_test, yc)
-                    updated_scores = self.ncm.updated_calibration_scores_for(x_test, yc)
+                test_score = self.ncm.score_x(x_test, yc)
+                updated_scores = self.ncm.updated_calibration_scores_for(x_test, yc)
 
                 n_greater = np.sum(updated_scores >= test_score)
                 p_value = (n_greater + 1) / (n_cal + 1)
 
-                p_vals[yc] = p_value
+                if return_p_values:
+                    p_vals[yc] = p_value
 
                 if p_value > self.alpha:
                     pred_set.append(yc)
@@ -900,9 +887,228 @@ class FullConformalPredictor:
         
         if verbose:
             print(f"\nPrediction time: {prediction_time:.2f}s ({prediction_time/n_test*1000:.1f}ms per sample)")
-        
+
         return results
-    
+
+    def _predict_geodesic_gpu(
+        self,
+        X_test: np.ndarray,
+        return_p_values: bool = False,
+        verbose: bool = True,
+        batch_size: int = 256,
+    ) -> Dict:
+        """Vectorised GPU path for FCP with GeodesicTopKMeanNCM.
+
+        Replaces the n_test × K Python loop in predict() with batched torch ops.
+        Math is identical to the CPU path; see GeodesicTopKMeanNCM.score_x /
+        updated_calibration_scores_for. Test points are processed in chunks of
+        `batch_size` to bound the (B, K, n_cal) tensor memory footprint.
+        """
+        if not isinstance(self.ncm, GeodesicTopKMeanNCM):
+            raise ValueError(
+                "predict(device='cuda') only supports GeodesicTopKMeanNCM; "
+                f"got {type(self.ncm).__name__}. Use device='cpu' for other NCMs."
+            )
+        if not torch.cuda.is_available():
+            raise RuntimeError("device='cuda' requested but CUDA is not available.")
+
+        start_time = time.time()
+        ncm = self.ncm
+        dev = torch.device("cuda")
+        eps = 1e-8
+        neg_inf = float("-inf")
+
+        n_test = len(X_test)
+        classes_np = np.asarray(self.classes)
+        K = len(classes_np)
+        k = int(ncm.k)
+
+        # --- Move NCM state to GPU once ---
+        inv_std = torch.from_numpy(ncm.inv_std).to(dev, dtype=torch.float32)
+        X_cal_wn = torch.from_numpy(ncm.X_cal_wn).to(dev, dtype=torch.float32)  # (n_cal, d)
+        n_cal = X_cal_wn.shape[0]
+        y_cal_t = torch.from_numpy(np.asarray(ncm.y_cal)).to(dev, dtype=torch.long)
+        classes_t = torch.from_numpy(classes_np).to(dev, dtype=torch.long)
+        same_mask = (y_cal_t.unsqueeze(0) == classes_t.unsqueeze(1))  # (K, n_cal) bool
+        n_same_per_class = same_mask.sum(dim=1)  # (K,)
+
+        if ncm.topk_same:
+            sum_same = torch.from_numpy(ncm.sum_same_sims).to(dev, dtype=torch.float32)
+            kth_same = torch.from_numpy(ncm.kth_same_sim).to(dev, dtype=torch.float32)
+            k_same   = torch.from_numpy(ncm._k_same_eff).to(dev, dtype=torch.float32)
+        else:
+            max_same = torch.from_numpy(ncm.lookup_same_sim).to(dev, dtype=torch.float32)
+
+        need_other = not ncm.numerator_only
+        if need_other:
+            if ncm.topk_other:
+                sum_other = torch.from_numpy(ncm.sum_other_sims).to(dev, dtype=torch.float32)
+                kth_other = torch.from_numpy(ncm.kth_other_sim).to(dev, dtype=torch.float32)
+                k_other   = torch.from_numpy(ncm._k_other_eff).to(dev, dtype=torch.float32)
+            else:
+                max_other = torch.from_numpy(ncm.lookup_other_sim).to(dev, dtype=torch.float32)
+            n_other_per_class = (n_cal - n_same_per_class)  # (K,)
+
+        # Whiten + L2-normalise full X_test
+        X_test_t = torch.from_numpy(np.asarray(X_test)).to(dev, dtype=torch.float32)
+        X_test_w = X_test_t * inv_std
+        X_test_wn = X_test_w / X_test_w.norm(dim=1, keepdim=True).clamp_min(1e-10)
+
+        p_values_chunks = []
+
+        def _topk_mean_along(values: torch.Tensor, k_max: int,
+                              count_per_row: torch.Tensor) -> torch.Tensor:
+            """Top-k mean along the last dim.
+
+            values: (..., n) with masked-out entries set to -inf.
+            count_per_row: (...) effective k per row (clamped at k_max).
+            Returns (...) mean of the top-k finite entries.
+            """
+            top_vals, _ = values.topk(k=k_max, dim=-1)
+            top_finite = torch.where(torch.isfinite(top_vals), top_vals,
+                                      torch.zeros_like(top_vals))
+            sums = top_finite.sum(dim=-1)
+            return sums / count_per_row.clamp_min(1).float()
+
+        for batch_start in range(0, n_test, batch_size):
+            batch_end = min(batch_start + batch_size, n_test)
+            X_b = X_test_wn[batch_start:batch_end]                       # (B, d)
+            B = X_b.shape[0]
+
+            # Similarities test->cal
+            S = X_b @ X_cal_wn.T                                         # (B, n_cal)
+            S_b = S.unsqueeze(1)                                          # (B, 1, n_cal)
+            mask_c = same_mask.unsqueeze(0)                               # (1, K, n_cal)
+
+            # ---- TEST scores (B, K) ----
+            if ncm.topk_same:
+                S_same_t = torch.where(mask_c, S_b, torch.full_like(S_b, neg_inf))  # (B, K, n_cal)
+                ke_same = torch.clamp(n_same_per_class, max=k)            # (K,)
+                mean_s = _topk_mean_along(S_same_t, k, ke_same.unsqueeze(0).expand(B, K))
+                d_same_test = torch.arccos(mean_s.clamp(-1.0, 1.0))
+            else:
+                S_same_t = torch.where(mask_c, S_b, torch.full_like(S_b, neg_inf))
+                max_s, _ = S_same_t.max(dim=-1)
+                d_same_test = torch.arccos(max_s.clamp(-1.0, 1.0))
+
+            if ncm.numerator_only:
+                test_scores = d_same_test
+            else:
+                other_mask_c = ~mask_c
+                if ncm.topk_other:
+                    S_other_t = torch.where(other_mask_c, S_b, torch.full_like(S_b, neg_inf))
+                    ke_other = torch.clamp(n_other_per_class, max=k)
+                    mean_o = _topk_mean_along(S_other_t, k, ke_other.unsqueeze(0).expand(B, K))
+                    d_other_test = torch.arccos(mean_o.clamp(-1.0, 1.0))
+                else:
+                    S_other_t = torch.where(other_mask_c, S_b, torch.full_like(S_b, neg_inf))
+                    max_o, _ = S_other_t.max(dim=-1)
+                    d_other_test = torch.arccos(max_o.clamp(-1.0, 1.0))
+                test_scores = d_same_test / (d_other_test + eps)
+
+            # No same-class cal points => max nonconformity (matches CPU return 1e9 branch)
+            no_same = (n_same_per_class == 0).unsqueeze(0).expand(B, K)
+            test_scores = torch.where(no_same, torch.full_like(test_scores, 1e9), test_scores)
+            test_scores = torch.where(torch.isfinite(test_scores), test_scores,
+                                       torch.full_like(test_scores, 1e9))
+
+            # ---- UPDATED cal scores (B, K, n_cal) ----
+            if ncm.topk_same:
+                sum_b = sum_same.view(1, 1, -1)
+                kth_b = kth_same.view(1, 1, -1)
+                k_b   = k_same.view(1, 1, -1)
+                full = (k_b >= k)                                         # (1, 1, n_cal)
+                enter = full & (S_b > kth_b)                              # (B, 1, n_cal)
+                grow = ~full                                              # (1, 1, n_cal)
+                applies_enter = mask_c & enter
+                applies_grow  = mask_c & grow
+                delta_enter = (S_b - kth_b)
+                new_sum_same = sum_b + torch.where(applies_enter, delta_enter, torch.zeros_like(S_b)) \
+                                       + torch.where(applies_grow,  S_b,         torch.zeros_like(S_b))
+                new_k_same = k_b + applies_grow.float()
+                mean_same_upd = new_sum_same / new_k_same.clamp_min(1.0)
+                d_same_upd = torch.arccos(mean_same_upd.clamp(-1.0, 1.0))
+            else:
+                max_b = max_same.view(1, 1, -1)
+                new_max_same = torch.where(mask_c, torch.maximum(max_b, S_b), max_b.expand_as(S_b.expand(B, K, -1)))
+                d_same_upd = torch.arccos(new_max_same.clamp(-1.0, 1.0))
+
+            if ncm.numerator_only:
+                updated_scores = d_same_upd
+            else:
+                other_mask_c = ~mask_c
+                if ncm.topk_other:
+                    sum_b_o = sum_other.view(1, 1, -1)
+                    kth_b_o = kth_other.view(1, 1, -1)
+                    k_b_o   = k_other.view(1, 1, -1)
+                    full_o = (k_b_o >= k)
+                    enter_o = full_o & (S_b > kth_b_o)
+                    grow_o = ~full_o
+                    applies_enter_o = other_mask_c & enter_o
+                    applies_grow_o  = other_mask_c & grow_o
+                    delta_enter_o = (S_b - kth_b_o)
+                    new_sum_other = sum_b_o + torch.where(applies_enter_o, delta_enter_o, torch.zeros_like(S_b)) \
+                                              + torch.where(applies_grow_o,  S_b,            torch.zeros_like(S_b))
+                    new_k_other = k_b_o + applies_grow_o.float()
+                    mean_other_upd = new_sum_other / new_k_other.clamp_min(1.0)
+                    d_other_upd = torch.arccos(mean_other_upd.clamp(-1.0, 1.0))
+                else:
+                    max_b_o = max_other.view(1, 1, -1)
+                    new_max_other = torch.where(other_mask_c, torch.maximum(max_b_o, S_b),
+                                                 max_b_o.expand_as(S_b.expand(B, K, -1)))
+                    d_other_upd = torch.arccos(new_max_other.clamp(-1.0, 1.0))
+                updated_scores = d_same_upd / (d_other_upd + eps)
+
+            updated_scores = torch.where(torch.isfinite(updated_scores), updated_scores,
+                                           torch.full_like(updated_scores, 1e9))
+
+            # ---- p-values: (1 + |{j: upd[b,c,j] >= test[b,c]}|) / (n_cal + 1) ----
+            n_greater = (updated_scores >= test_scores.unsqueeze(-1)).sum(dim=-1)
+            p_values = (n_greater.float() + 1.0) / (n_cal + 1.0)
+            p_values_chunks.append(p_values.cpu().numpy())
+
+            # Free batch tensors before next iter (helps under memory pressure)
+            del S, S_b, mask_c, updated_scores, d_same_upd, test_scores
+            if need_other:
+                del d_other_upd
+
+        p_values_arr = np.concatenate(p_values_chunks, axis=0)  # (n_test, K)
+
+        prediction_sets = []
+        set_sizes = np.zeros(n_test, dtype=int)
+        empty_count = 0
+        for i in range(n_test):
+            include = p_values_arr[i] > self.alpha
+            pred_set = classes_np[include].astype(int).tolist()
+            if len(pred_set) == 0:
+                empty_count += 1
+            prediction_sets.append(pred_set)
+            set_sizes[i] = len(pred_set)
+
+        if empty_count > 0 and verbose:
+            print(f"\n⚠️  Warning: {empty_count}/{n_test} prediction sets are empty!")
+            print(f"   Consider increasing alpha (current: {self.alpha}) or checking your data.")
+
+        prediction_time = time.time() - start_time
+
+        results = {
+            'prediction_sets': prediction_sets,
+            'set_sizes': set_sizes,
+            'prediction_time': prediction_time,
+        }
+
+        if return_p_values:
+            results['p_values'] = [
+                {int(classes_np[c]): float(p_values_arr[i, c]) for c in range(K)}
+                for i in range(n_test)
+            ]
+
+        if verbose:
+            print(f"\nGPU FCP prediction time: {prediction_time:.2f}s "
+                  f"({prediction_time/n_test*1000:.2f}ms per sample)")
+
+        return results
+
     def evaluate(
         self,
         X_test: np.ndarray,

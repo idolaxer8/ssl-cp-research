@@ -217,17 +217,16 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                     cal_penalty[j] = lam * (1.0 - M_aug[cj_idx, y_hat_j_idx])
 
                 # Test penalty with updated M
-                test_score = cp.ncm.score_x(x_test, yc, precomputed_dists=dists)
+                test_score = cp.ncm.score_x(x_test, yc)
                 test_score += lam * (1.0 - M_aug[yc_idx, y_hat_idx])
             else:
                 # --- Original (non-exchangeable) version ---
                 cal_penalty = cal_penalty_base
-                test_score = cp.ncm.score_x(x_test, yc, precomputed_dists=dists)
+                test_score = cp.ncm.score_x(x_test, yc)
                 test_score += lam * (1.0 - M[yc_idx, y_hat_idx])
 
             # Updated cal scores + cal_penalty
-            updated_scores = cp.ncm.updated_calibration_scores_for(
-                x_test, yc, precomputed_dists=dists) + cal_penalty
+            updated_scores = cp.ncm.updated_calibration_scores_for(x_test, yc) + cal_penalty
 
             # p-value
             n_greater = np.sum(updated_scores >= test_score)
