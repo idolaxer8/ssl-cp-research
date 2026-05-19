@@ -281,6 +281,10 @@ def save_dataset_as_images(dataset, output_dir, class_names, num_per_class=None)
         filename = f"{class_name}_{class_counts[label]:05d}.png"
         filepath = output_path / class_name / filename
 
+        # PNG supports RGB / RGBA / grayscale but not CMYK or other modes;
+        # mini-ImageNet has a small fraction of CMYK JPEGs which would crash here.
+        if image.mode not in ("RGB", "RGBA", "L", "LA", "P", "I", "1"):
+            image = image.convert("RGB")
         image.save(filepath)
         class_counts[label] += 1
 
