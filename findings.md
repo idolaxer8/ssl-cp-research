@@ -1,623 +1,239 @@
 # Research Findings — SSL + Conformal Prediction
 
 > Pull from here when writing Methods / Results / Discussion sections of the paper.
-> Detailed tables and retracted results: `archive/findings_archive.md`
+> Detailed tables, retracted results, and superseded numbers: `archive/findings_archive.md`.
+> Per-experiment raw outputs: `output/`, cluster runs in `output/from_cluster/`.
 
 ---
 
-## Setup
+## 1. Headline & Setup
 
-- **Backbone**: DINOv2-base (ViT-B/14, 768-D, 336×336 input)
-- **CP methods**: Full CP (FCP), CV+/Jackknife+ (CV+), Split CP (SCP)
-- **Best NCM**: `geodesic_topk_asym` (new winner, post-bugfix)
-- **Default α**: 0.1 (target ≥ 90% coverage)
+- **Backbone**: DINOv2-base (ViT-B/14, 768-D). Cluster runs use **input_size=518** (native); local laptop runs use 336 (4 GB VRAM cap).
+- **Best pipeline**: **DINOv2 → PCA-128 (unlabeled) → whitened geodesic_topk_mean → FCP, with MS-CS penalty in PCA space**.
+- **NCM choices**: `geodesic_topk_mean` (cluster headline NCM), `geodesic_topk_asym` (best locally, expected ~8% smaller sets when re-run on cluster — open).
+- **Target**: α = 0.1 (≥ 90% coverage). 5 trials default, stratified cal/test splits everywhere.
+- **GPU fast-path**: `FullConformalPredictor.predict(device='cuda', gpu_batch_size=256)` — 23-30× speedup, bit-equivalent. Covers any `GeodesicTopKMeanNCM` variant. See `[[gpu-fcp-path]]` memory.
 
----
+**Cluster headline (FCP+PCA-128+MS-CS, matched-518, 5 trials, NCM = geodesic_topk_mean):**
 
-## 1. NCM Comparison (FCP, α=0.1, 5 trials)
+| Cal  | CIFAR-10 (K=10) | CIFAR-100 (K=100) | miniImageNet (K=100) |
+|------|------------------|----------------------|------------------------|
+| 300  | 0.91 (89.8%)     | 1.77 (88.7%)         | 1.04 (90.7%)           |
+| 400  | 0.94 (89.6%)     | 1.69 (91.1%)         | 0.97 (89.6%)           |
+| 600  | 0.93 (91.0%)     | 1.85 (92.6%)         | 1.00 (91.4%)           |
+| 800  | 0.91 (89.9%)     | **1.41 (91.1%)**     | 0.97 (89.0%)           |
+| 1000 | 0.92 (90.1%)     | 1.40 (91.9%)         | 0.98 (90.1%)           |
 
-### CIFAR-100 (100 classes, 25/class) — Key differentiation dataset
-
-| NCM | cal=200 | cal=300 | cal=400 | cal=600 |
-|-----|---------|---------|---------|---------|
-| nn_ratio | 0.947 sz=23.25 | 0.915 sz=8.36 | 0.905 sz=6.06 | 0.912 sz=4.23 |
-| geodesic_nn_ratio | 0.948 sz=21.57 | 0.917 sz=7.93 | 0.907 sz=5.59 | 0.912 sz=3.97 |
-| whitened_geodesic | 0.943 sz=19.24 | 0.909 sz=6.96 | 0.904 sz=5.21 | 0.912 sz=3.84 |
-| geodesic_topk_mean | 0.927 sz=11.51 | 0.885❌ sz=3.62 | 0.891 sz=3.17 | 0.933 sz=4.08 |
-| **geodesic_topk_asym** | 0.952 sz=15.78 | **0.917 sz=4.65** | **0.916 sz=3.18** | **0.907 sz=2.29** |
-
-**Winner: `geodesic_topk_asym`** — 39–40% smaller sets than whitened_geodesic at cal=400–600, valid coverage. `geodesic_topk_mean` under-covers at cal=300 (0.885❌).
-
-### miniImageNet (100 classes, 500/class)
-
-| NCM | cal=400 | cal=600 | cal=800 | cal=1200 |
-|-----|---------|---------|---------|---------|
-| whitened_geodesic | 0.909 sz=1.51 | 0.904 sz=1.18 | 0.898 sz=1.09 | 0.906 sz=1.06 |
-| **geodesic_topk_asym** | **0.913 sz=1.18** | **0.918 sz=1.10** | **0.900 sz=1.05** | 0.911 sz=1.03 |
-
-`geodesic_topk_asym` dominates at cal=400–800 (22–24% smaller sets).
-
-### Other datasets (summary)
-
-- **CIFAR-10** (10 cls): No NCM differentiation. All give sz≈0.92–0.95. FCP over-conservative (~91–92%).
-- **Flowers-102** (102 cls): FCP works from cal=400 (sz≈0.91). At cal=200, `geodesic_topk_mean` uniquely avoids blowup (sz=6.98 vs 90–102 for others).
-
-### NCM Ranking
-
-| Rank | NCM | When to use |
-|------|-----|-------------|
-| 1 | **geodesic_topk_asym** | K≥100, cal≥300 (best set sizes) |
-| 2 | whitened_geodesic | Stable fallback at cal≤200 or K=10 |
-| 3 | geodesic_topk_mean | Extreme scarcity (cal=200, Flowers-102) |
+- **CIFAR-100 is the discriminating benchmark** for the paper headline.
+- **miniImageNet saturates** to near-singleton sets by cal=400 (DINOv2 pretraining transfers very directly).
+- **CIFAR-10 doesn't separate methods** — keep as smoke test, recommend dropping from main results table.
+- **CUB-200 at matched-518 still pending** (see §10).
 
 ---
 
-## 2. FCP vs CV+ vs SCP
+## 2. Why FCP Wins vs Split-CP / SemiCP
 
-### CIFAR-100 (100 classes, 25/class)
+Total-label-budget framing: every method gets the same B labels. SCP/SemiCP split B internally 50/50 train/cal. FCP+PCA+MS-CS uses all B for calibration (frozen SSL features). See `[[feedback-total-budget-framing]]`.
 
-| cal | FCP (whitened_geodesic) | CV+ | SCP |
-|-----|------------------------|-----|-----|
-| 400 | **90.9% sz=7.45** ✅ 7.8s | 100% sz=100 ❌ | 98% ❌ |
-| 600 | **90.0% sz=3.39** ✅ 8.8s | 94.7% sz=8.68 ❌ | 90.7% sz=12.1 |
-| 800 | 90.1% sz=2.78 9.7s | **90.8% sz=2.65** ✅ 42s | 89.8% sz=3.01 |
+**CIFAR-100 head-to-head (matched-518, 5 trials, α=0.1):**
 
-FCP first valid: **cal=400**. CV+ first valid: **cal=800** (2× data, 5× slower). With geodesic_topk_asym: FCP cal=400 sz drops 7.45 → **3.18** (57% reduction).
+| Cal  | **FCP+PCA+MS-CS** | SCP-THR     | SCP-RAPS    | SemiCP-THR  | SemiCP-RAPS | Best non-FCP margin |
+|------|--------------------|-------------|-------------|-------------|-------------|----------------------|
+| 300  | **1.87 (88.6%)**   | 100 (100%)  | 44.4 (98%)  | 97.6 (98%)  | 44.4 (98%)  | **24×** smaller      |
+| 400  | **1.76 (90.3%)**   | 84.0 (99%)  | 33.0 (98%)  | 24.8 (93%)  | 28.0 (94%)  | **14×** smaller      |
+| 600  | **1.83 (92.9%)**   | 7.4 (93%)   | 21.7 (97%)  | 8.3 (93%)   | 22.2 (97%)  | **4×** smaller       |
+| 800  | **1.42 (90.8%)**   | 2.96 (93%)  | 18.4 (98%)  | 2.90 (92%)  | 18.8 (98%)  | **2×** smaller       |
+| 1000 | **1.41 (91.6%)**   | 2.06 (92%)  | 16.1 (99%)  | 2.09 (92%)  | 16.4 (99%)  | 1.5× smaller         |
 
-### CUB-200 (200 classes, ~50/class) — Strongest FCP advantage
+**Findings (consistent across CIFAR-100 / miniImageNet, 3 datasets confirmed):**
 
-| cal | FCP | CV+ | SCP |
-|-----|-----|-----|-----|
-| 800 | **91.9% sz=2.15** ✅ 12s | 100% ❌ | 100% ❌ |
-| 1500 | **90.3% sz=1.53** ✅ 14s | 92.4% sz=1.67 58s | 89.8% sz=2.18 |
-| 2000 | 89.9% sz=1.39 16s | 90.7% sz=1.40 134s | 89.6% sz=1.46 |
+1. **NNM augmentation is null on THR**: SemiCP-THR ≈ SCP-THR everywhere. The paper's signature contribution adds nothing in our regime.
+2. **Classifier-quality bottleneck**: SCP/SemiCP-THR collapse to sz=K when inner-trained softmax accuracy < ~60% (cal ≤ 400 for K=100). FCP avoids the train/cal split entirely.
+3. **APS/RAPS bloated** with logistic regression at K≥100 (sz 17-100). Even where SemiCP improves these scores, absolute sets remain unusable.
+4. **Margin closes as cal grows** — story is strongest in small-cal regime (300-600), the realistic SSL+CP deployment setting.
+5. **CIFAR-10 is saturated** — SemiCP's published CovGap advantage is consistent with statistical noise on a saturated task.
 
-FCP first valid: **cal=800**. CV+ first valid: **cal=1500** (1.9× data, 4× slower). At cal=2000: same sz, FCP **9× faster**.
-
-### Other datasets
-
-- **CIFAR-10**: FCP over-conservative. Use CV+ or SCP.
-- **EuroSAT**: All methods work from cal=75. No clear winner.
-- **Flowers-102**: FCP valid from cal=400 (all NCMs).
+Frame for the paper: SemiCP is a legitimate but narrow contribution for APS/RAPS pipelines on saturated benchmarks. Different problem setting from ours — not "we beat them."
 
 ---
 
-## 3. MA-CS Penalty (Fargion et al. 2025)
+## 3. Dimensionality Reduction
 
-Binary superclass indicator penalty: `s_λ(x,y) = s(x,y) + λ · I{g(y) ≠ g(ŷ(x))}` where `ŷ(x)` = LOO 1-NN prediction.
+PCA fit on the **unlabeled pool** (n >> d) preserves FCP exchangeability — unsupervised wrt cal/test. Cal-based PCA under-covers at high dims (overfitting); always use a disjoint unlabeled pool.
 
-### Results (CIFAR-100, geodesic_topk_asym, 5 trials)
+| Dataset       | Best PCA dim | Reason                                          |
+|---------------|--------------|--------------------------------------------------|
+| CIFAR-100     | **128**      | Coarse-grained, noise removal                   |
+| miniImageNet  | **128**      | Saturated baseline, marginal benefit            |
+| CUB-200       | **512**      | Fine-grained needs more dims (PCA-128 *hurts*)  |
 
-| cal | baseline | λ=0.03 (optimal) | λ=0.10 |
-|-----|----------|-------------------|--------|
-| 600 | 0.899 sz=2.58 | **0.895 sz=2.37** (−8%) | 0.900 sz=2.73 (worse) |
-| 800 | 0.909 sz=1.96 | **0.909 sz=1.92** (−2%) | 0.913 sz=2.16 (worse) |
+**Unlabeled-pool size sensitivity** (CIFAR-100, cal=400, see `output/from_cluster/unlabeled_size_sweep_cifar100/`):
 
-**Key findings**: U-shaped response (λ=0.02-0.03 optimal). Superclass count monotonically decreases (Corollary 4.3 verified). Coverage maintained. Stronger at moderate cal (8% at cal=600 vs 2% at cal=800).
+- PCA needs **≥500 unlabeled** to be useful (at N=100/250, degenerate basis hurts).
+- FCP+PCA+MS-CS **plateaus at N=2500-5000** (sz ≈ 1.70). N=10000 returns no further benefit.
+- **Practitioners with ~2.5K unlabeled examples reproduce our headline within 1%.**
 
-### Theoretical guarantees (Fargion et al. 2025)
-
-- **Quantile shift**: q̂ ≤ q̂_λ ≤ q̂ + λ (coverage loss bounded)
-- **No out-of-group introduction**: penalty only removes out-of-group candidates
-- **Superclass monotonicity**: G_λ(x) ⊆ G(x) (verified empirically)
-
-### Score audit vs paper
-
-Our LOO 1-NN for ŷ(x) differs from paper's softmax argmax. 1-NN is the natural nonparametric classifier for FCP (no trained model). Exchangeability preserved (LOO for cal, plain NN for test — standard FCP asymmetry). Open question: formal justification needed for paper. See `archive/findings_archive.md §11.4`.
-
----
-
-## 4. MS-CS with Unlabeled Data
-
-Build similarity matrix M from k-means clusters on unlabeled pool (no superclass labels needed).
-
-**Pipeline**: K-means on unlabeled → class centroids from cal → match to clusters → M from co-assignment + inter-cluster distance → penalty `s_l(x,y) = s(x,y) + l*(1-M[y, ŷ(x)])`.
-
-### Best results (CIFAR-100, geodesic_topk_mean, cal=600, 5 trials)
-
-Best config: n_clusters=20, tau=0.5×median_d², λ=0.05 → **sz=2.35** (27% reduction from baseline 3.20), cov=0.889.
-
-**Key findings**:
-1. **Beats MA-CS** — MS-CS sz=1.99 vs MA-CS sz=2.02 at cal=800 and **requires no superclass labels** (see §15 for full comparison)
-2. Tau normalization (tau = multiplier × median_d²) recommended for scale-independence
-3. Optimal regime: tau ∈ [0.25, 0.5] × median_d², λ ∈ [0.03, 0.05]
-4. Exchangeability fix (`--exchangeable`) recovers +0.5–1.3% coverage at cal≤400, negligible at cal≥600
-5. **Additive with PCA/AE reduction** — FCP+PCA+MS-CS = 1.74 at cal=800, best overall (see §16)
-
-Detailed sweep tables: `archive/findings_archive.md §11.2`.
+**AE vs PCA — the alignment hypothesis.** Earlier finding "DINOv2 embeddings are linear" was **wrong** (see `[[ae-vs-pca-linearity-diagnostics]]`):
+- Nonlinear AE recovers 12-26% more variance than PCA at same d — curvature is real.
+- PCA wins downstream because the **NCM is linear** (Mahalanobis whitening), not because embeddings are linear.
+- **Prediction confirmed**: with a nonlinear NCM (whitened RBF), AE-128 beats PCA-128 at cal=600 by 17% (sz 2.18 vs 2.62, p=0.001 over 10 trials). See §5.
+- **AE-32 only wins downstream at very small cal** (cal ≤ 400 with linear NCM, archived).
 
 ---
 
-## 5. Backbone Comparison — DINOv2 vs CLIP vs BEiTv2
+## 4. MS-CS — Label-Free Class Similarity Penalty
 
-CIFAR-100, geodesic_topk_mean FCP, 5 trials. Key result at cal=600:
+K-means on unlabeled pool → similarity matrix M from cluster co-assignment → `s_λ(x,y) = s(x,y) + λ·(1-M[y, ŷ(x)])`. No superclass labels needed. See `src/mscs_unlabeled_experiment.py`.
 
-| Backbone | FCP sz | CV+ sz | SCP sz |
-|----------|--------|--------|--------|
-| **DINOv2-base** | **2.96** | 6.50 | 14.4 |
-| BEiTv2-base | 5.24 | 7.68 | 9.22 |
-| CLIP-base | 32.6 | 35.6 | 35.3 |
+**Best config**: λ=0.05, n_clusters=20, τ=0.5·median_d², clustering in **PCA-128 space**.
 
-**DINOv2 dominates** — 77% smaller sets than BEiTv2, 11× smaller than CLIP. CLIP unsuitable for NN-ratio FCP. FCP advantage over CV+/SCP generalizes across all backbones.
+**MS-CS adds 8-9% reduction over FCP+PCA at cal=300-600** on CIFAR-100 (the regime where it matters); neutral on miniImageNet / CIFAR-10 (already saturated). Coverage preserved everywhere. Beats MA-CS (binary superclass penalty, Fargion et al. 2025) by 2-7% and requires no taxonomy labels.
+
+**Effects decompose roughly additively** at cal=800: PCA −19%, MS-CS −13%, combined −24% (vs FCP baseline 2.30 → 1.74 local, 1.87 → 1.41 cluster).
 
 ---
 
-## 6. When to Use Each Method
+## 5. Whitened-RBF NCM + AE-128 — Confirmed Win at Medium Cal
 
-| Scenario | Best method | Best NCM |
-|----------|-------------|----------|
-| K≥100, cal≥300 | **FCP** | geodesic_topk_asym |
-| K≥100, cal=200 | **FCP** | whitened_geodesic |
-| K≥100, extreme scarcity | **FCP** | geodesic_topk_mean |
-| K=10, well-separated | CV+ or SCP | — |
+After the AE/PCA diagnostics predicted that nonlinear NCMs would let AE features pay off, we built `RBFDensityNCM` (Gaussian kernel density, ratio mode, pooled-within-class whitening). See `[[rbf-ncm-with-ae]]`.
+
+**CIFAR-100, paired t-test, 10 trials:**
+
+| Cal | BASE (PCA-128 + geodesic) | AE-128 + wSymRBF (σ=0.18) | Paired diff | p-value      |
+|-----|----------------------------|----------------------------|-------------|--------------|
+| 600 | 2.62 ± 0.17                | **2.18 ± 0.10**            | −0.44       | **0.001**    |
+| 800 | 1.84 ± 0.08                | **1.80 ± 0.06**            | −0.04       | 0.25 (tie)   |
+| 400 | baseline wins              | (AE capacity > samples/class) | —        | —            |
+
+Validity holds at all cal sizes (cov ≥ 0.90). Exchangeability concessions (σ, pooled covariance fit on cal alone) are O(1/n), same regime as MahalNN/WhitenedGeodesic whitening.
+
+**Pattern**: AE+wRBF wins at cal/K ≈ 6-8 (enough samples to estimate density reliably, not enough for linear baseline to saturate).
+
+Code: `RBFDensityNCM` in `src/conformal_prediction.py`, experiment driver `src/rbf_ncm_experiment.py`.
 
 ---
 
-## 7. Theory Notes
+## 6. The Three Regimes of FCP (Small-Cal Sweep)
 
-**geodesic_topk_asym**: 1-NN numerator (tight same-class) / mean-k denominator (smoothed other-class). Asymmetry is key — mean-k on both sides over-smooths and destabilizes coverage.
+CIFAR-100, K=100, cal ∈ {50, 100, 200, 300}. See `output/from_cluster/small_cal_sweep_cifar100/`. Universal across CIFAR-100 and miniImageNet.
 
-**Exchangeability of whitening**: Whitening computed from cal only, not updated per candidate. Asymmetry is O(1/n) — negligible for n≥200. Label-dependent projections (LDA) are NOT O(1/n) and cause structural under-coverage (70-85%). Only unsupervised projections (PCA) are safe. See `archive/findings_archive.md` for LDA details.
+| Regime | Condition | Behavior |
+|--------|-----------|----------|
+| **A** — random fallback | cal < K | Many classes absent. Coverage collapses to P(class ∈ sample) ≈ 41% at cal=50. No method recovers. |
+| **B** — LOO breakdown   | cal = K (1/class) | LOO removes the single same-class anchor → degenerate NN-ratio. Coverage trivially valid (99%), sets bloated (~73 classes). |
+| **C** — deployment      | cal ≥ 2K (≥2/class) | NCM stable. Coverage at target (~90%), sets shrink sharply (cal=200: sz 2.8; cal=800: sz 1.4). |
 
-**Why FCP beats CV+**: CV+ trains on (k-1)/k data per fold — with few samples and many classes, some classes absent from folds → trivially full sets. FCP uses full cal set.
+**Sharp transition between cal=K and cal=2K** is the most striking feature. **Restrict paper claims to Regime C.**
+
+`balanced_split` truncates `cal_size // K` per class, so cal=150 and cal=250 silently equal cal=100/200. Use cal ∈ {K, 2K, 3K, …} for clean sweeps.
+
+---
+
+## 7. Backbone Comparison (CIFAR-100, cal=600, geodesic_topk_mean, 5 trials)
+
+| Backbone        | FCP sz  | CV+ sz | SCP sz |
+|-----------------|---------|--------|--------|
+| **DINOv2-base** | **2.96** | 6.50  | 14.4   |
+| BEiTv2-base     | 5.24    | 7.68   | 9.22   |
+| CLIP-base       | 32.6    | 35.6   | 35.3   |
+
+DINOv2 dominates — 77% smaller than BEiTv2, 11× smaller than CLIP. FCP advantage over CV+/SCP generalizes across backbones. CLIP unsuitable for NN-ratio FCP.
 
 ---
 
 ## 8. Dataset Properties
 
-| Dataset | K | N/class | FCP behavior |
-|---------|---|---------|-------------|
-| CIFAR-10 | 10 | 500 | Over-conservative; use CV+ |
-| EuroSAT | 10 | 200 | All methods work |
-| CIFAR-100 | 100 | 25 | FCP dominates; topk_asym wins |
-| Flowers-102 | 102 | ~55 | FCP from cal=400 |
-| CUB-200 | 200 | ~50 | Strongest FCP advantage |
-| miniImageNet | 100 | 500 | topk_asym best |
-| tiny-imagenet | 200 | 500 | Pending |
+| Dataset       | K   | N/class | FCP behavior                                   | Status (matched-518)         |
+|---------------|-----|---------|------------------------------------------------|------------------------------|
+| CIFAR-10      | 10  | 500     | Over-conservative; saturated; smoke test only  | done                         |
+| CIFAR-100     | 100 | 25      | FCP dominates; **headline benchmark**          | done                         |
+| miniImageNet  | 100 | 500     | Saturates near sz=1.0; topk_asym best          | done                         |
+| CUB-200       | 200 | ~50     | Strongest FCP advantage (10× over SCP)         | **pending** (local 336 only) |
+| Flowers-102   | 102 | ~55     | FCP from cal=400                               | local 336 only               |
+| EuroSAT       | 10  | 200     | All methods work                               | local 336 only               |
 
 ---
 
-## 9. Publication Roadmap
+## 9. Theory Notes
 
-**Claim:** Geometry-aware NCMs for SSL embeddings make FCP the only valid and most efficient method in the data-scarce regime.
+**Why FCP > CV+ at K≥100, low cal**: CV+ trains on (k-1)/k data per fold — with few samples, classes go missing from folds → trivially full sets. FCP uses full cal set transductively.
 
-**Target**: AISTATS 2026 (primary), TMLR (backup)
+**Why FCP > SCP at K≥100, low cal**: SCP needs a softmax classifier trained on inner cal split. With K=100 and ≤300 cal, the inner classifier is too weak; scores degenerate. FCP needs no train/cal split.
 
-### P0 — Must complete
+**Exchangeability**: Whitening / PCA fit on cal-only is O(1/n) asymmetry — negligible for n ≥ 200. Label-dependent projections (LDA, pseudo-label heads) are NOT O(1/n) and cause structural under-coverage (70-85%). Only **unsupervised** projections (PCA on unlabeled pool, AE) are safe.
 
-1. Implement RAPS/APS as SCP baseline (reviewers will reject without it)
-2. Re-run few-shot with geodesic_topk_asym on CIFAR-100, CUB-200, miniImageNet
-3. Complete multi-dataset comparison with consistent NCM across all 6 datasets
-4. Add error bars / significance (stderr, paired tests)
+**Why geodesic_topk_asym wins**: 1-NN numerator (tight same-class signal) / mean-k denominator (smoothed other-class). Symmetric mean-k on both sides over-smooths.
 
-### P1 — Strongly recommended
+**Whitening is not redundant after PCA**: PCA removes noise dims (total variance), whitening rescales by within-class variance — complementary. Whitening adds 5-12% benefit after PCA-128.
 
-5. MA-CS on CUB-200 (bird taxonomy), miniImageNet (ImageNet hierarchy)
-6. Alpha sensitivity sweep (α ∈ {0.05, 0.1, 0.15, 0.2})
-7. Whitening ablation (whiten on/off)
-8. NCM comparison on CUB-200
-9. Backbone comparison with geodesic_topk_asym + CUB-200
-
-### P2+ — Nice to have
-
-10. tiny-ImageNet experiments
-11. Cross-NCM × backbone grid
-12. Adaptive λ selection for MA-CS
-
-See `archive/findings_archive.md §10` for stale results tracker, reviewer predictions, and paper structure.
+**Over-coverage at cal=600 (cluster, all methods at 92.5-92.9%)**: Likely stratified-cal/test split + ceiling quantile interaction (method-independent). Worth a footnote. Definitive test pending (§10 P1 item).
 
 ---
 
-## 10. PCA Dimensionality Reduction (Unlabeled Pool)
+## 10. Future Directions & Pending Experiments
 
-PCA fit on unlabeled pool (n >> d=768) preserves FCP exchangeability — projection is unsupervised w.r.t. cal/test. Stratified splits used throughout (equal samples/class).
+*Last reviewed: 2026-05-21.*
 
-### CIFAR-100 (100 classes, PCA on 10K unlabeled)
+### P0 — Required for paper headline
 
-| dim | cal=400 sz | cal=600 sz | cal=800 sz |
-|-----|-----------|-----------|-----------|
-| PCA-32 | 4.55 | 4.71 | 2.96 |
-| PCA-64 | 2.74 | 2.80 | 2.04 |
-| **PCA-128** | **2.18** | **2.36** | **1.64** |
-| PCA-256 | 2.85 | 2.99 | 1.77 |
-| PCA-512 | 5.19 | 4.58 | 2.44 |
-| Full-768 | 4.11 | 4.11 | 2.16 |
+1. **CUB-200 at matched-518 cluster extraction** + full ablation (FCP, +PCA-512, +MS-CS, all combos).
+   *Why*: only missing dataset in main results table. Local-336 results (archive) show CUB-200 is FCP's strongest advantage (10× over SCP at cal=800).
+2. **20-trial paper-quality rerun of §1 + §2** on CIFAR-100. Settles cal=600 over-coverage question and tightens error bars. Cheap with GPU fast-path (~10-20 min total).
+3. **NCM = `geodesic_topk_asym` confirmation on cluster** (CIFAR-100). Local memory predicts sz ~1.30 at cal=800 (vs current 1.41 with `mean`). Same GPU fast-path covers it.
+4. **Fix broken AE result on miniImageNet** (`output/from_cluster/ablation_miniimagenet/`: sz 34-51, 89-95% coverage). Suspected cause: AE trained on CIFAR-100 unlabeled and reused. Retrain per dataset.
 
-**PCA-128 optimal**: 24% smaller sets than full-768 at cal=800. Coverage valid (91.0%). U-shape: too few dims loses info, too many reintroduces noise.
+### P1 — Strengthen the story
 
-### CUB-200 (200 classes, PCA on 5600 unlabeled carved 28/class)
+5. **RBF NCM multi-dataset confirmation**: re-run AE-128 + wSymRBF on CUB-200, miniImageNet, and at matched-518 (current §5 result is local 336 only). Tests whether the alignment hypothesis generalizes.
+6. **MA-CS / MS-CS multi-dataset extension**: MS-CS is label-free, runs on anything; MA-CS needs taxonomy (have CIFAR-100 fine→coarse; check CUB-200 family/genus, miniImageNet WordNet).
+7. **Stratified-vs-random split ablation** at cal=600 to settle the over-coverage mechanism. ~5 min with GPU.
+8. **Per-class coverage diagnostics** — which classes systematically over-cover? Same data, just an extra statistic.
 
-| dim | cal=600 sz | cal=800 sz | cal=1000 sz | cal=1500 sz |
-|-----|-----------|-----------|------------|------------|
-| PCA-128 | 2.85 | 2.32 | 2.29 | 1.87 |
-| PCA-256 | 2.62 | 2.10 | 2.03 | 1.76 |
-| **PCA-512** | **2.64** | **2.07** | **2.04** | **1.70** |
-| Full-768 | 2.87 | 2.34 | 2.46 | 1.90 |
+### P2 — Robustness / breadth
 
-**PCA-512 optimal**: 11% smaller sets at cal=1500. Fine-grained dataset needs more dims. Coverage valid (90.4-92.6%).
+9. **Very-small-cal sweep at cal/K = 2-8** in deployment Regime C (cal ∈ {200, 300, 400, 500, 600} for K=100). Useful margin curve for the paper.
+10. **Larger-K experiments**: ImageNet-1K subsamples (K=1000). Tests scaling of the PCA+MS-CS recipe. GPU FCP makes K=1000, cal=2000 take minutes.
+11. **Backbone sensitivity on cluster**: CLIP-base, BEiTv2-base with full pipeline. Confirms the recipe is backbone-agnostic.
+12. **Per-trial efficiency distribution plot** — show SCP/SemiCP have high trial variance at low cal vs FCP+PCA+MS-CS stability.
+13. **GPU fast-path extension** to `MahalNNRatio` and `WhitenedGeodesicNNRatio` (currently CPU-only). Only useful if reviewers ask about NCM sensitivity at scale.
+14. **CUB-200 + RBF NCM**: where AE was 5% *worse* than PCA in `[[ae-vs-pca-linearity-diagnostics]]`. Cleanest test of whether AE+RBF rescues AE on fine-grained data.
 
-### miniImageNet (100 classes, PCA on 10K unlabeled carved 100/class)
+### P3 — Literature baselines still to compare against
 
-| dim | cal=400 sz | cal=600 sz | cal=800 sz |
-|-----|-----------|-----------|-----------|
-| PCA-64 | 1.32 | 1.36 | 1.15 |
-| **PCA-128** | **1.08** | **1.13** | **1.05** |
-| PCA-256 | 1.12 | 1.17 | 1.07 |
-| Full-768 | 1.24 | 1.28 | 1.11 |
+15. **SSCP** (Seedat et al., AISTATS 2023, arXiv 2302.12238): SSL pretext tasks for NCM. Designed for regression — needs classification adaptation.
+16. **Transductive Standardization** (Fan & Sesia 2025, arXiv 2512.15383): validates O(1/n) exchangeability for data-dependent standardization (relevant to whitening theory section).
+17. **Pseudo-Label CP** (Angelman et al. 2025, MLR v266): source-free calibration. Tests pseudo-labels vs NNM as unlabeled-data utilization.
 
-**PCA-128 optimal**: 5% smaller sets at cal=800 (already near-perfect at 1.11). Coverage valid (92.2%).
+### Deferred / Side missions
 
-### Control: PCA on cal data (CIFAR-100)
+- **AE-256 capacity test** for cal=800 RBF (currently within noise; bigger AE may push over the line).
+- **k-NN density NCM** (Loftsgaarden-Quesenberry) — locally adaptive bandwidth, parameter-free.
+- **GPU benchmark / timing study** — explicit wall-clock-per-1000-predictions table for the paper.
 
-| dim | cal=400 cov | cal=600 cov | cal=800 cov |
-|-----|------------|------------|------------|
-| PCA-128 | 0.876 | 0.915 | 0.900 |
-| PCA-256 | 0.816 | 0.886 | 0.888 |
-| PCA-512 | — | 0.816 | 0.851 |
+### Recommended execution order
 
-**Cal-based PCA under-covers** at high dims (n_cal < n_features → PCA axes overfit). Confirms unlabeled pool is essential.
+1 → 2 → 3 → 7 → 4 → 5 → 6. Builds the headline table, validates NCM choice, extends to multi-dataset, settles over-coverage mechanism, confirms RBF result, completes class-similarity story.
 
-### Summary
+### Completed since last review (moved out of pending)
 
-| Dataset | Best PCA dim | Reduction vs full-768 | Mechanism |
-|---------|-------------|----------------------|-----------|
-| CIFAR-100 | 128 | **24%** | Noise removal in coarse-grained classes |
-| CUB-200 | 512 | **11%** | Fine-grained needs more dims |
-| miniImageNet | 128 | **5%** | Already near-perfect baseline |
-
-PCA-128 is the default recommendation for K=100 coarse-grained datasets. Fine-grained (CUB-200) benefits from PCA-512. Diminishing returns when baseline is already small (miniImageNet).
-
----
-
-## 11. FCP+PCA vs SplitCP vs SemiCP (Multi-Dataset, Corrected)
-
-Head-to-head comparison: FCP with PCA (unlabeled) vs SplitCP vs SemiCP (Zhou et al. 2025, NNM augmentation). SemiCP uses logistic regression softmax head trained on 50% of cal budget via **random (non-stratified) train/cal split** to preserve exchangeability, with missing-class handling (score=1.0 for classes absent from training). Outer cal selection is **balanced** (cal_size // K per class). 5 trials, α=0.1. NCM: `geodesic_topk_asym`.
-
-### 11a. CIFAR-100 (100 classes, PCA-128 on 10K unlabeled)
-
-| Cal | SCP-THR | SemiCP-THR | FCP | **FCP+PCA** |
-|-----|---------|------------|-----|-------------|
-| 300 | 100.0 (100%) | 88.5 (89%) | 5.53 (92%) | **3.74 (93%)** |
-| 400 | 100.0 (100%) | 59.8 (93%) | 3.51 (92%) | **2.45 (92%)** |
-| 600 | 7.91 (93%) | 5.02 (91%) | 2.39 (92%) | **1.86 (91%)** |
-| 800 | 3.22 (92%) | 2.87 (91%) | 1.91 (90%) | **1.59 (90%)** |
-
-### 11b. miniImageNet (100 classes, PCA-128 on 10K carved unlabeled)
-
-| Cal | SCP-THR | SemiCP-THR | FCP | **FCP+PCA** |
-|-----|---------|------------|-----|-------------|
-| 300 | 100.0 (100%) | 85.7 (89%) | 1.62 (93%) | **1.16 (92%)** |
-| 400 | 100.0 (100%) | 54.4 (92%) | 1.21 (92%) | **1.10 (92%)** |
-| 600 | 2.66 (93%) | 2.00 (92%) | 1.14 (92%) | **1.06 (92%)** |
-| 800 | 1.49 (93%) | 1.24 (91%) | 1.10 (92%) | **1.04 (92%)** |
-
-### 11c. CUB-200 (200 classes, PCA-512 on 5600 carved unlabeled)
-
-| Cal | SCP-RAPS | SemiCP-RAPS | **FCP** | FCP+PCA |
-|-----|----------|-------------|---------|---------|
-| 300 | 122.0 (100%) | 123.1 (100%) | 200.0 (100%) | 199.9 (100%) |
-| 400 | 70.1 (99%) | 70.3 (99%) | **4.67 (96%)** | 5.95 (96%) |
-| 600 | 39.1 (99%) | 35.1 (97%) | **2.35 (94%)** | 2.47 (93%) |
-| 800 | 27.6 (99%) | 17.4 (94%) | **1.77 (92%)** | 1.82 (92%) |
-
-Note: CUB-200 uses SCP-RAPS/SemiCP-RAPS as best SCP variant (THR returns trivial sz=200 sets until cal=800).
-
-### 11d. Key findings
-
-1. **FCP+PCA dominates on CIFAR-100 and miniImageNet** (coarse-grained, 100 classes). At cal=800: FCP+PCA sz=1.59 vs SCP-THR sz=3.22 (CIFAR-100), FCP+PCA sz=1.04 vs SCP-THR sz=1.49 (miniImageNet).
-2. **CUB-200**: FCP wins over FCP+PCA (PCA-512 doesn't help fine-grained). At cal=800: FCP sz=1.77 vs best SCP (SemiCP-RAPS sz=17.4). FCP is 10× more efficient.
-3. **NNM augmentation (SemiCP) is roughly neutral** across all 3 datasets. SemiCP-THR ≈ SCP-THR; NNM never helps significantly.
-4. **APS/RAPS produce bloated sets** with logistic regression on K≥100 classes: APS sz=64-100, RAPS sz=17-43. THR is the only competitive SCP score function, but even THR returns trivial sz=K sets at low cal.
-5. **SCP coverage is now valid** (≥89% everywhere) after switching to random train/cal split. The cost: trivial sets (sz=K) at low cal where the random split causes many classes to be absent from training.
-
-### 11e. The SCP dilemma at K≥100, low cal (fundamental limitation)
-
-With correct (random) train/cal split, SCP preserves exchangeability and achieves valid coverage. But at K≥100, cal≤400:
-- **50% random split** → 150 training samples for 100 classes → many classes absent → classifier gives 0 probability → cal scores = 1.0 → q̂ = 1.0 → **trivial sets (sz=K)**
-- Even at cal=600 (300 train), SCP-THR still produces sz=7.9 (CIFAR-100) vs FCP+PCA sz=1.86
-
-The old stratified split (§11e-old below) gave smaller sets but **invalid coverage** (~82-89%). This was a bug, not a feature.
-
-**FCP avoids the dilemma entirely** — no train/cal split needed, NCM is computed transductively, exchangeability is preserved by construction. FCP is the only viable method for K≥100 with limited labeled data.
-
-### 11e-old. Previous SCP under-coverage analysis (retracted)
-
-The previous version used stratified train/cal split which broke exchangeability (label-dependent split → scores not exchangeable). Controlled experiment confirmed: random split gives 90.0% coverage ✓ vs stratified split gives 82.3% ❌. All results in §11a-c above now use the corrected random split.
-
----
-
-## 12. Autoencoder Bottleneck vs PCA (CIFAR-100)
-
-Autoencoder (1-hidden-layer MLP, MSE reconstruction loss) trained on the same 10K unlabeled pool as PCA. Equally exchangeability-safe (unsupervised, no labels). Tests whether nonlinear manifold structure in DINOv2 embeddings can beat PCA's linear projection.
-
-### 12a. AE dimension sweep (3 trials, geodesic_topk_mean)
-
-| dim | cal=400 sz | cal=600 sz | cal=800 sz |
-|-----|-----------|-----------|-----------|
-| **AE-32** | **2.35** | **2.32** | 1.70 |
-| AE-64 | 2.46 | 2.40 | 1.73 |
-| AE-128 | 2.47 | 2.38 | **1.69** |
-| AE-256 | 3.40 | 2.77 | 1.91 |
-| AE-512 | 7.42 | 5.22 | 2.76 |
-| Full-768 | 4.49 | 4.55 | 2.23 |
-
-U-shape similar to PCA, but **AE optimal dim is much lower** (32 vs PCA's 128). AE-512 catastrophic (overfitting: near-identity mapping preserves noise). AE-32 and AE-128 essentially tied at cal=800.
-
-### 12b. Head-to-head comparison (5 trials, each at optimal dim)
-
-| Cal | FCP (768d) | FCP+PCA-128 | FCP+AE-32 | FCP+MS-CS |
-|-----|-----------|-------------|-----------|-----------|
-| 300 | 10.91 | **4.97** | 5.08 | 7.93 |
-| 400 | 4.76 | 2.85 | **2.64** | 3.51 |
-| 600 | 2.58 | **1.76** | 1.90 | 2.09 |
-| 800 | 2.25 | **1.68** | 1.80 | 1.95 |
-| 1000 | 1.91 | **1.56** | 1.61 | 1.77 |
-
-Coverage: all methods valid (89-93%) at all cal sizes.
-
-### 12c. Key findings
-
-1. **AE-32 wins at cal=400** (sz=2.64 vs PCA sz=2.85, 7% smaller). At extreme scarcity, nonlinear compression into a very compact space helps.
-2. **PCA-128 wins at cal≥600** (cal=800: PCA sz=1.68 vs AE sz=1.80, 7% better). Linear projection is slightly more efficient with adequate data.
-3. **Both dominate baseline FCP and MS-CS** at all cal sizes (25-55% smaller sets than full-768).
-4. **DINOv2 embeddings are approximately linear** — the nonlinear bottleneck doesn't find meaningful additional structure. PCA is near-optimal.
-5. **AE adds 25s training overhead** (vs 0.2s PCA). Not justified given marginal or negative improvement.
-
-**Conclusion**: PCA remains the recommended dimensionality reduction for FCP on DINOv2 embeddings. AE is a useful negative result — confirms the manifold is well-approximated by a linear subspace.
-
----
-
-## 13. NCM Comparison After Dimensionality Reduction (CIFAR-100)
-
-6 NCMs compared across 3 reductions (full-768, PCA-128, AE-32) on same balanced stratified splits. 3 trials, α=0.1.
-
-### 13a. Best NCM per reduction (by set size, coverage ≥ 89%)
-
-| Cal | full-768 | PCA-128 | AE-32 |
-|-----|----------|---------|-------|
-| 300 | topk_mean: 6.53 | unwhitened_topk_mean: 3.96 | topk_mean: 3.18 |
-| 400 | **topk_asym: 3.03** | **topk_asym: 1.91** | **topk_asym: 1.95** |
-| 600 | **topk_asym: 2.17** | **topk_asym: 1.81** | **topk_asym: 1.79** |
-| 800 | **topk_asym: 2.20** | **topk_asym: 1.79** | **topk_asym: 1.81** |
-
-### 13b. Whitening ablation after PCA-128
-
-| Cal | topk_asym (whitened) | unwhitened_topk_asym | Whitening benefit |
-|-----|---------------------|---------------------|-------------------|
-| 400 | **1.91** | 2.17 | **12%** |
-| 600 | **1.81** | 1.90 | **5%** |
-| 800 | **1.79** | 1.90 | **6%** |
-
-Whitening is **NOT redundant** after PCA. PCA removes noise dimensions (total variance), whitening rescales by within-class variance — complementary operations.
-
-### 13c. Key findings
-
-1. **`geodesic_topk_asym` dominates at cal≥400** across all reductions (full, PCA, AE). Confirms it as the universal best NCM.
-2. **PCA-128 + topk_asym = 1.79 at cal=800** — best overall pipeline. 19% smaller than full-768 topk_asym (2.20), 8% smaller than PCA + topk_mean (1.94).
-3. **Whitening still helps 5-12%** after PCA reduction — not redundant.
-4. **AE-32 ≈ PCA-128 at cal≥600** (within 0.02 set size). AE-32 wins at cal=300 (3.18 vs 3.96, 20% smaller).
-5. **Unwhitened variants competitive at cal=300** only (unwhitened_topk_mean: 3.96 on PCA-128, best at that cal size). At cal≥400 whitened variants dominate.
-
-### Winning pipeline: DINOv2 → PCA-128 (unlabeled) → whitened geodesic topk_asym (k=5) → FCP
-
-Results saved: `output/ncm_comparison/`
-
----
-
-## 14. Future Directions
-
-### P0 — Must complete
-1. ~~**PCA + NCM combination**~~ — **DONE** (§13). PCA-128 + topk_asym = 1.79 at cal=800 (best pipeline).
-2. ~~**SemiCP multi-dataset**~~ — **DONE** (§11). FCP+PCA dominates on CIFAR-100 & miniImageNet. CUB-200: FCP wins (PCA-512 doesn't help fine-grained). NNM always neutral.
-3. ~~**MA-CS vs MS-CS head-to-head**~~ — **DONE** (§15). MS-CS beats MA-CS by 2-7% and needs no superclass labels.
-4. ~~**Reduction × MS-CS ablation**~~ — **DONE** (§16). PCA+MS-CS best at cal≥600, AE+MS-CS best at cal≤400. Effects are additive.
-5. **MA-CS / MS-CS multi-dataset** — test on CUB-200, miniImageNet.
-
-### P1 — Stronger semi-supervised baselines (literature review, 2026-05-13)
-5. ~~**PPI-RCPS** (Einbinder et al. 2024, arXiv 2412.11174)~~ — **DEPRIORITIZED (2026-05-18)**. Implementation moved to `src/archive/ppi_rcps.py`. Targets split-CP threshold tuning, not directly applicable to our FCP-on-SSL pipeline where FCP+PCA already dominates semi-supervised baselines empirically (§11).
-6. **SSCP** (Seedat et al., AISTATS 2023, arXiv 2302.12238) — Self-supervised pretext tasks to improve NCM. Different paradigm from PCA dim reduction. Note: designed for regression, needs adaptation for classification sets.
-7. **Transductive Standardization** (Fan & Sesia 2025, arXiv 2512.15383) — Validates O(1/n) exchangeability for data-dependent standardization (relevant to our whitening theory).
-8. **Pseudo-Label CP** (Angelman et al. 2025) — Source-free calibration using pseudo-labels on unlabeled pool. Tests whether pseudo-labels > NNM matching for unlabeled data use.
+- ~~Multi-dataset cluster reproduction for miniImageNet, CIFAR-10~~ — §1.
+- ~~Very-small-cal sweep~~ — §6.
+- ~~Unlabeled-pool size sensitivity~~ — §3.
+- ~~SemiCP corrected investigation~~ — §2.
+- ~~AE/PCA linearity diagnostics + alignment hypothesis~~ — §3, `[[ae-vs-pca-linearity-diagnostics]]`.
+- ~~Whitened-RBF NCM + AE win at cal=600~~ — §5.
+- ~~GPU fast-path for FCP~~ — `[[gpu-fcp-path]]`.
 
 ### Negative results (archived)
 
-- Pool augmentation: breaks exchangeability. See `archive/findings_archive.md §11.5`.
-- LDA projection: structural under-coverage. See `archive/findings_archive.md §8`.
-- Original CS penalty: data leakage. See `archive/findings_archive.md §4`.
-- PCA on cal data: under-coverage at high dims. See §10 control experiment.
-- Pseudo-label trained head: same failure as LDA (label-dependent projection). See `archive/findings_archive.md §8`.
-- Autoencoder bottleneck: matches PCA at best, slightly worse at cal≥600. DINOv2 manifold is approximately linear. See §12.
+- Pool augmentation: breaks exchangeability (`archive/findings_archive.md §11.5`).
+- LDA projection: structural under-coverage.
+- Original CS penalty: data leakage.
+- PCA on cal data: under-coverage at high dims.
+- Pseudo-label trained head: same failure as LDA.
+- PPI-RCPS (Einbinder et al. 2024): split-CP oriented, archived to `src/archive/ppi_rcps.py`.
+- AE bottleneck with linear NCM: matches PCA at best (now reframed as NCM-pipeline alignment, see §3).
 
 ---
 
-## 15. MA-CS vs MS-CS Head-to-Head (CIFAR-100)
-
-Direct comparison of the two class-similarity penalties on full-768 embeddings. Both use geodesic_topk_mean NCM, α=0.1, 5 trials, balanced splits. MA-CS: λ=0.03 (binary superclass penalty, requires CIFAR-100 superclass labels). MS-CS: λ=0.05, 20 clusters, τ=0.5×median_d² (k-means on 10K unlabeled, label-free).
-
-| Cal | FCP (baseline) | FCP+MA-CS | FCP+MS-CS |
-|-----|---------------|-----------|-----------|
-| 300 | 5.06 (90.5%) | 4.15 (90.1%) | **3.88 (90.3%)** |
-| 400 | 3.74 (91.1%) | 3.14 (90.7%) | **3.11 (91.1%)** |
-| 600 | 3.91 (93.5%) | 3.08 (92.7%) | **2.88 (92.7%)** |
-| 800 | 2.30 (91.0%) | 2.02 (90.6%) | **1.99 (90.5%)** |
-| 1000 | 1.73 (90.6%) | 1.64 (90.5%) | **1.60 (89.9%)** |
-
-All coverages valid (≥89.9%).
-
-**Key findings**:
-1. **MS-CS consistently beats MA-CS** by 2-7% smaller sets across all cal sizes, while requiring **no superclass labels**
-2. Both penalties improve over baseline at all cal sizes (18-23% reduction for MS-CS, 12-21% for MA-CS)
-3. MS-CS advantage grows at larger cal: 6% at cal=300, 7% at cal=600, 2% at cal=1000
-4. MA-CS requires domain-specific hierarchy (CIFAR-100 superclasses); MS-CS works on any dataset with unlabeled data
-
-Results saved: `output/class_similarity/macs_vs_mscs_*`
-
----
-
-## 16. Ablation: Dimensionality Reduction × MS-CS (CIFAR-100)
-
-6-method ablation: 3 reductions (none/PCA-128/AE-32) × 2 CS options (none/MS-CS). All use geodesic_topk_mean, α=0.1, 5 trials, balanced splits. PCA and AE fit on 10K unlabeled pool. MS-CS clusters built in the **reduced** space (same space as NCM operates in).
-
-### 16a. Set sizes (coverage in parentheses)
-
-| Cal | FCP | +MS-CS | +PCA | +PCA+MS-CS | +AE | +AE+MS-CS |
-|-----|-----|--------|------|------------|-----|-----------|
-| 300 | 5.06 (90.5%) | 3.88 (90.3%) | 3.24 (90.8%) | 2.74 (90.3%) | 2.69 (89.9%) | **2.51 (90.1%)** |
-| 400 | 3.74 (91.1%) | 3.11 (91.1%) | 2.50 (91.5%) | 2.25 (91.2%) | 2.27 (90.8%) | **2.19 (91.3%)** |
-| 600 | 3.91 (93.5%) | 2.88 (92.7%) | 2.67 (93.9%) | **2.23 (93.3%)** | 2.46 (93.7%) | 2.37 (93.7%) |
-| 800 | 2.30 (91.0%) | 1.99 (90.5%) | 1.86 (91.9%) | **1.74 (91.6%)** | 1.79 (91.7%) | 1.76 (91.6%) |
-| 1000 | 1.73 (90.6%) | 1.60 (89.9%) | 1.48 (91.1%) | **1.45 (91.0%)** | 1.56 (91.1%) | 1.54 (91.4%) |
-
-All coverages valid (≥89.9%).
-
-### 16b. Key findings
-
-1. **FCP+PCA+MS-CS is the best combination at cal≥600** — sz=1.74 at cal=800 (**24% reduction** over FCP baseline 2.30, **6% over PCA alone** 1.86)
-2. **FCP+AE+MS-CS wins at cal≤400** — sz=2.19 at cal=400 vs PCA+MS-CS 2.25 (AE's nonlinear compression helps at extreme scarcity)
-3. **Reduction helps more than MS-CS alone** — at cal=800: PCA gives 1.86 vs MS-CS-only 1.99 (reduction removes noise; MS-CS only reshapes scores)
-4. **MS-CS is additive on top of any reduction** — consistent 5-15% further improvement regardless of reduction method
-5. **PCA overtakes AE at cal≥600** — confirming DINOv2 embeddings are approximately linear (§12)
-6. **Best overall**: PCA+MS-CS at cal≥600, AE+MS-CS at cal≤400. Practical default: **PCA-128 + MS-CS** (simpler, faster, best at typical cal sizes)
-
-### 16c. Reduction vs MS-CS decomposition (cal=800)
-
-| Component | Set Size | Reduction vs FCP |
-|-----------|----------|-----------------|
-| FCP (baseline) | 2.30 | — |
-| +MS-CS only | 1.99 | −13% |
-| +PCA only | 1.86 | −19% |
-| +PCA+MS-CS | 1.74 | **−24%** |
-
-The effects are approximately additive: PCA removes embedding noise (geometric), MS-CS reshapes the score function via class similarity (structural). They target different sources of prediction set inflation.
-
-Results saved: `output/class_similarity/ablation_reduction_mscs_*`
-
----
-
-## 17. Cluster Reproduction — Higher Resolution + Disjoint Unlabeled Pool (2026-05-19)
-
-Re-ran the §16 ablation and a head-to-head comparison vs Split-CP / SemiCP on the Run:AI cluster with two improvements:
-- **DINOv2-base extraction at input_size=518** (native resolution; local 4 GB GPU was capped at 336)
-- **CIFAR-100 test split (10K, 100/class) as the unlabeled pool** — fully disjoint from the train-derived labeled pool, no leakage risk
-- Both labeled and unlabeled extracted at matched 518 to keep them in the same feature manifold
-
-Setup: 5 trials, α=0.1, balanced cal/test split, NCM=`geodesic_topk_mean`, PCA-128 fit on the 10K unlabeled, MS-CS in PCA space (λ=0.05, n_clusters=20, τ=0.5·median_d²). Results in `output/from_cluster/`.
-
-### 17a. Ablation with matched-518 unlabeled (cluster)
-
-| Cal | FCP | FCP+MS-CS | FCP+PCA | **FCP+PCA+MS-CS** | FCP+AE | FCP+AE+MS-CS |
-|---|---|---|---|---|---|---|
-| 300  | 3.67 (89.9%) | 3.02 (90.0%) | 1.95 (89.6%) | **1.77 (88.7%)** | 2.23 (89.5%) | 2.13 (89.1%) |
-| 400  | 3.19 (91.0%) | 2.41 (89.8%) | 1.84 (91.3%) | **1.69 (91.1%)** | 1.93 (90.4%) | 1.85 (90.2%) |
-| 600  | 2.97 (92.5%) | 2.30 (92.3%) | 2.02 (92.5%) | **1.85 (92.6%)** | 2.21 (92.8%) | 2.12 (92.9%) |
-| 800  | 1.87 (91.2%) | 1.65 (91.6%) | 1.43 (90.9%) | **1.41 (91.1%)** | 1.56 (90.9%) | 1.52 (91.0%) |
-| 1000 | 1.65 (91.3%) | 1.59 (91.3%) | 1.44 (92.1%) | **1.40 (91.9%)** | 1.51 (90.7%) | 1.48 (90.9%) |
-
-Headline-quality numbers, supersede §16 for the paper:
-- **FCP+PCA+MS-CS at cal=800 → sz 1.41** (vs §16's 1.74 at lower res). 19% smaller than the local-laptop result with the same NCM choice.
-- **Same NCM (mean) used here outperforms local PCA-128+topk_asym (sz 1.79 at cal=800)** — the resolution upgrade matters more than the NCM choice.
-- PCA still does most of the work (~−45% from FCP baseline); MS-CS adds another ~5-10% on top.
-- AE remains marginally behind PCA at every cal ≥ 400. PCA+MS-CS is the canonical recipe.
-
-### 17b. Head-to-head: FCP+PCA+MS-CS vs Split-CP / SemiCP (cluster, 7 methods)
-
-Total-label-budget framing: every method gets the same B labels. SCP/SemiCP split B internally 50/50 between training and calibration. FCP+PCA+MS-CS uses all B for calibration (no separate training step — frozen SSL features).
-
-| Cal | **FCP+PCA+MS-CS** | SCP-THR | SCP-RAPS | SemiCP-THR | SemiCP-RAPS | Best non-FCP / margin |
-|---|---|---|---|---|---|---|
-| 300  | **sz 1.87 (88.6%)** | 100 (100%) | 44.4 (98.1%) | 97.6 (97.8%) | 44.4 (98.1%) | SCP-RAPS @ 44.4 → **24× smaller** |
-| 400  | **sz 1.76 (90.3%)** | 84.0 (98.9%) | 33.0 (97.8%) | 24.8 (93.0%) | 28.0 (93.6%) | SemiCP-THR @ 24.8 → **14× smaller** |
-| 600  | **sz 1.83 (92.9%)** | 7.4 (92.9%) | 21.7 (97.2%) | 8.3 (92.6%) | 22.2 (97.3%) | SCP-THR @ 7.4 → **4× smaller** |
-| 800  | **sz 1.42 (90.8%)** | 2.96 (92.5%) | 18.4 (98.0%) | 2.90 (92.3%) | 18.8 (98.0%) | SemiCP-THR @ 2.90 → **2× smaller** |
-| 1000 | **sz 1.41 (91.6%)** | 2.06 (91.8%) | 16.1 (98.9%) | 2.09 (91.6%) | 16.4 (98.9%) | SCP-THR @ 2.06 → **1.5× smaller** |
-
-APS-only variants (SCP-APS, SemiCP-APS) omitted from table — bloated everywhere (sz 57-100). Available in `output/from_cluster/semicp_experiments/cifar100_semicp_results.json`.
-
-### 17c. The classifier-quality bottleneck for Split-CP / SemiCP
-
-The recorded `classifier_accuracy` in the JSON (softmax head trained on the inner 50% of cal):
-
-| Cal (total) | n_inner_train | classifier accuracy | SCP-THR sz | FCP+PCA+MS-CS sz |
-|---|---|---|---|---|
-| 300  | ~150 | 55-59% | 100 (degenerate) | **1.87** |
-| 600  | ~300 | 68-78% | 7.4 | **1.83** |
-| 1000 | ~500 | 77-79% | 2.06 | **1.41** |
-
-- The **margin closes as cal grows** because the inner-trained classifier gets better. SCP-THR catches up to ~1.5× of FCP+PCA+MS-CS at cal=1000.
-- Our story is strongest in the **small-cal regime** (300-600), the realistic deployment setting for SSL+CP.
-- NNM augmentation (the difference between SCP and SemiCP) **does not fix the classifier-quality bottleneck**. SemiCP-THR ≈ SCP-THR everywhere.
-- This validates the "total label budget" framing (see [[feedback-total-budget-framing]] memory): every label that SCP spends on training is a label not available for calibration, and FCP+PCA+MS-CS uses each label for both implicitly.
-
-### 17d. Over-coverage investigation
-
-Empirical coverage exceeds the theoretical FCP upper bound across cal sizes, with a pronounced spike at cal=600:
-
-| n_cal | Theoretical lower 1-α | Theoretical upper 1-α + 1/(n+1) | Empirical FCP cov | Excess |
-|---|---|---|---|---|
-| 300  | 90.00% | 90.33% | 89.9% | within bound |
-| 400  | 90.00% | 90.25% | 91.0% | +0.75% |
-| 600  | 90.00% | 90.17% | **92.5%** | **+2.33%** |
-| 800  | 90.00% | 90.12% | 91.2% | +1.08% |
-| 1000 | 90.00% | 90.10% | 91.3% | +1.20% |
-
-The cal=600 spike is **method-independent** (FCP, FCP+PCA, FCP+PCA+MS-CS, all SCP/SemiCP variants all sit at 92.2-92.9% coverage at this cal size). Likely causes ranked by confidence:
-
-1. **Balanced (stratified) cal/test split breaks pure exchangeability between cal and test** — forcing equal per-class representation tightens the marginal score distribution and shifts the empirical quantile upward. This is the only mechanism that affects *all* methods identically because they share the upstream `balanced_split` / `stratified_split`.
-
-2. **Discrete CP quantile + score ties** — FCP uses `ceil((n+1)(1-α))-th` cal score as the threshold. With NN-ratio NCMs producing approximately-tied scores when test points share a calibration neighbor, the ceiling adds ~1% systematic conservatism beyond the continuous-distribution upper bound.
-
-3. **5-trial sampling variance** — at cal=600, two of the five FCP+PCA+MS-CS trials returned 0.948 and 0.95 coverage (anomalously high). Removing them drops the mean to 91.6%. More trials would clarify whether the 92.5% is a real protocol effect or a finite-trial artifact.
-
-**Interpretation:** Over-coverage with tight set sizes is the safe failure mode of CP. The empirical results are *valid* (≥1-α everywhere), and the small excess is well-explained by stratified-sampling + ceiling quantile. Worth a footnote in the paper, not a bug.
-
-### 17e. Recommendations
-
-- **Use the §17 numbers as headline for CIFAR-100**, not §16 (matched-518 is the principled extraction setup).
-- For paper-quality bars: **bump to 10-20 trials** — cheap now that the GPU fast-path is available (see [[gpu-fcp-path]]: 23-30× speedup for any GeodesicTopKMeanNCM variant via `cp.predict(device='cuda')`).
-- Document the stratified-split → mild over-coverage interaction as expected behavior.
-
----
-
-## 18. Future Experiments — Leveraging the GPU Fast-Path
-
-The 23-30× FCP speedup ([[gpu-fcp-path]] in memory: bit-equivalent torch path for all GeodesicTopKMeanNCM-family NCMs) makes several previously-expensive experiments tractable. Ordered by paper-relevance.
-
-### P0 — Strengthen the headline (cluster, all GPU-enabled)
-
-1. **20-trial rerun of §17 ablation + comparison at all cal sizes.** Settles the over-coverage question at cal=600 and tightens error bars to paper-quality. Cost on RTX 6000 Ada / A5000: ~10-20 min for the full sweep with GPU FCP.
-
-2. **NCM=`geodesic_topk_asym` confirmation on cluster.** Local memory shows asym beats mean by 8% (sz 1.79 vs 1.94 at cal=800, 336-input). With 518-input + asym, expect cluster headline to drop from sz 1.41 → ~1.30 at cal=800. Same GPU fast-path covers it.
-
-3. **Multi-dataset reproduction** (CUB-200, miniImageNet) on cluster with matched-518 extraction. Required for the paper's main results table. Use `cluster/extract_*` template — write parallel scripts for CUB-200 and miniImageNet labeled+unlabeled, then re-run `semicp_experiment.py --datasets cub200 miniimagenet`. Cost: ~30-60 min extraction + ~30 min comparison.
-
-### P1 — Push the regime boundaries (GPU enables this)
-
-4. **Very-small-cal sweep** (cal = 50, 100, 150, 200). Our story is strongest where labels are scarcest, but §17 only goes down to 300. With GPU FCP, smaller cal is cheaper, not more expensive. Expected: FCP+PCA+MS-CS's margin over SCP/SemiCP widens to 50-100× at cal=100.
-
-5. **Larger-K experiments** — DINOv2 embeddings on ImageNet-1K subsamples (K=1000). Tests whether the PCA+MS-CS recipe scales to 10× more classes. CPU FCP was effectively prohibitive here; GPU should make K=1000 with cal=2000 take minutes, not hours.
-
-6. **Per-class coverage diagnostics**. The §17d over-coverage analysis suggests stratified split shifts marginal coverage. Worth computing per-class coverage and set-size statistics: which classes systematically over-cover? Easy to add with GPU speed.
-
-### P2 — Robustness and ablations
-
-7. **Backbone sensitivity at high cal** with GPU fast-path enabled — CLIP and BEiTv2 backbones (cluster has `embeddings_clip_base_cifar100.pt`, `embeddings_beitv2_base_cifar100.pt`). Confirms the pipeline's recipe is backbone-agnostic, not DINOv2-specific.
-
-8. **MA-CS / MS-CS multi-dataset extension** (still open from §14 P0 item #5). MA-CS needs superclass labels (have CIFAR-100 fine→coarse; need to check CUB-200, miniImageNet). MS-CS is label-free, just runs.
-
-9. **GPU fast-path coverage**: extend the CUDA path to `MahalNNRatio` and `WhitenedGeodesicNNRatio` — currently CPU-only per [[gpu-fcp-path]]. Useful if reviewers ask about NCM choice sensitivity at scale.
-
-10. **Stratified vs random split effect on coverage** — direct ablation of the §17d hypothesis. Run cal=600 with `balanced_split` vs pure random sampling and measure the over-coverage shift. ~5 min with GPU. Settles the mechanism story.
-
-### P3 — Long-shot / paper-scope-dependent
-
-11. **Per-trial efficiency comparison plot** (not just averages). With 20 trials and tight error bars, show the full distribution of (cov, sz) per method — useful for showing that SCP/SemiCP have high *trial variance* at low cal, while FCP+PCA+MS-CS is stable.
-
-12. **GPU benchmark / timing study** — explicit "wall-clock per 1000 test predictions" table comparing CPU vs GPU FCP at various cal sizes. Strengthens the practical-deployment argument; small section but reviewer-friendly.
-
-### Recommended order
-
-1 → 2 → 3 → 10 → 4 → 5. That sequence builds the paper's headline table, validates the NCM choice, extends to multi-dataset, settles the over-coverage mechanism, and pushes into the small-cal extreme regime — all without ever touching long-running CPU jobs again.
-
----
-
-*Last updated: 2026-05-19*
+*Last updated: 2026-05-21.*
