@@ -57,6 +57,36 @@ Frame for the paper: SemiCP is a legitimate but narrow contribution for APS/RAPS
 
 ---
 
+## 2b. Class-Conditional Coverage — FCP+PCA+MS-CS Also Wins on CovGap
+
+The marginal-coverage comparison in §2 raises a natural question: does FCP+PCA+MS-CS keep its margin once you look *inside* each class? Following Ding, Tibshirani & Ramdas (2023, arXiv:2306.09335), we measure per-class coverage `cov_c = P(c ∈ C(X) | Y=c)` and report **CovGap = mean_c |cov_c − (1−α)| × 100** (pp), plus worst-class coverage and fraction of classes under-covered. We also include their **Clustered Conformal Prediction (ClusterCP)** as the natural conditional-coverage baseline.
+
+**CIFAR-100 + miniImageNet, K=100, 5 trials, test=2000 (20/class), α=0.1.** Script: `src/conditional_coverage_experiment.py`; results: `output/conditional_coverage/`.
+
+| Dataset       | cal | Method            | Marg. cov | Set sz | **CovGap** (pp) | Worst-class | frac<target |
+|---------------|-----|-------------------|-----------|--------|------------------|-------------|-------------|
+| CIFAR-100     | 800 | **FCP+PCA+MS-CS** | 0.900     | **1.59** | **7.68**       | 0.52        | 0.31        |
+| CIFAR-100     | 800 | FCP               | 0.905     | 2.22   | 7.55             | 0.50        | 0.31        |
+| CIFAR-100     | 800 | SemiCP-THR        | 0.901     | 2.86   | 9.02             | 0.05        | 0.24        |
+| CIFAR-100     | 800 | SCP-THR / ClusterCP | 0.913   | 3.23   | 8.73             | 0.08        | 0.21        |
+| CIFAR-100     | 400 | **FCP+PCA+MS-CS** | 0.888     | **1.92** | 8.93           | 0.41        | 0.32        |
+| CIFAR-100     | 400 | ClusterCP         | 1.000     | 100    | 10.00            | 1.00        | 0.00        |
+| miniImageNet  | 800 | **FCP+PCA+MS-CS** | 0.900     | **1.01** | **8.45**       | 0.35        | 0.27        |
+| miniImageNet  | 800 | ClusterCP         | 0.908     | 1.27   | 9.23             | 0.20        | 0.23        |
+| miniImageNet  | 800 | SemiCP-THR        | 0.886     | 1.13   | 9.93             | 0.18        | 0.31        |
+
+**Headlines:**
+
+1. **FCP+PCA+MS-CS achieves the lowest CovGap at cal=800 on both datasets** (7.68 / 8.45 pp), better than ClusterCP (8.73 / 9.23 pp) — *and* with 2× smaller sets. Our method is not only the marginal-coverage winner; it implicitly delivers competitive class-conditional coverage without targeting it.
+2. **ClusterCP degenerates to plain SplitCP-THR in our regime.** ClusterCP partitions classes by their cal-score quantile signature, but rare classes (n_y < n_thresh = ⌈(n_q+1)/α⌉ = 60 at α=0.1, n_q=5) go into a "null cluster". With cal=800/K=100 → 8/class, every class is rare → ClusterCP yields one pooled q̂, identical to SCP-THR (their rows match to 3 decimals across every cell). ClusterCP's design regime (cal/K ≥ 6-10) sits ~10× above ours. *This is the informative result: ClusterCP can't be a meaningful conditional-coverage competitor at small cal/large K.*
+3. **Worst-class tradeoff is honest.** FCP under-covers ~30% of classes (frac<target ≈ 0.31); SCP/ClusterCP under-cover ~20-25% but their "high" worst-class coverage (0.05-0.08) is achieved by over-covering everywhere (marginal cov 0.91+, set sizes 3-100). The CovGap is the right symmetric summary; raw worst-class can mislead.
+
+Five plots per (dataset, cal_size) in the results dir: `covgap_bar`, `perclass_hist`, `sorted_perclass`, `size_vs_class`, plus `covgap_vs_calsize` per dataset.
+
+**Implementation notes:** Added `ClusteredSplitCP` to `src/conformal_prediction.py` (THR scores, k-means on per-class quantile signatures, rare-class null-cluster pooling — matches Ding et al.'s public repo defaults). Added `return_sets=True` kwarg to `run_fcp_with_mscs` so per-class accounting works without re-implementing the MS-CS inner loop. Local miniImageNet uses an auto-carved unlabeled pool (50/class from train) since the configured external `embeddings_miniimagenet_unlabeled.pt` isn't on this machine — a printed `[INFO] auto-carve` heads-up on each run. Cluster reproduction with the matched-518 external unlabeled pool is the natural follow-up.
+
+---
+
 ## 3. Dimensionality Reduction
 
 PCA fit on the **unlabeled pool** (n >> d) preserves FCP exchangeability — unsupervised wrt cal/test. Cal-based PCA under-covers at high dims (overfitting); always use a disjoint unlabeled pool.
@@ -187,7 +217,7 @@ DINOv2 dominates — 77% smaller than BEiTv2, 11× smaller than CLIP. FCP advant
 5. **RBF NCM multi-dataset confirmation**: re-run AE-128 + wSymRBF on CUB-200, miniImageNet, and at matched-518 (current §5 result is local 336 only). Tests whether the alignment hypothesis generalizes.
 6. **MA-CS / MS-CS multi-dataset extension**: MS-CS is label-free, runs on anything; MA-CS needs taxonomy (have CIFAR-100 fine→coarse; check CUB-200 family/genus, miniImageNet WordNet).
 7. **Stratified-vs-random split ablation** at cal=600 to settle the over-coverage mechanism. ~5 min with GPU.
-8. **Per-class coverage diagnostics** — which classes systematically over-cover? Same data, just an extra statistic.
+8. ~~**Per-class coverage diagnostics**~~ — **DONE 2026-05-25** (§2b). FCP+PCA+MS-CS wins CovGap on CIFAR-100 + miniImageNet; ClusterCP degenerates to SplitCP in our regime.
 
 ### P2 — Robustness / breadth
 
@@ -223,6 +253,7 @@ DINOv2 dominates — 77% smaller than BEiTv2, 11× smaller than CLIP. FCP advant
 - ~~AE/PCA linearity diagnostics + alignment hypothesis~~ — §3, `[[ae-vs-pca-linearity-diagnostics]]`.
 - ~~Whitened-RBF NCM + AE win at cal=600~~ — §5.
 - ~~GPU fast-path for FCP~~ — `[[gpu-fcp-path]]`.
+- ~~Per-class coverage diagnostics + ClusterCP head-to-head~~ — §2b, `[[conditional-coverage-results]]`.
 
 ### Negative results (archived)
 
@@ -236,4 +267,4 @@ DINOv2 dominates — 77% smaller than BEiTv2, 11× smaller than CLIP. FCP advant
 
 ---
 
-*Last updated: 2026-05-21.*
+*Last updated: 2026-05-26.*

@@ -147,12 +147,16 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                       alpha, lam, M, exchangeable=False,
                       class_centroids=None, class_counts=None,
                       class_to_cluster=None, cluster_centroids=None,
-                      cluster_dists=None, effective_tau=None):
+                      cluster_dists=None, effective_tau=None,
+                      return_sets=False):
     """Run FCP with MS-CS continuous penalty.
 
     Args:
         exchangeable: If True, update M and y_hat per candidate (x_test, yc)
             to restore exchangeability. Requires passing clustering artifacts.
+        return_sets: If True, return (coverage, avg_size, prediction_sets)
+            instead of (coverage, avg_size). Default False keeps the
+            existing 2-tuple signature for all callers in this repo.
     """
     ncm = create_ncm(ncm_name, k=5)
     cp = FullConformalPredictor(ncm, alpha=alpha)
@@ -239,6 +243,8 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
 
     coverage = np.mean([y_test[i] in prediction_sets[i] for i in range(n_test)])
     avg_size = np.mean([len(s) for s in prediction_sets])
+    if return_sets:
+        return coverage, avg_size, prediction_sets
     return coverage, avg_size
 
 
