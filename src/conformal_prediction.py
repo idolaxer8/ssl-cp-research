@@ -1966,6 +1966,245 @@ class SemiCP:
         return metrics
 
 
+class ClusteredSplitCP:
+    """
+    Clustered Conformal Prediction (Ding, Tibshirani & Ramdas, 2023).
+
+    Class-conditional split CP for many-class settings. Classes are clustered
+    by their calibration-score distribution signatures (k-means on per-class
+    score quantiles); a separate threshold q_hat is fit per cluster, so the
+    coverage guarantee is approximately class-conditional rather than only
+    marginal. Rare classes (n_y < n_thresh) are pooled into a single "null
+    cluster" to avoid degenerate quantile estimates.
+
+    Uses THR scores (s = 1 - p(y|x)), matching Ding et al.'s main
+    classification setup. Classifier is logistic regression to keep parity
+    with SoftmaxSplitCP / SemiCP baselines in this codebase.
+
+    Reference: Ding, Tibshirani & Ramdas (2023),
+        "Class-Conditional Conformal Prediction with Many Classes", NeurIPS.
+        arXiv:2306.09335. Public repo: tiffanyding/class-conditional-conformal.
+
+    Note: at very small cal-per-class (e.g. cal=400 with K=100 -> 4/class),
+    most classes fall into the rare null cluster and ClusterCP effectively
+    degenerates to plain Split CP. `fraction_rare` is logged so this collapse
+    is visible.
+    """
+
+    def __init__(self, alpha: float = 0.1, n_clusters: int = 5,
+                 n_quantile_levels: int = 5, n_thresh: Optional[int] = None,
+                 quantile_levels: Optional[np.ndarray] = None,
+                 random_state: int = 42, max_iter: int = 1000):
+        """
+        Args:
+            alpha: target miscoverage
+            n_clusters: target number of clusters for k-means on signatures
+            n_quantile_levels: number of quantile levels in each per-class
+                score signature (only used when quantile_levels is None)
+            n_thresh: minimum cal samples per class to qualify for clustering.
+                If None, uses ceil((n_quantile_levels + 1) / alpha)
+                (matches Ding et al.'s public repo default).
+            quantile_levels: explicit quantile levels (e.g. [0.5, 0.6, ...]).
+                If None, evenly spaced in [0.5, 0.95].
+            random_state: seed for KMeans
+            max_iter: logistic regression max iterations
+        """
+        self.alpha = alpha
+        self.n_clusters = n_clusters
+        self.n_quantile_levels = n_quantile_levels
+        self.n_thresh = n_thresh
+        if quantile_levels is None:
+            self.quantile_levels = np.linspace(0.5, 0.95, n_quantile_levels)
+        else:
+            self.quantile_levels = np.asarray(quantile_levels)
+            self.n_quantile_levels = len(self.quantile_levels)
+        self.random_state = random_state
+        self.max_iter = max_iter
+
+        self.classifier = None
+        self.scaler = None
+        self.cluster_of = None
+        self.q_hat_by_cluster = None
+        self._all_classes = None
+        self._fraction_rare = None
+        self._effective_n_clusters = None
+
+    def fit(self, X_train: np.ndarray, y_train: np.ndarray):
+        """Train logistic regression classifier (matches SoftmaxSplitCP.fit)."""
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+
+        self.scaler = StandardScaler()
+        X_scaled = self.scaler.fit_transform(X_train)
+        self.classifier = LogisticRegression(
+            max_iter=self.max_iter, solver='lbfgs', random_state=42,
+        )
+        self.classifier.fit(X_scaled, y_train)
+        self._clf_classes = self.classifier.classes_
+        self._class_to_col = {c: i for i, c in enumerate(self._clf_classes)}
+
+        print(f"ClusteredSplitCP: trained classifier on {len(X_train)} examples, "
+              f"{len(self._clf_classes)} classes")
+
+    def calibrate(self, X_cal: np.ndarray, y_cal: np.ndarray,
+                  all_classes: np.ndarray = None):
+        """Score cal points, cluster classes by score signature, fit per-cluster q_hat."""
+        from sklearn.cluster import KMeans
+
+        if self.classifier is None:
+            raise ValueError("Must call fit() before calibrate()")
+
+        self._all_classes = (np.unique(all_classes) if all_classes is not None
+                             else np.unique(y_cal))
+
+        X_cal_scaled = self.scaler.transform(X_cal)
+        probs_cal = self.classifier.predict_proba(X_cal_scaled)
+        cal_scores = np.empty(len(y_cal), dtype=float)
+        for i, y_true in enumerate(y_cal):
+            if y_true in self._class_to_col:
+                cal_scores[i] = 1.0 - probs_cal[i, self._class_to_col[y_true]]
+            else:
+                cal_scores[i] = 1.0
+
+        scores_by_class = {int(c): cal_scores[y_cal == c] for c in self._all_classes}
+
+        if self.n_thresh is None:
+            import math as _math
+            self.n_thresh = int(_math.ceil((self.n_quantile_levels + 1) / self.alpha))
+
+        eligible = [int(c) for c in self._all_classes
+                    if len(scores_by_class[int(c)]) >= self.n_thresh]
+        rare = [int(c) for c in self._all_classes
+                if len(scores_by_class[int(c)]) < self.n_thresh]
+        self._fraction_rare = len(rare) / len(self._all_classes)
+
+        cluster_of = {int(c): -1 for c in rare}
+        if len(eligible) >= 2:
+            n_clusters = min(self.n_clusters, len(eligible))
+            sigs = np.stack([
+                np.quantile(scores_by_class[c], self.quantile_levels)
+                for c in eligible
+            ])
+            km = KMeans(n_clusters=n_clusters, n_init=10,
+                        random_state=self.random_state)
+            km.fit(sigs)
+            for c, lbl in zip(eligible, km.labels_):
+                cluster_of[c] = int(lbl)
+            self._effective_n_clusters = n_clusters
+        elif len(eligible) == 1:
+            cluster_of[eligible[0]] = 0
+            self._effective_n_clusters = 1
+        else:
+            self._effective_n_clusters = 0
+
+        cluster_ids = sorted(set(cluster_of.values()))
+        q_hat_by_cluster = {}
+        cluster_pool_sizes = {}
+        for g in cluster_ids:
+            classes_in_g = [c for c in cluster_of if cluster_of[c] == g]
+            pool = np.concatenate([scores_by_class[c] for c in classes_in_g])
+            n_g = len(pool)
+            cluster_pool_sizes[g] = n_g
+            if n_g == 0:
+                q_hat_by_cluster[g] = np.inf
+                continue
+            level = min(np.ceil((n_g + 1) * (1 - self.alpha)) / n_g, 1.0)
+            q_hat_by_cluster[g] = float(np.quantile(pool, level))
+
+        self.cluster_of = cluster_of
+        self.q_hat_by_cluster = q_hat_by_cluster
+
+        print(f"ClusteredSplitCP calibrated: {len(eligible)}/{len(self._all_classes)} "
+              f"classes eligible (n_thresh={self.n_thresh}), "
+              f"{len(rare)} rare ({self._fraction_rare:.1%}) pooled into null cluster")
+        print(f"  effective clusters: {self._effective_n_clusters} + "
+              f"{1 if rare else 0} null. Pool sizes: "
+              f"{ {g: cluster_pool_sizes[g] for g in cluster_ids} }")
+        print(f"  q_hat per cluster: "
+              f"{ {g: round(q_hat_by_cluster[g], 4) for g in cluster_ids} }")
+
+    def predict(self, X_test: np.ndarray) -> Dict:
+        """Include class c in C(x) iff (1 - p(c|x)) <= q_hat[cluster_of[c]]."""
+        if self.q_hat_by_cluster is None:
+            raise ValueError("Must call calibrate() before predict()")
+
+        X_scaled = self.scaler.transform(X_test)
+        probs = self.classifier.predict_proba(X_scaled)
+        n_test = len(X_test)
+
+        candidate_classes = np.unique(self._all_classes)
+        prediction_sets = []
+        for i in range(n_test):
+            pred_set = []
+            for c in candidate_classes:
+                ci = int(c)
+                p = probs[i, self._class_to_col[ci]] if ci in self._class_to_col else 0.0
+                score = 1.0 - p
+                g = self.cluster_of.get(ci, -1)
+                if g not in self.q_hat_by_cluster:
+                    q = max(self.q_hat_by_cluster.values()) if self.q_hat_by_cluster else 0.0
+                else:
+                    q = self.q_hat_by_cluster[g]
+                if score <= q:
+                    pred_set.append(ci)
+            prediction_sets.append(pred_set)
+
+        return {'prediction_sets': prediction_sets}
+
+    def evaluate(self, X_test: np.ndarray, y_test: np.ndarray,
+                 verbose: bool = True) -> Dict:
+        """Compute marginal coverage / set size / singleton metrics."""
+        predictions = self.predict(X_test)
+        pred_sets = predictions['prediction_sets']
+        n_test = len(y_test)
+
+        covered = sum(1 for i, ps in enumerate(pred_sets) if y_test[i] in ps)
+        coverage = covered / n_test
+        set_sizes = [len(ps) for ps in pred_sets]
+        avg_set_size = float(np.mean(set_sizes))
+        median_set_size = float(np.median(set_sizes))
+        singleton_count = sum(1 for ps in pred_sets if len(ps) == 1)
+        singleton_rate = singleton_count / n_test
+        singleton_correct = sum(1 for i, ps in enumerate(pred_sets)
+                                if len(ps) == 1 and y_test[i] in ps)
+        singleton_accuracy = (singleton_correct / singleton_count
+                              if singleton_count > 0 else 0.0)
+        empty_set_rate = sum(1 for ps in pred_sets if len(ps) == 0) / n_test
+
+        X_scaled = self.scaler.transform(X_test)
+        classifier_accuracy = float(np.mean(
+            self.classifier.predict(X_scaled) == y_test))
+
+        metrics = {
+            'coverage': coverage,
+            'avg_set_size': avg_set_size,
+            'median_set_size': median_set_size,
+            'singleton_rate': singleton_rate,
+            'singleton_accuracy': singleton_accuracy,
+            'empty_set_rate': empty_set_rate,
+            'classifier_accuracy': classifier_accuracy,
+            'set_sizes': set_sizes,
+            'fraction_rare': self._fraction_rare,
+            'effective_n_clusters': self._effective_n_clusters,
+        }
+
+        if verbose:
+            print("\n" + "=" * 50)
+            print("CLUSTERED SPLIT CP EVALUATION")
+            print("=" * 50)
+            print(f"Test examples:                 {n_test}")
+            print(f"Target coverage (1-alpha):     {1 - self.alpha:.3f}")
+            print(f"Achieved (marginal) coverage:  {coverage:.3f}")
+            print(f"Average set size:              {avg_set_size:.2f}")
+            print(f"Median set size:               {median_set_size:.1f}")
+            print(f"Singleton rate:                {singleton_rate:.3f}")
+            print(f"Fraction rare classes:         {self._fraction_rare:.3f}")
+            print(f"Effective n_clusters:          {self._effective_n_clusters}")
+            print("=" * 50)
+
+        return metrics
+
+
 class CrossValidationPlusPredictor:
     """
     Cross-Validation+ (CV+) Conformal Prediction, inspired by Jackknife+.
