@@ -222,7 +222,7 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                       class_centroids=None, class_counts=None,
                       class_to_cluster=None, cluster_centroids=None,
                       cluster_dists=None, effective_tau=None,
-                      return_sets=False, update_M_fn=None):
+                      return_sets=False, update_M_fn=None, yhat_mode="ncm"):
     """Run FCP with MS-CS continuous penalty.
 
     Args:
@@ -236,6 +236,14 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
             update (update_M_for_candidate) is used, preserving existing
             callers. Pass update_centroid_M_for_candidate (curried) to run the
             cal-only centroid similarity matrix in exchangeable mode.
+        yhat_mode: How to pick the suspected class ŷ(x) in the penalty
+            lam*(1 - M[y, ŷ(x)]).
+            "ncm" (default, variant A): ŷ = argmax_c top-k mean similarity to
+                class c in the NCM's whitened space (the NCM numerator's own
+                class prediction). More informative than 1-NN and reuses the
+                NCM's neighbour computation — no extra distance matrices.
+                Requires a GeodesicTopKMeanNCM; falls back to "1nn" otherwise.
+            "1nn": legacy raw-Euclidean LOO 1-NN (kept for A/B comparison).
     """
     ncm = create_ncm(ncm_name, k=5)
     cp = FullConformalPredictor(ncm, alpha=alpha)
@@ -244,34 +252,44 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
     # Map class labels to indices in M
     class_to_idx = {int(c): i for i, c in enumerate(all_classes)}
 
-    # --- Compute LOO 1-NN penalties for calibration points (base, before augmentation) ---
+    # --- y_hat machinery: NCM-consistent (variant A) or legacy raw 1-NN ---
     n_cal = len(X_cal)
-    D_cal = euclidean_distances(X_cal, X_cal)
-    np.fill_diagonal(D_cal, np.inf)
-    loo_nn_idx = np.argmin(D_cal, axis=1)
-    y_hat_loo = y_cal[loo_nn_idx]
-    loo_nn_dists = D_cal[np.arange(n_cal), loo_nn_idx]
+    use_ncm_yhat = (yhat_mode == "ncm" and hasattr(cp.ncm, "predict_class"))
+    if use_ncm_yhat:
+        cp.ncm._ensure_cal_yhat()
+        cal_y_hat = cp.ncm.cal_y_hat            # (n_cal,) NCM-predicted class per cal pt
+        D_test_cal = None                       # no raw distance matrices needed
+        loo_nn_dists = None
+    else:
+        # Legacy raw-Euclidean LOO 1-NN over cal
+        D_cal = euclidean_distances(X_cal, X_cal)
+        np.fill_diagonal(D_cal, np.inf)
+        loo_nn_idx = np.argmin(D_cal, axis=1)
+        cal_y_hat = y_cal[loo_nn_idx]
+        loo_nn_dists = D_cal[np.arange(n_cal), loo_nn_idx]
+        D_test_cal = euclidean_distances(X_test, X_cal)
 
     # Base cal penalty (used when exchangeable=False, or as starting point)
     cal_penalty_base = np.zeros(n_cal)
     for i in range(n_cal):
         ci = class_to_idx[int(y_cal[i])]
-        cj = class_to_idx[int(y_hat_loo[i])]
+        cj = class_to_idx[int(cal_y_hat[i])]
         cal_penalty_base[i] = lam * (1.0 - M[ci, cj])
 
     # --- Predict with MS-CS penalty on test scores ---
     n_test = len(X_test)
     prediction_sets = []
 
-    D_test_cal = euclidean_distances(X_test, X_cal)
-
     for i in range(n_test):
         x_test = X_test[i]
-        dists = D_test_cal[i]  # distances from x_test to each cal point
 
-        # y_hat for test point = 1-NN to cal (LOO in augmented set)
-        nn_idx = np.argmin(dists)
-        y_hat_test = int(y_cal[nn_idx])
+        # y_hat for the test point
+        if use_ncm_yhat:
+            dists = None
+            y_hat_test = cp.ncm.predict_class(x_test)   # variant A: NCM argmax
+        else:
+            dists = D_test_cal[i]                        # legacy raw 1-NN
+            y_hat_test = int(y_cal[int(np.argmin(dists))])
         y_hat_idx = class_to_idx[y_hat_test]
 
         pred_set = []
@@ -290,17 +308,26 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                         cluster_centroids, cluster_dists, effective_tau,
                         yc_idx, x_test, M)
 
-                # 2. Update cal y_hat: check if x_test (with label yc) is
-                #    closer than current LOO-NN for any cal point
-                cal_penalty = cal_penalty_base.copy()
-                for j in range(n_cal):
-                    if dists[j] < loo_nn_dists[j]:
-                        # x_test is now the LOO-NN for cal point j
-                        y_hat_j_idx = yc_idx
-                    else:
-                        y_hat_j_idx = class_to_idx[int(y_hat_loo[j])]
-                    cj_idx = class_to_idx[int(y_cal[j])]
-                    cal_penalty[j] = lam * (1.0 - M_aug[cj_idx, y_hat_j_idx])
+                # 2. Update cal y_hat for the augmented set {cal} u {(x_test, yc)}
+                if use_ncm_yhat:
+                    # variant A: x_test (label yc) can only raise each cal point's
+                    # top-k sim to class yc; O(n_cal) exact update.
+                    cal_yhat_aug = cp.ncm.predict_class_augmented_cal(x_test, yc)
+                    cal_penalty = np.array([
+                        lam * (1.0 - M_aug[class_to_idx[int(y_cal[j])],
+                                           class_to_idx[int(cal_yhat_aug[j])]])
+                        for j in range(n_cal)
+                    ])
+                else:
+                    # legacy raw 1-NN: x_test becomes cal_j's NN iff it is closer
+                    cal_penalty = cal_penalty_base.copy()
+                    for j in range(n_cal):
+                        if dists[j] < loo_nn_dists[j]:
+                            y_hat_j_idx = yc_idx
+                        else:
+                            y_hat_j_idx = class_to_idx[int(cal_y_hat[j])]
+                        cj_idx = class_to_idx[int(y_cal[j])]
+                        cal_penalty[j] = lam * (1.0 - M_aug[cj_idx, y_hat_j_idx])
 
                 # Test penalty with updated M
                 test_score = cp.ncm.score_x(x_test, yc)
@@ -419,6 +446,11 @@ def main():
                             "distances (NO unlabeled data). Run both under "
                             "identical splits to measure the unlabeled-data "
                             "contribution.")
+    parser.add_argument("--yhat_mode", type=str, default="ncm",
+                       choices=["ncm", "1nn"],
+                       help="Suspected-class ŷ for the MS-CS penalty: 'ncm' "
+                            "(variant A, argmax top-k NCM similarity; default) "
+                            "or '1nn' (legacy raw-Euclidean 1-NN).")
     args = parser.parse_args()
 
     # Load labeled data
@@ -455,6 +487,7 @@ def main():
     print(f"Tau values: {args.taus} {'(normalized by median_d^2)' if args.tau_normalize else '(absolute)'}")
     print(f"Lambda sweep: {args.lambdas}")
     print(f"Exchangeable: {args.exchangeable}")
+    print(f"Similarity: {args.similarity}  |  y_hat mode: {args.yhat_mode}")
     print()
 
     for n_clust in args.n_clusters:
@@ -516,7 +549,8 @@ def main():
                                 class_centroids=cls_centroids,
                                 class_counts=cls_counts,
                                 effective_tau=eff_tau,
-                                update_M_fn=update_fn)
+                                update_M_fn=update_fn,
+                                yhat_mode=args.yhat_mode)
                             covs.append(cov)
                             szs.append(sz)
                         else:
@@ -535,7 +569,8 @@ def main():
                                 class_to_cluster=c2c,
                                 cluster_centroids=clust_centroids,
                                 cluster_dists=clust_dists,
-                                effective_tau=eff_tau)
+                                effective_tau=eff_tau,
+                                yhat_mode=args.yhat_mode)
                             covs.append(cov)
                             szs.append(sz)
 

@@ -650,6 +650,94 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
         scores[~np.isfinite(scores)] = 1e9
         return scores
 
+    # ------------------------------------------------------------------
+    # NCM-consistent y_hat for MS-CS (variant A): argmax_c top-k mean sim.
+    # ŷ(x) = the class whose top-k whitened-cosine neighbours are most similar
+    # to x = argmin_c d_same(x,c) = the NCM numerator's own class prediction.
+    # Reuses the whitened space; no raw-Euclidean distances. All quantities are
+    # ones the NCM already computes during scoring, so this adds no redundant
+    # work in the MS-CS loop (it replaces the separate 1-NN distance matrices).
+    # ------------------------------------------------------------------
+
+    def _topk_mean_per_class(self, sims: np.ndarray) -> np.ndarray:
+        """Top-k mean similarity of one point to each class, from a (n_cal,)
+        similarity vector. Returns means aligned to self._yh_classes."""
+        classes = self._yh_classes
+        means = np.full(len(classes), -np.inf)
+        for j, c in enumerate(classes):
+            sc = sims[self.y_cal == c]
+            ke = min(self.k, len(sc))
+            if ke == 0:
+                continue
+            top = sc[np.argpartition(sc, -ke)[-ke:]] if ke < len(sc) else sc
+            means[j] = float(top.sum()) / ke
+        return means
+
+    def _ensure_cal_yhat(self):
+        """Lazily compute, for every calibration point (LOO), its top-k mean
+        similarity to each class and the resulting NCM prediction
+        cal_y_hat = argmax_c. Reuses the whitened cal matrix (recomputed once on
+        demand, not stored by fit) so plain-FCP runs are unaffected."""
+        if getattr(self, "cal_y_hat", None) is not None:
+            return
+        if self.X_cal_wn is None:
+            raise ValueError("Must call fit() before _ensure_cal_yhat()")
+        S = self.X_cal_wn @ self.X_cal_wn.T
+        np.fill_diagonal(S, -np.inf)                       # LOO: exclude self
+        classes = np.unique(self.y_cal)
+        n_cal, nC = len(self.y_cal), len(classes)
+        self._yh_classes = classes
+        self._yh_col = {int(c): j for j, c in enumerate(classes)}
+        self.cal_topk_sum  = np.zeros((n_cal, nC))
+        self.cal_topk_kth  = np.full((n_cal, nC), -1.0)
+        self.cal_topk_keff = np.zeros((n_cal, nC))
+        for j, c in enumerate(classes):
+            idx_c = np.where(self.y_cal == c)[0]
+            s, th, ke = self._topk_stats_block(S[:, idx_c], self.k)
+            self.cal_topk_sum[:, j]  = s
+            self.cal_topk_kth[:, j]  = th
+            self.cal_topk_keff[:, j] = ke
+        self.cal_topk_mean = self.cal_topk_sum / np.maximum(self.cal_topk_keff, 1)
+        self.cal_topk_best = self.cal_topk_mean.max(axis=1)
+        self.cal_y_hat = classes[np.argmax(self.cal_topk_mean, axis=1)]
+
+    def predict_class(self, x: np.ndarray) -> int:
+        """Variant-A ŷ for a test point: argmax_c top-k mean similarity to
+        class c (the NCM numerator). Reuses _get_sims; no raw distances."""
+        if self.X_cal_wn is None:
+            raise ValueError("Must call fit() before predict_class()")
+        if getattr(self, "_yh_classes", None) is None:
+            self._yh_classes = np.unique(self.y_cal)
+        means = self._topk_mean_per_class(self._get_sims(x))
+        return int(self._yh_classes[int(np.argmax(means))])
+
+    def predict_class_augmented_cal(self, x: np.ndarray, y: int) -> np.ndarray:
+        """Variant-A ŷ for every cal point in the augmented set {cal} u {(x,y)}
+        (exchangeable mode). Adding (x, label y) can only raise each cal point's
+        top-k similarity to class y; every other class is unchanged. So the new
+        argmax is y where the augmented class-y mean beats the old best, else the
+        base prediction. O(n_cal) per call; reuses cached per-class top-k stats
+        and the same 'enter top-k' rule as updated_calibration_scores_for."""
+        self._ensure_cal_yhat()
+        sims_x = self._get_sims(x)
+        y = int(y)
+        if y in self._yh_col:
+            col_y = self._yh_col[y]
+            sum_y  = self.cal_topk_sum[:, col_y].copy()
+            kth_y  = self.cal_topk_kth[:, col_y]
+            keff_y = self.cal_topk_keff[:, col_y].copy()
+            full  = keff_y >= self.k
+            enter = full & (sims_x > kth_y)
+            grow  = ~full
+            sum_y[enter] += sims_x[enter] - kth_y[enter]
+            sum_y[grow]  += sims_x[grow]
+            keff_y[grow] += 1
+            mean_y_aug = sum_y / np.maximum(keff_y, 1)
+        else:
+            # y absent from cal: x becomes the sole class-y exemplar (k_eff=1)
+            mean_y_aug = sims_x
+        return np.where(mean_y_aug >= self.cal_topk_best, y, self.cal_y_hat)
+
 
 class RBFDensityNCM(NonconformityMeasure):
     """
