@@ -1,13 +1,19 @@
 """
-MS-CS with Unlabeled Data: build class similarity matrix from k-means clustering
-on external unlabeled embeddings to avoid data leakage.
+MS-CS class-similarity matrix M for the FCP penalty s_l(x,y)=s(x,y)+l*(1-M[y,y_hat]).
 
-Pipeline:
-1. K-means on unlabeled embeddings -> cluster centroids
-2. Compute class centroids from calibration data only
-3. Match: assign each cal class centroid to nearest k-means cluster
-4. Build M[c,c'] from cluster co-assignment + inter-cluster distance
-5. Apply MS-CS penalty: s_l(x,y) = s(x,y) + l * (1 - M[y, y_hat(x)])
+Two ways to build M (`--similarity`):
+  cluster  (default): k-means on EXTERNAL unlabeled embeddings -> cluster
+           centroids; assign each cal class-centroid to its nearest cluster;
+           M[c,c'] from cluster co-assignment + inter-cluster distance.
+  centroid : cal-only baseline, M[c,c']=exp(-||mu_c-mu_c'||^2/tau) from class
+           centroids estimated on the calibration set. Uses NO unlabeled data,
+           so running both under identical splits measures how much the
+           unlabeled pool actually contributes.
+
+Leakage note: when no --unlabeled_path is given, the unlabeled pool for the
+cluster mode is carved as a DISJOINT, stratified holdout from the labeled data
+(stratified_holdout_unlabeled), so M never sees the cal/test points. The earlier
+fallback sampled from the full labeled set and overlapped cal/test.
 
 Reference: Fargion, Dabah & Tirer (2025), Section 4.
 """
@@ -143,12 +149,80 @@ def update_M_for_candidate(class_centroids, class_counts, class_to_cluster,
     return M_updated
 
 
+def build_centroid_similarity_matrix(X_cal, y_cal, all_classes, tau=1.0):
+    """Cal-only class-similarity matrix from pairwise class-centroid distances.
+
+    Unlabeled-data-free baseline for MS-CS: M[c,c'] = exp(-||mu_c - mu_c'||^2 / tau)
+    where mu_c is class c's centroid computed from the CALIBRATION set only.
+    No k-means, no unlabeled pool. The scale `tau` follows the same convention as
+    build_cluster_similarity_matrix: a negative value signals normalization, i.e.
+    effective_tau = |tau| * median squared off-diagonal centroid distance.
+
+    This isolates the contribution of the unlabeled data: compare a run with this
+    matrix against build_cluster_similarity_matrix under identical splits/lambda.
+
+    Returns (cluster-only artifacts are simply not produced):
+        M, effective_tau, median_dist_sq, class_centroids, class_counts
+    """
+    classes = all_classes
+    n_classes = len(classes)
+
+    # Class centroids from calibration data; absent classes -> global cal centroid.
+    global_centroid = X_cal.astype(np.float64).mean(axis=0)
+    class_centroids = np.zeros((n_classes, X_cal.shape[1]), dtype=np.float64)
+    for i, c in enumerate(classes):
+        mask = y_cal == c
+        class_centroids[i] = (X_cal[mask].astype(np.float64).mean(axis=0)
+                              if mask.any() else global_centroid)
+
+    # Pairwise centroid distances + scale (median squared off-diagonal distance).
+    centroid_dists = euclidean_distances(class_centroids, class_centroids)
+    upper_tri = centroid_dists[np.triu_indices(n_classes, k=1)]
+    median_dist_sq = float(np.median(upper_tri) ** 2)
+
+    if tau < 0:
+        effective_tau = abs(tau) * median_dist_sq
+    else:
+        effective_tau = tau
+    if effective_tau <= 0:  # degenerate (near-coincident centroids): avoid /0
+        effective_tau = 1.0
+
+    M = np.exp(-centroid_dists**2 / effective_tau)
+    np.fill_diagonal(M, 1.0)
+
+    class_counts = np.array([np.sum(y_cal == c) for c in classes])
+    return M, effective_tau, median_dist_sq, class_centroids, class_counts
+
+
+def update_centroid_M_for_candidate(class_centroids, class_counts, effective_tau,
+                                    yc_idx, x_test, M_base):
+    """Exchangeable update of the centroid-distance M when (x_test, yc) is added.
+
+    Adding (x_test, yc) to the augmented set shifts only class yc's centroid, so
+    only row/col yc_idx of M changes: M[yc, j] = exp(-||mu_yc' - mu_j||^2 / tau).
+    """
+    n_y = class_counts[yc_idx]
+    if n_y == 0:
+        new_centroid = x_test.astype(np.float64)
+    else:
+        new_centroid = (n_y * class_centroids[yc_idx]
+                        + x_test.astype(np.float64)) / (n_y + 1)
+
+    dists = np.linalg.norm(class_centroids - new_centroid, axis=1)
+    sims = np.exp(-dists**2 / effective_tau)
+    M_updated = M_base.copy()
+    M_updated[yc_idx, :] = sims
+    M_updated[:, yc_idx] = sims
+    M_updated[yc_idx, yc_idx] = 1.0
+    return M_updated
+
+
 def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                       alpha, lam, M, exchangeable=False,
                       class_centroids=None, class_counts=None,
                       class_to_cluster=None, cluster_centroids=None,
                       cluster_dists=None, effective_tau=None,
-                      return_sets=False):
+                      return_sets=False, update_M_fn=None):
     """Run FCP with MS-CS continuous penalty.
 
     Args:
@@ -157,6 +231,11 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
         return_sets: If True, return (coverage, avg_size, prediction_sets)
             instead of (coverage, avg_size). Default False keeps the
             existing 2-tuple signature for all callers in this repo.
+        update_M_fn: Optional callable (yc_idx, x_test, M_base) -> M for the
+            exchangeable M update. When None (default), the built-in cluster
+            update (update_M_for_candidate) is used, preserving existing
+            callers. Pass update_centroid_M_for_candidate (curried) to run the
+            cal-only centroid similarity matrix in exchangeable mode.
     """
     ncm = create_ncm(ncm_name, k=5)
     cp = FullConformalPredictor(ncm, alpha=alpha)
@@ -203,10 +282,13 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
             if exchangeable:
                 # --- Exchangeable version: update M and y_hat for augmented set ---
                 # 1. Update M: shift class yc centroid to include x_test
-                M_aug = update_M_for_candidate(
-                    class_centroids, class_counts, class_to_cluster,
-                    cluster_centroids, cluster_dists, effective_tau,
-                    yc_idx, x_test, M)
+                if update_M_fn is not None:
+                    M_aug = update_M_fn(yc_idx, x_test, M)
+                else:
+                    M_aug = update_M_for_candidate(
+                        class_centroids, class_counts, class_to_cluster,
+                        cluster_centroids, cluster_dists, effective_tau,
+                        yc_idx, x_test, M)
 
                 # 2. Update cal y_hat: check if x_test (with label yc) is
                 #    closer than current LOO-NN for any cal point
@@ -283,6 +365,30 @@ def stratified_split(X, y, cal_size, test_size, all_classes, rng):
     return X_rem[cal_idx], y_rem[cal_idx], X_test, y_test
 
 
+def stratified_holdout_unlabeled(X, y, all_classes, n_unlabeled, rng):
+    """Carve a DISJOINT, stratified unlabeled pool from the labeled data.
+
+    Returns (X_pool, y_pool, X_unlabeled) where X_unlabeled shares NO index with
+    X_pool, so a similarity matrix built on X_unlabeled never sees the cal/test
+    points later drawn from X_pool. This fixes the prior fallback, which sampled
+    the "unlabeled" pool from the full labeled set and thus overlapped cal/test
+    (leakage into M). Stratified per the repo-wide sampling rule: ~equal samples
+    held out per class, always leaving >=1 labeled sample per class.
+    """
+    n_classes = len(all_classes)
+    per_class = max(1, n_unlabeled // n_classes)
+    unl_idx = []
+    for c in all_classes:
+        c_idx = np.where(y == c)[0]
+        take = min(per_class, len(c_idx) - 1)  # leave >=1 labeled per class
+        if take > 0:
+            unl_idx.append(rng.choice(c_idx, take, replace=False))
+    unl_idx = np.concatenate(unl_idx)
+    keep_mask = np.ones(len(X), dtype=bool)
+    keep_mask[unl_idx] = False
+    return X[keep_mask], y[keep_mask], X[unl_idx]
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="MS-CS with unlabeled data experiment")
@@ -306,6 +412,13 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--exchangeable", action="store_true",
                        help="Update M and y_hat per candidate to restore exchangeability")
+    parser.add_argument("--similarity", type=str, default="cluster",
+                       choices=["cluster", "centroid"],
+                       help="M construction: 'cluster' = k-means on unlabeled data "
+                            "(default); 'centroid' = cal-only class-centroid "
+                            "distances (NO unlabeled data). Run both under "
+                            "identical splits to measure the unlabeled-data "
+                            "contribution.")
     args = parser.parse_args()
 
     # Load labeled data
@@ -315,19 +428,27 @@ def main():
     all_classes = np.unique(y)
     print(f"Labeled data: {X.shape}, {len(all_classes)} classes")
 
-    # Load or create unlabeled data
+    # Load or create unlabeled data. X_pool/y_pool is the ONLY data the trial
+    # splits draw cal/test from — kept disjoint from X_unlabeled to avoid leakage.
     if args.unlabeled_path:
         udata = torch.load(args.unlabeled_path, map_location="cpu", weights_only=False)
         X_unlabeled = udata["embeddings"].numpy()
+        X_pool, y_pool = X, y
         print(f"Unlabeled data (external): {X_unlabeled.shape}")
+    elif args.similarity == "centroid":
+        # Centroid mode uses no unlabeled data at all.
+        X_unlabeled = None
+        X_pool, y_pool = X, y
+        print("Unlabeled data: none (centroid similarity uses cal centroids only)")
     else:
-        # Hold out portion of labeled data as "unlabeled" (drop labels)
-        # Use samples not selected for cal/test in any trial
+        # Carve a DISJOINT, stratified unlabeled pool from the labeled data so the
+        # similarity matrix never sees cal/test points (fixes the old leakage).
         rng_u = np.random.default_rng(args.seed + 9999)
         n_unlabeled = min(len(X) // 2, 1500)
-        u_idx = rng_u.choice(len(X), size=n_unlabeled, replace=False)
-        X_unlabeled = X[u_idx]
-        print(f"Unlabeled data (held out from labeled pool): {X_unlabeled.shape}")
+        X_pool, y_pool, X_unlabeled = stratified_holdout_unlabeled(
+            X, y, all_classes, n_unlabeled, rng_u)
+        print(f"Unlabeled data (disjoint stratified holdout): {X_unlabeled.shape}; "
+              f"labeled pool for cal/test: {X_pool.shape}")
 
     print(f"NCM: {args.ncm}, alpha={args.alpha}, trials={args.n_trials}")
     print(f"Cluster counts: {args.n_clusters}")
@@ -337,13 +458,20 @@ def main():
     print()
 
     for n_clust in args.n_clusters:
+        # Centroid M ignores n_clusters; run it once (first value) to avoid repeats.
+        if args.similarity == "centroid" and n_clust != args.n_clusters[0]:
+            continue
         for tau_input in args.taus:
             # If normalizing, pass negative tau as signal to build function
             tau_arg = -tau_input if args.tau_normalize else tau_input
 
             print(f"{'='*70}")
             tau_label = f"tau={tau_input}*median_d^2" if args.tau_normalize else f"tau={tau_input}"
-            print(f"n_clusters={n_clust}, {tau_label}")
+            if args.similarity == "centroid":
+                mode_label = "centroid M (cal-only, no unlabeled)"
+            else:
+                mode_label = f"cluster M (k-means unlabeled), n_clusters={n_clust}"
+            print(f"{mode_label}, {tau_label}")
             print(f"{'='*70}")
 
             for cal_size in args.cal_sizes:
@@ -356,8 +484,10 @@ def main():
 
                     for trial in range(args.n_trials):
                         rng = np.random.default_rng(args.seed + trial * 1000)
+                        # Identical splits across similarity modes (same seed),
+                        # so cluster-vs-centroid is a controlled comparison.
                         X_cal, y_cal, X_test, y_test = stratified_split(
-                            X, y, cal_size, args.test_size, all_classes, rng)
+                            X_pool, y_pool, cal_size, args.test_size, all_classes, rng)
 
                         if lam == 0.0:
                             # Plain FCP (no penalty) — baseline
@@ -367,6 +497,28 @@ def main():
                             m = cp.evaluate(X_test, y_test, verbose=False)
                             covs.append(m["coverage"])
                             szs.append(m["avg_set_size"])
+                        elif args.similarity == "centroid":
+                            # Cal-only centroid-distance M (NO unlabeled data)
+                            (M, eff_tau, med_d2, cls_centroids, cls_counts
+                             ) = build_centroid_similarity_matrix(
+                                X_cal, y_cal, all_classes, tau=tau_arg)
+                            c2c = None  # not used in centroid mode
+                            update_fn = None
+                            if args.exchangeable:
+                                update_fn = (lambda yc_idx, x_test, M_base:
+                                             update_centroid_M_for_candidate(
+                                                 cls_centroids, cls_counts, eff_tau,
+                                                 yc_idx, x_test, M_base))
+                            cov, sz = run_fcp_with_mscs(
+                                X_cal, y_cal, X_test, y_test, all_classes,
+                                args.ncm, args.alpha, lam, M,
+                                exchangeable=args.exchangeable,
+                                class_centroids=cls_centroids,
+                                class_counts=cls_counts,
+                                effective_tau=eff_tau,
+                                update_M_fn=update_fn)
+                            covs.append(cov)
+                            szs.append(sz)
                         else:
                             # Build M from unlabeled data + current calibration
                             (M, c2c, eff_tau, med_d2, cls_centroids,
@@ -398,16 +550,17 @@ def main():
     # Sanity check: print M properties for last trial
     if args.lambdas[-1] > 0:
         print(f"\n--- Similarity Matrix M sanity check (last config) ---")
-        print(f"  n_clusters={n_clust}, effective_tau={eff_tau:.4f}, median_d^2={med_d2:.4f}")
+        print(f"  similarity={args.similarity}, effective_tau={eff_tau:.4f}, median_d^2={med_d2:.4f}")
         print(f"  M shape: {M.shape}")
         print(f"  M diagonal: all 1.0? {np.allclose(np.diag(M), 1.0)}")
         print(f"  M symmetric? {np.allclose(M, M.T)}")
         print(f"  M range: [{M.min():.4f}, {M.max():.4f}]")
         print(f"  M mean off-diagonal: {(M.sum() - M.trace()) / (M.shape[0]**2 - M.shape[0]):.4f}")
 
-        # Cluster assignment distribution
-        unique_clusters = len(np.unique(c2c))
-        print(f"  Classes mapped to {unique_clusters}/{n_clust} clusters")
+        # Cluster assignment distribution (cluster mode only)
+        if args.similarity == "cluster" and c2c is not None:
+            unique_clusters = len(np.unique(c2c))
+            print(f"  Classes mapped to {unique_clusters}/{n_clust} clusters")
 
     print("\nDone.")
 
