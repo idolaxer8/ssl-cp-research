@@ -298,7 +298,7 @@ failure modes an O(1/n) analysis does *not* cover — they break coverage outrig
 | Whitening inside the NCM (§1) | **diagonal** pooled-within-class scale `w`, fit on cal, not refit per bag | O(1/n) (gentle: diagonal + pooled + regularized) | cov at nominal for `n ≥ 200`; no measurable gap |
 | **MS-CS frozen** penalty (§3.3) | `M`, `ŷ` fixed at cal-only values (default) | O(1/n) | **negligible** — table below |
 | **MS-CS exact** (`exchangeable=True`) | `M`, `ŷ` recomputed per augmented bag | **Exact** | = frozen on 87–99.5% of sets; ~1.3–1.5× runtime |
-| **"SCP-geodesic"** (`SplitCPGeneric` + geodesic) | all `B` as cal; static LOO scores + fixed `q̂` | O(1/n) | = FCP-geodesic set-for-set at all `B` |
+| **FCP `update_calibration_scores=False`** (§5.1) | reuse static LOO cal scores at predict (no per-bag refit) | O(1/n) | = standard FCP set-for-set at all `B` |
 | cal-fit PCA / LDA / pseudo-label head | projection fit on cal **labels** | **Breaks** (not O(1/n)) | structural under-coverage 70–85% |
 | pool augmentation (test → cal feedback) | unlabeled points relabelled into cal | **Breaks** (O(N/n) leak) | invalid; archived |
 
@@ -319,19 +319,26 @@ only cal=200 shows a visible-but-tiny gap that `--exchangeable` closes. CovGap i
 mode-independent to 2 decimals — the penalty path does not affect class-conditional
 behaviour. (The cal=800 frozen row reproduces findings §2b exactly.)
 
-**On "SCP-geodesic" — an approximation, not a Split CP.** It is named like an
-inductive baseline but is not one: there is no train/cal split, and the "score
-function" *is* the calibration set (the geodesic NCM references cal points as
-neighbours). Calibration scores are the static leave-one-out values (each cal
-point scored against the other `n−1`); a single split-CP quantile `q̂` thresholds
-the test scores (scored against all `n`). Versus Full CP it (i) **drops the
-per-candidate augmentation refit** and (ii) carries an **`n−1` vs `n`
-reference-set asymmetry** — both O(1/n). That is precisely why it reproduces
-FCP-geodesic set-for-set at every `B` (`src/scp_geodesic_experiment.py`;
-`[[scp-geodesic-isolates-ncm-vs-fcp]]`): the machinery it drops is the O(1/n)
-augmentation. The genuine inductive baseline is **SCP-THR** (a softmax head on a
-disjoint split), which *does* satisfy split exchangeability but collapses to
-sz ≈ K at small cal because the head is undertrained.
+### 5.1 `update_calibration_scores=False` (the option formerly called "SCP-geodesic")
+
+Standard Full CP recomputes the calibration scores for each augmented bag
+`{cal ∪ (x*, y)}` before ranking the test score (§1). Setting
+`FullConformalPredictor.predict(update_calibration_scores=False)` skips that
+refit: it reuses the **static leave-one-out** calibration scores from
+`calibrate()` and ranks the test score against them. The NCM, the fit, and the
+base `score_x` are identical — **not updating the cal scores at predict is the
+*only* substantive difference** from FCP. (An earlier separate `SplitCPGeneric`
+class called this "SCP-geodesic", which was misleading: there is *no* train/cal
+split, so it was never inductive Split CP. The `n−1` (cal, self-excluded) vs `n`
+(test) neighbour asymmetry sometimes quoted is merely the *consequence* of not
+refitting, not a second independent difference.) Because the dropped augmentation
+is `O(1/n)`, it reproduces standard FCP set-for-set at every `B` — verified on
+CIFAR-100 (cal=400: cov 0.858 vs 0.862, sz 2.69 vs 2.70; memory
+`[[scp-geodesic-isolates-ncm-vs-fcp]]`). It is kept as a flag for future tests
+(e.g. directly measuring what the augmentation buys). The genuine inductive
+baseline is instead **SCP-THR** (a softmax head on a disjoint split), which
+*does* satisfy split exchangeability but collapses to sz ≈ K at small cal because
+the head is undertrained.
 
 ---
 

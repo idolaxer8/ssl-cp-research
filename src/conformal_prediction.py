@@ -1047,6 +1047,7 @@ class FullConformalPredictor:
         self,
         X_test: np.ndarray,
         return_p_values: bool = False,
+        update_calibration_scores: bool = True,
         verbose: bool = True,
         device: str = "cpu",
         gpu_batch_size: int = 256,
@@ -1063,6 +1064,14 @@ class FullConformalPredictor:
                     (covers geodesic_topk_mean / _asym and their unwhitened/numerator-
                     only ablations). Raises on other NCMs.
             gpu_batch_size: Number of test points per GPU batch (only when device="cuda").
+            update_calibration_scores: If True (default), recompute the calibration
+                    scores for each augmented bag {cal ∪ (x_test, y)} — standard
+                    transductive Full CP. If False, reuse the static leave-one-out
+                    calibration scores from calibrate() (i.e. do NOT update the cal
+                    scores at predict): this is the ONLY substantive difference from
+                    FCP and was formerly the separate "SCP-geodesic" class. The NCM,
+                    fit, and base score_x are identical either way. CPU only.
+                    See docs/theory.md §5.
 
         Returns:
             Dictionary with:
@@ -1075,6 +1084,11 @@ class FullConformalPredictor:
             raise ValueError("Must call calibrate() before predict()")
 
         if device == "cuda":
+            if not update_calibration_scores:
+                raise NotImplementedError(
+                    "update_calibration_scores=False is CPU-only; use device='cpu' "
+                    "for the static-calibration (no cal-update) mode."
+                )
             return self._predict_geodesic_gpu(
                 X_test, return_p_values=return_p_values,
                 verbose=verbose, batch_size=gpu_batch_size,
@@ -1101,9 +1115,16 @@ class FullConformalPredictor:
                 yc = int(y_candidate)
 
                 test_score = self.ncm.score_x(x_test, yc)
-                updated_scores = self.ncm.updated_calibration_scores_for(x_test, yc)
+                # Standard Full CP recomputes the calibration scores for the
+                # augmented bag {cal ∪ (x_test, yc)} (the transductive step).
+                # update_calibration_scores=False reuses the static LOO cal scores
+                # instead — the sole difference from FCP (was "SCP-geodesic").
+                if update_calibration_scores:
+                    cal_scores_yc = self.ncm.updated_calibration_scores_for(x_test, yc)
+                else:
+                    cal_scores_yc = self.cal_scores
 
-                n_greater = np.sum(updated_scores >= test_score)
+                n_greater = np.sum(cal_scores_yc >= test_score)
                 p_value = (n_greater + 1) / (n_cal + 1)
 
                 if return_p_values:
