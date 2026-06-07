@@ -173,12 +173,15 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
     y_hat_loo = y_cal[loo_nn_idx]
     loo_nn_dists = D_cal[np.arange(n_cal), loo_nn_idx]
 
+    # Class-index arrays for vectorized penalty gathers. These replace the per-j
+    # Python loops below; bit-identical results, but they remove the O(n_cal)
+    # inner loop that otherwise made the exchangeable path O(n_test * K * n_cal)
+    # in pure Python.
+    cal_class_idx = np.array([class_to_idx[int(c)] for c in y_cal])      # (n_cal,)
+    yhat_loo_idx  = np.array([class_to_idx[int(c)] for c in y_hat_loo])  # (n_cal,)
+
     # Base cal penalty (used when exchangeable=False, or as starting point)
-    cal_penalty_base = np.zeros(n_cal)
-    for i in range(n_cal):
-        ci = class_to_idx[int(y_cal[i])]
-        cj = class_to_idx[int(y_hat_loo[i])]
-        cal_penalty_base[i] = lam * (1.0 - M[ci, cj])
+    cal_penalty_base = lam * (1.0 - M[cal_class_idx, yhat_loo_idx])
 
     # --- Predict with MS-CS penalty on test scores ---
     n_test = len(X_test)
@@ -208,17 +211,11 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                     cluster_centroids, cluster_dists, effective_tau,
                     yc_idx, x_test, M)
 
-                # 2. Update cal y_hat: check if x_test (with label yc) is
-                #    closer than current LOO-NN for any cal point
-                cal_penalty = cal_penalty_base.copy()
-                for j in range(n_cal):
-                    if dists[j] < loo_nn_dists[j]:
-                        # x_test is now the LOO-NN for cal point j
-                        y_hat_j_idx = yc_idx
-                    else:
-                        y_hat_j_idx = class_to_idx[int(y_hat_loo[j])]
-                    cj_idx = class_to_idx[int(y_cal[j])]
-                    cal_penalty[j] = lam * (1.0 - M_aug[cj_idx, y_hat_j_idx])
+                # 2. Update cal y_hat: if x_test (with label yc) is closer than a
+                #    cal point's current LOO-NN, that point's predicted label
+                #    becomes yc. Vectorized over cal points (was a per-j loop).
+                yhat_j_idx = np.where(dists < loo_nn_dists, yc_idx, yhat_loo_idx)
+                cal_penalty = lam * (1.0 - M_aug[cal_class_idx, yhat_j_idx])
 
                 # Test penalty with updated M
                 test_score = cp.ncm.score_x(x_test, yc)

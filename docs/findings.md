@@ -123,6 +123,23 @@ K-means on unlabeled pool → similarity matrix M from cluster co-assignment →
 
 ---
 
+## 4b. MS-CS Exact vs O(1/n) — Exchangeability of the Penalty Path
+
+The MS-CS penalty (§4) runs two ways in `run_fcp_with_mscs`: **frozen** (M and ŷ fixed at cal-only values — the default; an O(1/n) approximation) and **exact** (`exchangeable=True` — M and ŷ recomputed per augmented bag, the bag-symmetric penalty that makes the FCP guarantee hold *exactly*; see `theory.md` §1/§3). The frozen path is what every other section here (incl. §2b) reports. Script: `src/mscs_exchangeability_experiment.py`; results `output/mscs_exchangeability/`.
+
+**CIFAR-100, PCA-128, geodesic_topk_mean, λ=0.05, 5 trials, test=2000:**
+
+| cal (n/K) | frozen cov / sz / CovGap | exact cov / sz / CovGap | identical-set | Δcov (exact−frozen) | exact runtime |
+|-----------|--------------------------|-------------------------|---------------|----------------------|---------------|
+| 200 (2)   | 0.917 / 5.45 / 8.83      | 0.919 / 5.65 / 8.80     | 0.871         | **+0.0021**          | 1.47×         |
+| 400 (4)   | 0.888 / 1.92 / 8.93      | 0.889 / 1.93 / 8.93     | 0.980         | +0.0004              | 1.34×         |
+| 600 (6)   | 0.920 / 2.10 / 7.20      | 0.920 / 2.12 / 7.19     | 0.984         | +0.0001              | 1.31×         |
+| 800 (8)   | 0.900 / 1.59 / 7.68      | 0.900 / 1.59 / 7.69     | **0.995**     | −0.0001              | 1.32×         |
+
+**The frozen O(1/n) approximation is empirically free for deployment.** Frozen and exact agree on 87% of sets at cal=200 (n/K=2), rising to **99.5% at cal=800**; Δcoverage ≤ +0.002 everywhere, **shrinks monotonically** (+0.0021 → −0.0001), and is always in the validity-safe direction (exact covers ≥ frozen at small cal, being the truly bag-symmetric path). CovGap matches to 2 decimals. Only cost of exactness: ~1.3–1.5× runtime. **Use frozen by default; `--exchangeable` closes the residual cal≤200 gap if exactness is required.** The cal=800 frozen row reproduces §2b (sz 1.59, CovGap 7.68) — §2b used the frozen path with no loss. Full approximation inventory: `theory.md` §5.
+
+---
+
 ## 5. Whitened-RBF NCM + AE-128 — Confirmed Win at Medium Cal
 
 After the AE/PCA diagnostics predicted that nonlinear NCMs would let AE features pay off, we built `RBFDensityNCM` (Gaussian kernel density, ratio mode, pooled-within-class whitening). See `[[rbf-ncm-with-ae]]`.
@@ -189,6 +206,8 @@ DINOv2 dominates — 77% smaller than BEiTv2, 11× smaller than CLIP. FCP advant
 **Why FCP > CV+ at K≥100, low cal**: CV+ trains on (k-1)/k data per fold — with few samples, classes go missing from folds → trivially full sets. FCP uses full cal set transductively.
 
 **Why FCP > SCP at K≥100, low cal**: SCP needs a softmax classifier trained on inner cal split. With K=100 and ≤300 cal, the inner classifier is too weak; scores degenerate. FCP needs no train/cal split.
+
+**"SCP-geodesic" is NOT genuine Split CP — it's another O(1/n) approximation to FCP.** `SplitCPGeneric` + geodesic NCM uses all B as calibration (no train/cal split), with *static* leave-one-out cal scores and a fixed quantile threshold q̂ — i.e. Full CP with the per-candidate augmentation refit **dropped**, plus an n−1 (cal, self-excluded) vs n (test) reference-set asymmetry. Both are O(1/n), which is exactly why it reproduces FCP-geodesic set-for-set at all B (`src/scp_geodesic_experiment.py`, `[[scp-geodesic-isolates-ncm-vs-fcp]]`). The genuine inductive baseline is SCP-THR (softmax head on a disjoint split). Full approximation inventory: `theory.md` §5.
 
 **Exchangeability**: Whitening / PCA fit on cal-only is O(1/n) asymmetry — negligible for n ≥ 200. Label-dependent projections (LDA, pseudo-label heads) are NOT O(1/n) and cause structural under-coverage (70-85%). Only **unsupervised** projections (PCA on unlabeled pool, AE) are safe.
 
@@ -267,4 +286,4 @@ DINOv2 dominates — 77% smaller than BEiTv2, 11× smaller than CLIP. FCP advant
 
 ---
 
-*Last updated: 2026-05-26.*
+*Last updated: 2026-06-07.*
