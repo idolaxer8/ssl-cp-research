@@ -4,46 +4,51 @@
 the unlabeled pool — just `M[y,y'] = exp(-||mu_y - mu_y'||^2 / tau)` from class
 centroids estimated on the calibration set?
 
-**Setup:** CIFAR-100, DINOv2 full-768 embeddings (no PCA), NCM `geodesic_topk_mean`,
-alpha=0.1, test=300, 5 trials, tau = 0.5*median_d^2, n_clusters=20 (cluster mode only).
-Non-exchangeable penalty. Identical stratified splits across both modes (same seeds),
-so this is a controlled comparison. Script: `src/mscs_unlabeled_experiment.py`
-with new `--similarity {cluster,centroid}` flag.
+**Setup:** CIFAR-100, DINOv2 matched-518 embeddings (recovered from cluster
+`/storage`), full-768 (no PCA), NCM `geodesic_topk_mean`, alpha=0.1, test=300,
+5 trials, tau = 0.5*median_d^2, n_clusters=20 (cluster mode only), non-exchangeable
+penalty. Labeled pool 10000 (100/class), disjoint 10000 unlabeled pool. Identical
+stratified splits across both modes (same seeds) -> controlled comparison; the
+lam=0 baselines are byte-identical across modes (sz 5.87 / 3.50 / 2.49). Script:
+`src/mscs_unlabeled_experiment.py --similarity {cluster,centroid}`.
 
-## Centroid (cal-only M, NO unlabeled data) — COMPLETED
+## Full results (cov, sz over 5 trials)
 
-| cal | baseline (lam=0) | lam=0.03 | lam=0.05 | lam=0.10 |
-|-----|------------------|----------|----------|----------|
-| 400 | sz 5.49, cov .889 | 4.75, .883 | 4.45, .881 | 3.81, .872 |
-| 600 | sz 3.20, cov .891 | 2.79, .887 | 2.54, .887 | 2.26, .879 |
-| 800 | sz 2.31, cov .899 | 2.10, .900 | 2.01, .899 | 1.85, .898 |
+CENTROID (cal-only M, NO unlabeled):
 
-Observations:
-- The cal-only centroid M *does* shrink sets: at cal=800, lam=0.05 -> 2.01 vs 2.31
-  baseline (**13%**) with coverage held (.899); lam=0.10 -> 1.85 (**20%**), cov .898.
-- At cal=600, lam=0.05 -> 2.54 vs 3.20 (**21%**) but coverage dips to .887 (just under
-  the .89 target) and erodes further with lam.
-- At cal=400 (cal/K = 4 < 5) coverage degrades with lam (.889 -> .872): the
-  non-exchangeable approximation is invalid in this regime — should use
-  `--exchangeable`. Set-size "wins" here are partly bought with undercoverage.
+| cal | baseline | lam=0.03 | lam=0.05 | lam=0.10 |
+|-----|----------|----------|----------|----------|
+| 400 | 5.87, .885 | 5.46, .881 | 5.21, .881 | 4.59, .877 |
+| 600 | 3.50, .895 | 3.14, .891 | 3.04, .890 | 2.73, .886 |
+| 800 | 2.49, .912 | 2.35, .913 | 2.23, .911 | 2.06, .910 |
 
-## Cluster (k-means on 10K external unlabeled) — PENDING
+CLUSTER (k-means on 10K unlabeled):
 
-NOT YET RUN at this config. The run crashed because the `output/` directory
-(all embeddings + result subdirs) was wiped externally mid-run (see session notes).
-Re-run once embeddings are restored:
+| cal | baseline | lam=0.03 | lam=0.05 | lam=0.10 |
+|-----|----------|----------|----------|----------|
+| 400 | 5.87, .885 | 4.74, .890 | 4.13, .885 | 3.73, .887 |
+| 600 | 3.50, .895 | 2.96, .891 | 2.98, .897 | 2.85, .895 |
+| 800 | 2.49, .912 | 2.17, .907 | 2.08, .907 | 2.19, .910 |
 
-```
-python src/mscs_unlabeled_experiment.py \
-  --embeddings_path output/embeddings_cifar100.pt \
-  --unlabeled_path output/embeddings_cifar100_unlabeled.pt \
-  --similarity cluster --ncm geodesic_topk_mean \
-  --cal_sizes 400 600 800 --test_size 300 --n_trials 5 \
-  --lambdas 0.0 0.03 0.05 0.1 --taus 0.5 --tau_normalize --n_clusters 20
-```
+## Best valid (smallest sz with cov >= 0.89) and the unlabeled contribution
 
-Preliminary signal (cal=200 smoke, 1 trial): cluster M cut sets 40.7 -> 26.2 while
-centroid M only 40.7 -> 39.2 — i.e. at very low cal the unlabeled clustering does
-most of the work because cal class-centroids (~2 samples/class) are too noisy. The
-open question is how much of the gap closes by cal=600-800, where the table above
-shows centroid M already recovering a meaningful 13-21% reduction on its own.
+| cal | centroid best | cluster best | degradation from dropping unlabeled |
+|-----|---------------|--------------|-------------------------------------|
+| 400 | none valid (5.46 @ .881) | 4.74 @ .890 | LARGE — centroid can't hold coverage; cluster ~15% smaller + valid |
+| 600 | 3.04 @ .890 | 2.85 @ .895 | ~6% larger sets without unlabeled |
+| 800 | 2.06 @ .910 | 2.08 @ .907 | ~0% — tie (centroid 1% smaller) |
+
+## Takeaways
+- **cal=800: unlabeled contributes ~nothing.** Cal-only centroid M matches/beats the
+  cluster M. ~8 samples/class -> reliable class centroids, clustering adds no info.
+- **cal=600: unlabeled buys ~6%** smaller sets + a little more coverage margin.
+- **cal=400: unlabeled earns its keep.** Cal-only centroid M can't reach valid
+  coverage (~4 samples/class centroids too noisy); cluster M stays valid (.890) with
+  ~15% smaller sets. The unlabeled pool is a small-calibration insurance policy: a
+  stable class-similarity prior when cal is too small to estimate one.
+
+**Caveat:** cal=400 is cal/K=4 < 5, where the non-exchangeable penalty is itself
+invalid (baseline already under-covers at .885). That row is partly entangled with
+the approximation; a `--exchangeable` re-run would sharpen it. Qualitative story
+(unlabeled matters only at small cal) holds. Note cal=800 baseline over-covers
+(.912) — the known stratified-split + ceiling-quantile effect, not a bug.
