@@ -143,7 +143,26 @@ def main():
     parser.add_argument("--unlabeled_per_class", type=int, default=40,
                         help="When carving unlabeled from labeled pool: samples per class.")
     parser.add_argument("--out_dir", type=str, default="output/class_similarity")
+    parser.add_argument("--dataset_tag", type=str, default=None,
+                        help="Dataset display name used in plot titles, summary headers, and "
+                             "PNG filename. Auto-derived from embeddings_path basename if omitted "
+                             "(e.g. embeddings_cifar10.pt -> CIFAR-10).")
     args = parser.parse_args()
+
+    # Resolve dataset tag for headers / filenames
+    _DISPLAY_NAMES = {
+        "cifar10": "CIFAR-10", "cifar100": "CIFAR-100",
+        "miniimagenet": "miniImageNet", "cub200": "CUB-200",
+        "flowers102": "Flowers-102", "stl10": "STL-10", "eurosat": "EuroSAT",
+    }
+    if args.dataset_tag is None:
+        stem = Path(args.embeddings_path).stem  # e.g. "embeddings_cifar10"
+        slug = stem.replace("embeddings_", "").replace("_test", "")
+        dataset_slug = slug
+        dataset_display = _DISPLAY_NAMES.get(slug, slug)
+    else:
+        dataset_slug = args.dataset_tag.lower().replace(" ", "_").replace("-", "")
+        dataset_display = _DISPLAY_NAMES.get(dataset_slug, args.dataset_tag)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -169,7 +188,7 @@ def main():
               f"from labeled pool as unlabeled.")
         print(f"  Remaining labeled pool: {X.shape[0]} samples.")
 
-    print(f"CIFAR-100: {X.shape}, {len(all_classes)} classes")
+    print(f"{dataset_display}: {X.shape}, {len(all_classes)} classes")
     print(f"Unlabeled: {X_unlabeled.shape}")
     print(f"NCM: {args.ncm}, alpha={args.alpha}, trials={args.n_trials}")
     print(f"PCA-{args.pca_dim}, AE-{args.ae_dim}")
@@ -267,14 +286,14 @@ def main():
 
     # --- Summary ---
     print(f"\n{'='*108}")
-    print(f"ABLATION: Reduction x MS-CS  (CIFAR-100, {args.ncm}, {args.n_trials} trials)")
+    print(f"ABLATION: Reduction x MS-CS  ({dataset_display}, {args.ncm}, {args.n_trials} trials)")
     print(f"{'='*108}")
     hdr = f"{'Cal':>6}  {'Method':>20}  {'Coverage':>18}  {'Set Size':>18}  {'Runtime (s)':>16}"
     print(hdr)
     print("-" * 108)
 
     summary_lines = [
-        f"CIFAR-100 Ablation: Reduction x MS-CS ({args.ncm}, alpha={args.alpha}, {args.n_trials} trials)",
+        f"{dataset_display} Ablation: Reduction x MS-CS ({args.ncm}, alpha={args.alpha}, {args.n_trials} trials)",
         f"PCA-{args.pca_dim}, AE-{args.ae_dim}, MS-CS: lambda={args.mscs_lambda}, "
         f"clusters={args.mscs_n_clusters}, tau={args.mscs_tau_mult}*median_d^2",
         "=" * 108, hdr, "-" * 108,
@@ -327,7 +346,7 @@ def main():
     }
 
     fig, axes = plt.subplots(3, 1, figsize=(10, 11), sharex=True)
-    fig.suptitle(f"CIFAR-100 — Ablation: Reduction × MS-CS ({args.ncm}, {args.n_trials} trials)",
+    fig.suptitle(f"{dataset_display} — Ablation: Reduction × MS-CS ({args.ncm}, {args.n_trials} trials)",
                  fontsize=13, fontweight="bold")
 
     for m_name in methods:
@@ -378,7 +397,7 @@ def main():
     axes[2].set_xticks(args.cal_sizes)
 
     plt.tight_layout()
-    plot_path = out_dir / "ablation_reduction_mscs_cifar100.png"
+    plot_path = out_dir / f"ablation_reduction_mscs_{dataset_slug}.png"
     plt.savefig(str(plot_path), dpi=150, bbox_inches="tight")
     plt.close()
     print(f"\nSaved: {plot_path}")
