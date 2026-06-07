@@ -9,21 +9,21 @@ This implementation provides:
 3. Optimizations: caching, vectorization, early stopping
 """
 
+import time
+from typing import Dict, Optional, Tuple
+
 import numpy as np
 import torch
-import time
-from typing import Tuple, Dict, List, Optional
 from tqdm import tqdm
-
 
 
 class NonconformityMeasure:
     """Base class for nonconformity measures."""
-    
+
     def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
         """Fit on calibration data."""
         raise NotImplementedError
-    
+
     def score(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
         """
         Compute nonconformity score for examples.
@@ -684,24 +684,36 @@ class RBFDensityNCM(NonconformityMeasure):
                  bandwidth_rule: str = "median",
                  sigma_scale: float = 1.0,
                  ratio: bool = False,
+                 same_agg: str = "sum",
+                 whiten: bool = False,
+                 reg: float = 1e-4,
                  eps_log: float = 1e-30):
         """
         Args:
             sigma: Kernel bandwidth. If None, set at fit() via bandwidth_rule.
             bandwidth_rule: 'median' (median pairwise dist), 'knn' (median dist to
                             k=10 NN), 'within_class_median' (median of same-class
-                            pairwise dist; exchangeable so long as labels are
-                            calibration-only).
+                            pairwise dist).
             sigma_scale: Multiplier on the auto-chosen sigma. 1.0 = use as-is.
-            ratio: If True, score = -log(Σ_same K) + log(Σ_other K) (log-odds).
-                   If False, score = -log(Σ_same K) (pure within-class density).
+            ratio: If True, score = -log(agg_same K) + log(Σ_other K) (log-odds).
+                   If False, score = -log(agg_same K) (within-class density only).
+            same_agg: 'sum' = log-sum-exp over all same-class neighbors (symmetric).
+                      'max' = 1-NN same class (asymmetric, mirrors geodesic_topk_asym).
+                      Same-class side uses 'max' helps efficiency by tightening the
+                      numerator on well-clustered features. Other side stays soft.
+            whiten: If True, apply pooled-within-class whitening before kernel dists.
+            reg: Whitening regularization floor.
             eps_log: Floor inside the log when a class has no neighbors at all.
         """
         self.sigma = sigma
         self.bandwidth_rule = bandwidth_rule
         self.sigma_scale = sigma_scale
         self.ratio = ratio
+        self.same_agg = same_agg
+        self.whiten = whiten
+        self.reg = reg
         self.eps_log = eps_log
+        self.inv_std_ = None
         # Fit state
         self.X_cal = None
         self.y_cal = None
@@ -764,11 +776,25 @@ class RBFDensityNCM(NonconformityMeasure):
         return out
 
     def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
-        self.X_cal = X_cal.astype(np.float64)
+        X_cal = X_cal.astype(np.float64)
         self.y_cal = np.asarray(y_cal)
         n_cal, _ = X_cal.shape
 
-        # --- Bandwidth ---
+        # --- Optional pooled whitening (LDA-style) ---
+        if self.whiten:
+            residuals = X_cal.copy()
+            for c in np.unique(self.y_cal):
+                idx = np.where(self.y_cal == c)[0]
+                residuals[idx] -= X_cal[idx].mean(axis=0)
+            pooled_var = (residuals ** 2).mean(axis=0)
+            adaptive_reg = max(self.reg, 0.01 * float(np.median(pooled_var)))
+            self.inv_std_ = 1.0 / np.sqrt(pooled_var + adaptive_reg)
+            self.X_cal = X_cal * self.inv_std_
+        else:
+            self.inv_std_ = None
+            self.X_cal = X_cal
+
+        # --- Bandwidth (computed on whitened space if whitened) ---
         if self.sigma is None:
             auto = self._auto_sigma(self.X_cal, self.y_cal, self.bandwidth_rule)
             self.sigma = max(auto * self.sigma_scale, 1e-6)
@@ -779,12 +805,20 @@ class RBFDensityNCM(NonconformityMeasure):
         self.logK_cal_ = -self.gamma_ * D2
         np.fill_diagonal(self.logK_cal_, -np.inf)
 
-        # --- Baseline within-class log-sum-exp ---
+        # --- Baseline same-class aggregate ---
+        # 'sum' => log Σ exp(logK)  (smooth/soft);
+        # 'max' => max logK (= -gamma * d²_1nn; asymmetric, 1-NN style).
         self.baseline_lse_same_ = np.full(n_cal, -np.inf)
         for c in np.unique(self.y_cal):
             idx = np.where(self.y_cal == c)[0]
             sub = self.logK_cal_[np.ix_(idx, idx)]
-            self.baseline_lse_same_[idx] = self._row_logsumexp(sub)
+            if self.same_agg == "sum":
+                self.baseline_lse_same_[idx] = self._row_logsumexp(sub)
+            elif self.same_agg == "max":
+                # max along axis=1 ignoring -inf diagonal naturally
+                self.baseline_lse_same_[idx] = sub.max(axis=1)
+            else:
+                raise ValueError(f"Unknown same_agg: {self.same_agg}")
 
         if self.ratio:
             # --- Baseline cross-class log-sum-exp ---
@@ -811,7 +845,8 @@ class RBFDensityNCM(NonconformityMeasure):
         """Return log K(x_test, x_j) for j in cal. Cached on x.ctypes.data."""
         key = x.ctypes.data
         if key != self._test_cache_key:
-            d2 = ((self.X_cal - x[None, :]) ** 2).sum(axis=1)
+            x_proj = x * self.inv_std_ if self.whiten else x
+            d2 = ((self.X_cal - x_proj[None, :]) ** 2).sum(axis=1)
             self._test_cache_k = -self.gamma_ * d2
             self._test_cache_key = key
         return self._test_cache_k
@@ -829,12 +864,17 @@ class RBFDensityNCM(NonconformityMeasure):
         mask_same = (self.y_cal == y)
         if not np.any(mask_same):
             return 1e9
-        lse_same = self._lse_vec(logk[mask_same])
+        if self.same_agg == "sum":
+            agg_same = self._lse_vec(logk[mask_same])
+        elif self.same_agg == "max":
+            agg_same = float(logk[mask_same].max())
+        else:
+            raise ValueError(f"Unknown same_agg: {self.same_agg}")
         if not self.ratio:
-            return float(-lse_same)
+            return float(-agg_same)
         mask_other = ~mask_same
         lse_other = self._lse_vec(logk[mask_other]) if np.any(mask_other) else -np.inf
-        return float(-lse_same + (lse_other if np.isfinite(lse_other) else np.log(self.eps_log)))
+        return float(-agg_same + (lse_other if np.isfinite(lse_other) else np.log(self.eps_log)))
 
     def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
         """Augmented cal scores after adding (x, y).
@@ -849,8 +889,15 @@ class RBFDensityNCM(NonconformityMeasure):
 
         new_lse_same = self.baseline_lse_same_.copy()
         if len(idx_same) > 0:
-            new_lse_same[idx_same] = np.logaddexp(
-                self.baseline_lse_same_[idx_same], logk[idx_same])
+            if self.same_agg == "sum":
+                new_lse_same[idx_same] = np.logaddexp(
+                    self.baseline_lse_same_[idx_same], logk[idx_same])
+            elif self.same_agg == "max":
+                # 1-NN update: new max is max(old, K(x_i, x_test))
+                new_lse_same[idx_same] = np.maximum(
+                    self.baseline_lse_same_[idx_same], logk[idx_same])
+            else:
+                raise ValueError(f"Unknown same_agg: {self.same_agg}")
 
         if not self.ratio:
             scores = -new_lse_same
@@ -959,7 +1006,7 @@ class FullConformalPredictor:
         self.y_cal = None
         self.classes = None
         self.cal_scores = None  # Cached calibration scores
-        
+
     def calibrate(self, X_cal: np.ndarray, y_cal: np.ndarray,
                   all_classes: np.ndarray = None):
         """
@@ -976,26 +1023,26 @@ class FullConformalPredictor:
         self.classes = np.unique(all_classes) if all_classes is not None else np.unique(y_cal)
 
         # Fit nonconformity measure
-        start_time = time.time()
+        t0 = time.time()
         self.ncm.fit(X_cal, y_cal)
-        fit_time = time.time() - start_time
+        fit_time = time.time() - t0
 
-        # Compute and cache calibration scores
-        start_time = time.time()
-        # Try new API first (get_calibration_scores), fallback to legacy (score)
+        # Compute and cache calibration scores (new API; fallback to legacy .score)
+        t0 = time.time()
         try:
             self.cal_scores = self.ncm.get_calibration_scores()
         except (AttributeError, NotImplementedError):
-            # Fallback for legacy NCMs
             self.cal_scores = self.ncm.score(X_cal, y_cal)
-        score_time = time.time() - start_time
+        score_time = time.time() - t0
 
         cal_classes = np.unique(y_cal)
-        print(f"Calibrated with {len(X_cal)} examples, {len(cal_classes)} cal classes, {len(self.classes)} candidate classes")
-        print(f"Calibration scores (base) - min: {self.cal_scores.min():.4f}, max: {self.cal_scores.max():.4f}, mean: {self.cal_scores.mean():.4f}, std: {self.cal_scores.std():.4f}")
+        s = self.cal_scores
+        print(f"Calibrated with {len(X_cal)} examples, {len(cal_classes)} cal classes, "
+              f"{len(self.classes)} candidate classes")
+        print(f"Calibration scores (base) - min: {s.min():.4f}, max: {s.max():.4f}, "
+              f"mean: {s.mean():.4f}, std: {s.std():.4f}")
         print(f"Timing: fit={fit_time:.2f}s, score_cal={score_time:.2f}s")
 
-    
     def predict(
         self,
         X_test: np.ndarray,
@@ -1036,16 +1083,14 @@ class FullConformalPredictor:
         start_time = time.time()
         n_test = len(X_test)
         n_cal = len(self.X_cal)
-        
+
         prediction_sets = []
         set_sizes = []
         all_p_values = [] if return_p_values else None
-        
-        # Debug: track empty sets
         empty_count = 0
-        
+
         iterator = tqdm(range(n_test), desc="Full CP") if verbose else range(n_test)
-        
+
         for i in iterator:
             x_test = X_test[i]
             pred_set = []
@@ -1079,28 +1124,27 @@ class FullConformalPredictor:
             prediction_sets.append(pred_set)
             set_sizes.append(len(pred_set))
 
-            # Only return p_values if requested
             if return_p_values:
                 all_p_values.append(p_vals)
-        
-        # Warn about empty sets
+
         if empty_count > 0 and verbose:
-            print(f"\n⚠️  Warning: {empty_count}/{n_test} prediction sets are empty!")
-            print(f"   Consider increasing alpha (current: {self.alpha}) or checking your data.")
-        
+            print(f"\nWarning: {empty_count}/{n_test} prediction sets are empty!")
+            print(f"  Consider increasing alpha (current: {self.alpha}) or checking your data.")
+
         prediction_time = time.time() - start_time
-        
+
         results = {
             'prediction_sets': prediction_sets,
             'set_sizes': np.array(set_sizes),
-            'prediction_time': prediction_time
+            'prediction_time': prediction_time,
         }
-        
+
         if return_p_values:
             results['p_values'] = all_p_values
-        
+
         if verbose:
-            print(f"\nPrediction time: {prediction_time:.2f}s ({prediction_time/n_test*1000:.1f}ms per sample)")
+            print(f"\nPrediction time: {prediction_time:.2f}s "
+                  f"({prediction_time / n_test * 1000:.1f}ms per sample)")
 
         return results
 
@@ -1300,8 +1344,8 @@ class FullConformalPredictor:
             set_sizes[i] = len(pred_set)
 
         if empty_count > 0 and verbose:
-            print(f"\n⚠️  Warning: {empty_count}/{n_test} prediction sets are empty!")
-            print(f"   Consider increasing alpha (current: {self.alpha}) or checking your data.")
+            print(f"\nWarning: {empty_count}/{n_test} prediction sets are empty!")
+            print(f"  Consider increasing alpha (current: {self.alpha}) or checking your data.")
 
         prediction_time = time.time() - start_time
 
@@ -1319,7 +1363,7 @@ class FullConformalPredictor:
 
         if verbose:
             print(f"\nGPU FCP prediction time: {prediction_time:.2f}s "
-                  f"({prediction_time/n_test*1000:.2f}ms per sample)")
+                  f"({prediction_time / n_test * 1000:.2f}ms per sample)")
 
         return results
 
@@ -1331,23 +1375,21 @@ class FullConformalPredictor:
     ) -> Dict:
         """
         Evaluate conformal prediction on test set.
-        
+
         Returns:
             Dictionary with coverage, efficiency metrics
         """
         results = self.predict(X_test, return_p_values=False, verbose=verbose)
         prediction_sets = results['prediction_sets']
         set_sizes = results['set_sizes']
-        
+
         # Coverage: fraction of times true label is in prediction set
         coverage = np.mean([
             y_test[i] in pred_set
             for i, pred_set in enumerate(prediction_sets)
         ])
-        
-        # Efficiency: average prediction set size
         avg_set_size = np.mean(set_sizes)
-        
+
         # Singleton accuracy: accuracy when |prediction_set| = 1
         singleton_mask = set_sizes == 1
         if singleton_mask.sum() > 0:
@@ -1359,10 +1401,9 @@ class FullConformalPredictor:
         else:
             singleton_correct = 0.0
             singleton_rate = 0.0
-        
-        # Empty set rate (should be 0 ideally)
+
         empty_rate = np.mean(set_sizes == 0)
-        
+
         metrics = {
             'coverage': coverage,
             'avg_set_size': avg_set_size,
@@ -1371,14 +1412,14 @@ class FullConformalPredictor:
             'singleton_accuracy': singleton_correct,
             'empty_set_rate': empty_rate,
             'alpha': self.alpha,
-            'target_coverage': 1 - self.alpha
+            'target_coverage': 1 - self.alpha,
         }
-        
+
         if verbose:
-            print("\n" + "="*50)
+            print("\n" + "=" * 50)
             print("CONFORMAL PREDICTION EVALUATION")
-            print("="*50)
-            print(f"Significance level (α):        {metrics['alpha']:.3f}")
+            print("=" * 50)
+            print(f"Significance level (alpha):    {metrics['alpha']:.3f}")
             print(f"Target coverage:               {metrics['target_coverage']:.3f}")
             print(f"Actual coverage:               {metrics['coverage']:.3f}")
             print(f"Average set size:              {metrics['avg_set_size']:.3f}")
@@ -1386,14 +1427,14 @@ class FullConformalPredictor:
             print(f"Singleton rate:                {metrics['singleton_rate']:.3f}")
             print(f"Singleton accuracy:            {metrics['singleton_accuracy']:.3f}")
             print(f"Empty set rate:                {metrics['empty_set_rate']:.3f}")
-            print("="*50)
-        
+            print("=" * 50)
+
         return metrics
 
 
 def compute_cp_scores(probs: np.ndarray, y_indices: np.ndarray,
-                       score_fn: str = "APS",
-                       k_reg: int = 5, lambda_raps: float = 0.01) -> np.ndarray:
+                      score_fn: str = "APS",
+                      k_reg: int = 5, lambda_raps: float = 0.01) -> np.ndarray:
     """
     Compute conformal prediction scores for a batch of examples.
 
@@ -1407,32 +1448,27 @@ def compute_cp_scores(probs: np.ndarray, y_indices: np.ndarray,
     Returns:
         scores: (n,) nonconformity scores (higher = less conforming)
     """
-    n, K = probs.shape
+    n = probs.shape[0]
     scores = np.zeros(n)
 
     if score_fn == "THR":
         for i in range(n):
             scores[i] = 1.0 - probs[i, y_indices[i]]
+        return scores
 
-    elif score_fn in ("APS", "RAPS"):
+    if score_fn in ("APS", "RAPS"):
         for i in range(n):
-            # Sort class probabilities descending
             sorted_idx = np.argsort(-probs[i])
-            cumsum = 0.0
-            rank = 0
-            for j, idx in enumerate(sorted_idx):
-                cumsum += probs[i, idx]
-                rank = j + 1  # 1-based rank
-                if idx == y_indices[i]:
-                    break
+            # rank of y in the descending order (1-based)
+            rank = int(np.where(sorted_idx == y_indices[i])[0][0]) + 1
             # APS score = cumulative probability up to and including y's position
+            cumsum = float(probs[i, sorted_idx[:rank]].sum())
             scores[i] = cumsum
             if score_fn == "RAPS":
                 scores[i] += lambda_raps * max(0, rank - k_reg)
-    else:
-        raise ValueError(f"Unknown score_fn: {score_fn}. Use 'THR', 'APS', or 'RAPS'.")
+        return scores
 
-    return scores
+    raise ValueError(f"Unknown score_fn: {score_fn}. Use 'THR', 'APS', or 'RAPS'.")
 
 
 def compute_cp_sets(probs: np.ndarray, q_hat: float,
@@ -1459,8 +1495,9 @@ def compute_cp_sets(probs: np.ndarray, q_hat: float,
         for i in range(n):
             pred_set = [c for c in range(K) if probs[i, c] >= threshold]
             prediction_sets.append(pred_set)
+        return prediction_sets
 
-    elif score_fn in ("APS", "RAPS"):
+    if score_fn in ("APS", "RAPS"):
         for i in range(n):
             sorted_idx = np.argsort(-probs[i])
             cumsum = 0.0
@@ -1475,32 +1512,31 @@ def compute_cp_sets(probs: np.ndarray, q_hat: float,
                 if score > q_hat:
                     break
             prediction_sets.append(pred_set)
-    else:
-        raise ValueError(f"Unknown score_fn: {score_fn}")
+        return prediction_sets
 
-    return prediction_sets
+    raise ValueError(f"Unknown score_fn: {score_fn}")
 
 
 class SoftmaxSplitCP:
     """
     Naive Softmax Split Conformal Prediction baseline.
-    
+
     This is the standard "control" baseline for conformal prediction experiments.
     It uses a trained classifier's softmax probabilities as confidence scores.
-    
+
     Protocol:
     1. Split data into D_train, D_calib, D_test
     2. Train a classifier (logistic regression) on D_train
     3. For each sample in D_calib: score s_i = 1 - p(y_true | x_i)
     4. Find quantile q at level (1 - alpha) * (n_cal + 1) / n_cal
     5. For test point x: prediction set = {y : 1 - p(y|x) <= q}
-    
+
     This baseline represents what you get with a standard classifier + CP,
     without the sophisticated nonconformity measures used in Full CP.
-    
+
     Reference: Shafer & Vovk (2008), Romano et al. (2020)
     """
-    
+
     def __init__(self, alpha: float = 0.1, max_iter: int = 1000):
         """
         Args:
@@ -1514,34 +1550,33 @@ class SoftmaxSplitCP:
         self.q_hat = None  # Calibration quantile
         self.classes = None
         self.cal_scores = None
-        
+
     def fit(self, X_train: np.ndarray, y_train: np.ndarray):
         """
         Train the softmax classifier on training data.
-        
+
         Args:
             X_train: Training features (n_train, d)
             y_train: Training labels (n_train,)
         """
         from sklearn.linear_model import LogisticRegression
         from sklearn.preprocessing import StandardScaler
-        
+
         self.classes = np.unique(y_train)
-        
+
         # Standardize features for better convergence
         self.scaler = StandardScaler()
         X_train_scaled = self.scaler.fit_transform(X_train)
-        
-        # Train logistic regression with softmax
+
         self.classifier = LogisticRegression(
-            max_iter=self.max_iter,
-            solver='lbfgs',
-            random_state=42
+            max_iter=self.max_iter, solver='lbfgs', random_state=42,
         )
         self.classifier.fit(X_train_scaled, y_train)
-        
-        print(f"Trained softmax classifier on {len(X_train)} examples, {len(self.classes)} classes")
-    
+
+        print(f"Trained softmax classifier on {len(X_train)} examples, "
+              f"{len(self.classes)} classes")
+
+
     def calibrate(self, X_cal: np.ndarray, y_cal: np.ndarray,
                   all_classes: np.ndarray = None):
         """
@@ -1561,33 +1596,24 @@ class SoftmaxSplitCP:
         self._all_classes = all_classes  # store for predict()
 
         X_cal_scaled = self.scaler.transform(X_cal)
-
-        # Get softmax probabilities
         probs = self.classifier.predict_proba(X_cal_scaled)
 
-        # Compute nonconformity scores: s_i = 1 - p(y_true | x_i)
-        # Need to map y_cal labels to classifier's class indices
+        # Score: s_i = 1 - p(y_true | x_i); unknown classes get max nonconformity (1.0).
         class_to_idx = {c: i for i, c in enumerate(self.classifier.classes_)}
+        self.cal_scores = np.array([
+            1.0 - prob[class_to_idx[y_true]] if y_true in class_to_idx else 1.0
+            for prob, y_true in zip(probs, y_cal)
+        ])
 
-        self.cal_scores = np.zeros(len(y_cal))
-        for i, (prob, y_true) in enumerate(zip(probs, y_cal)):
-            if y_true in class_to_idx:
-                self.cal_scores[i] = 1.0 - prob[class_to_idx[y_true]]
-            else:
-                # Unknown class - assign max nonconformity
-                self.cal_scores[i] = 1.0
-
-        # Compute quantile at level (1 - alpha) * (n + 1) / n
-        # This is the finite-sample correction for split CP
+        # Finite-sample-corrected quantile level for split CP.
         n_cal = len(y_cal)
-        quantile_level = np.ceil((n_cal + 1) * (1 - self.alpha)) / n_cal
-        quantile_level = min(quantile_level, 1.0)  # Cap at 1.0
-
+        quantile_level = min(np.ceil((n_cal + 1) * (1 - self.alpha)) / n_cal, 1.0)
         self.q_hat = np.quantile(self.cal_scores, quantile_level)
 
+        s = self.cal_scores
         print(f"Calibrated on {n_cal} examples")
-        print(f"Calibration scores - min: {self.cal_scores.min():.4f}, max: {self.cal_scores.max():.4f}, "
-              f"mean: {self.cal_scores.mean():.4f}, std: {self.cal_scores.std():.4f}")
+        print(f"Calibration scores - min: {s.min():.4f}, max: {s.max():.4f}, "
+              f"mean: {s.mean():.4f}, std: {s.std():.4f}")
         print(f"Quantile threshold q_hat: {self.q_hat:.4f} (at level {quantile_level:.4f})")
 
     def predict(self, X_test: np.ndarray, return_p_values: bool = False) -> Dict:
@@ -1651,47 +1677,37 @@ class SoftmaxSplitCP:
     def evaluate(self, X_test: np.ndarray, y_test: np.ndarray, verbose: bool = True) -> Dict:
         """
         Evaluate prediction sets on test data.
-        
+
         Args:
             X_test: Test features
             y_test: True test labels
             verbose: Print results
-            
+
         Returns:
             Dict with coverage, set sizes, and other metrics
         """
         predictions = self.predict(X_test)
         pred_sets = predictions['prediction_sets']
-        
         n_test = len(y_test)
-        
-        # Coverage: fraction of test examples where true label is in prediction set
+
         covered = sum(1 for i, ps in enumerate(pred_sets) if y_test[i] in ps)
         coverage = covered / n_test
-        
-        # Set sizes
+
         set_sizes = [len(ps) for ps in pred_sets]
         avg_set_size = np.mean(set_sizes)
         median_set_size = np.median(set_sizes)
-        
-        # Additional metrics
+
         singleton_count = sum(1 for ps in pred_sets if len(ps) == 1)
         singleton_rate = singleton_count / n_test
-        
-        # Singleton accuracy: among singletons, how many are correct
-        singleton_correct = sum(1 for i, ps in enumerate(pred_sets) 
-                               if len(ps) == 1 and y_test[i] in ps)
+        singleton_correct = sum(1 for i, ps in enumerate(pred_sets)
+                                if len(ps) == 1 and y_test[i] in ps)
         singleton_accuracy = singleton_correct / singleton_count if singleton_count > 0 else 0.0
-        
-        # Empty set rate
-        empty_count = sum(1 for ps in pred_sets if len(ps) == 0)
-        empty_set_rate = empty_count / n_test
-        
-        # Classifier accuracy (top-1)
+
+        empty_set_rate = sum(1 for ps in pred_sets if len(ps) == 0) / n_test
+
         X_test_scaled = self.scaler.transform(X_test)
-        y_pred = self.classifier.predict(X_test_scaled)
-        classifier_accuracy = np.mean(y_pred == y_test)
-        
+        classifier_accuracy = float(np.mean(self.classifier.predict(X_test_scaled) == y_test))
+
         metrics = {
             'coverage': coverage,
             'avg_set_size': avg_set_size,
@@ -1702,13 +1718,13 @@ class SoftmaxSplitCP:
             'classifier_accuracy': classifier_accuracy,
             'set_sizes': set_sizes,
         }
-        
+
         if verbose:
-            print("\n" + "="*50)
+            print("\n" + "=" * 50)
             print("SOFTMAX SPLIT CP EVALUATION")
-            print("="*50)
+            print("=" * 50)
             print(f"Test examples:                 {n_test}")
-            print(f"Target coverage (1-α):         {1-self.alpha:.3f}")
+            print(f"Target coverage (1-alpha):     {1 - self.alpha:.3f}")
             print(f"Achieved coverage:             {coverage:.3f}")
             print(f"Average set size:              {avg_set_size:.2f}")
             print(f"Median set size:               {median_set_size:.1f}")
@@ -1716,8 +1732,8 @@ class SoftmaxSplitCP:
             print(f"Singleton accuracy:            {singleton_accuracy:.3f}")
             print(f"Empty set rate:                {empty_set_rate:.3f}")
             print(f"Classifier accuracy (top-1):   {classifier_accuracy:.3f}")
-            print("="*50)
-        
+            print("=" * 50)
+
         return metrics
 
 
@@ -2345,6 +2361,7 @@ class CrossValidationPlusPredictor:
         start_time = time.time()
         n_test = len(X_test)
         n_cal = len(self.X_cal)
+        n_folds = self._actual_folds
 
         prediction_sets = []
         set_sizes = []
@@ -2356,36 +2373,35 @@ class CrossValidationPlusPredictor:
         for i in iterator:
             x_test = X_test[i]
             pred_set = []
+            # We always populate p_vals so the verbose empty-set warning can
+            # report the best (max) p-value; only emit it when requested.
             p_vals = {}
 
-            # Compute test score under each fold's NCM (shared across labels? no - depends on y)
             for y_candidate in self.classes:
+                yc = int(y_candidate)
                 # K test scores, one per fold NCM
-                n_folds = self._actual_folds
-                test_scores_per_fold = np.zeros(n_folds)
-                for k in range(n_folds):
-                    test_scores_per_fold[k] = self.fold_ncms[k].score_x_cv(
-                        x_test, int(y_candidate)
-                    )
+                test_scores_per_fold = np.array([
+                    self.fold_ncms[k].score_x_cv(x_test, yc) for k in range(n_folds)
+                ])
 
                 # Vectorised CV+ comparison:
-                # For each cal point i in fold k(i), compare R_i >= R_test^{k(i)}
+                # For each cal point j in fold k(j), compare R_j >= R_test^{k(j)}.
                 test_score_per_cal = test_scores_per_fold[self.fold_assignments]
                 n_greater = np.sum(self.cal_scores >= test_score_per_cal)
 
                 p_value = (n_greater + 1) / (n_cal + 1)
-                p_vals[int(y_candidate)] = p_value
+                p_vals[yc] = p_value
 
                 if p_value > self.alpha:
-                    pred_set.append(int(y_candidate))
+                    pred_set.append(yc)
 
             if len(pred_set) == 0:
                 empty_count += 1
                 if empty_count <= 3 and verbose:
-                    best_p = max(p_vals.values())
                     best_class = max(p_vals, key=p_vals.get)
                     print(f"\nWarning: Empty prediction set for test example {i}")
-                    print(f"  Best p-value: {best_p:.4f} (class {best_class}), alpha: {self.alpha}")
+                    print(f"  Best p-value: {p_vals[best_class]:.4f} (class {best_class}), "
+                          f"alpha: {self.alpha}")
 
             prediction_sets.append(pred_set)
             set_sizes.append(len(pred_set))
@@ -2401,7 +2417,7 @@ class CrossValidationPlusPredictor:
         results = {
             'prediction_sets': prediction_sets,
             'set_sizes': np.array(set_sizes),
-            'prediction_time': prediction_time
+            'prediction_time': prediction_time,
         }
 
         if return_p_values:
@@ -2529,43 +2545,36 @@ def train_cal_test_split(
 ) -> Tuple:
     """
     Split data into train/calibration/test sets for Split CP.
-    
+
     This is needed for SoftmaxSplitCP which requires a training set
     (unlike Full CP which only needs calibration + test).
-    
+
     Args:
         embeddings: Feature vectors (n, d)
         labels: Labels (n,)
         train_ratio: Fraction for training
         cal_ratio: Fraction for calibration (rest goes to test)
         random_state: Random seed
-        
+
     Returns:
         (X_train, y_train, X_cal, y_cal, X_test, y_test)
     """
     np.random.seed(random_state)
     n = len(embeddings)
-    
-    # Generate random permutation
     indices = np.random.permutation(n)
-    
-    # Calculate split points
+
     n_train = int(n * train_ratio)
     n_cal = int(n * cal_ratio)
-    
+
     train_idx = indices[:n_train]
     cal_idx = indices[n_train:n_train + n_cal]
     test_idx = indices[n_train + n_cal:]
-    
-    X_train = embeddings[train_idx]
-    y_train = labels[train_idx]
-    X_cal = embeddings[cal_idx]
-    y_cal = labels[cal_idx]
-    X_test = embeddings[test_idx]
-    y_test = labels[test_idx]
-    
+
+    X_train, y_train = embeddings[train_idx], labels[train_idx]
+    X_cal, y_cal = embeddings[cal_idx], labels[cal_idx]
+    X_test, y_test = embeddings[test_idx], labels[test_idx]
+
     print(f"Split: Train={len(X_train)}, Cal={len(X_cal)}, Test={len(X_test)}")
-    
     return X_train, y_train, X_cal, y_cal, X_test, y_test
 
 
@@ -2577,38 +2586,31 @@ def cal_test_split(
 ) -> Tuple:
     """
     Split data into calibration/test sets for Full CP.
-    
+
     Note: Full CP doesn't require a separate training set.
     We work directly with calibration data and test data.
-    
+
     Args:
         embeddings: Feature vectors (n, d)
         labels: Labels (n,)
         cal_ratio: Fraction for calibration (rest goes to test)
         random_state: Random seed
-        
+
     Returns:
         (X_cal, y_cal, X_test, y_test)
     """
     np.random.seed(random_state)
     n = len(embeddings)
-    
-    # Generate random permutation
     indices = np.random.permutation(n)
-    
-    # Calculate split point
     n_cal = int(n * cal_ratio)
-    
+
     cal_idx = indices[:n_cal]
     test_idx = indices[n_cal:]
-    
-    X_cal = embeddings[cal_idx]
-    y_cal = labels[cal_idx]
-    X_test = embeddings[test_idx]
-    y_test = labels[test_idx]
-    
-    print(f"Split: Cal={len(X_cal)}, Test={len(X_test)}")
 
+    X_cal, y_cal = embeddings[cal_idx], labels[cal_idx]
+    X_test, y_test = embeddings[test_idx], labels[test_idx]
+
+    print(f"Split: Cal={len(X_cal)}, Test={len(X_test)}")
     return X_cal, y_cal, X_test, y_test
 
 
