@@ -52,3 +52,35 @@ invalid (baseline already under-covers at .885). That row is partly entangled wi
 the approximation; a `--exchangeable` re-run would sharpen it. Qualitative story
 (unlabeled matters only at small cal) holds. Note cal=800 baseline over-covers
 (.912) — the known stratified-split + ceiling-quantile effect, not a bug.
+
+## Small-cal extension (cal=200, 300) — unlabeled contribution grows
+
+Non-exchangeable, so coverage is INVALID here (cal/K = 2-3; even lam=0 under-covers).
+Sizes are still informative about the relative unlabeled contribution.
+
+| cal | baseline | centroid best λ | cluster best λ |
+|-----|----------|-----------------|----------------|
+| 200 | 29.40, .843 | 28.96 (λ.10, .847) — barely moves | 20.03 (λ.10, .835) — −32% |
+| 300 | 10.85, .875 | 8.04 (λ.10, .865) | 5.87 (λ.10, .868) — ~2× the reduction |
+
+At cal=200 the cal-only centroid M is nearly useless (centroids from ~2 samples/class
+are noise) while the unlabeled-cluster M still cuts a third — the "unlabeled =
+small-cal insurance" story strengthens as cal shrinks.
+
+## y_hat: variant A (NCM argmax top-k sim) vs legacy raw 1-NN
+
+5 trials, cluster MS-CS, identical splits, geodesic_topk_mean. Best valid (cov>=.89):
+
+| cal | variant A (ncm) | 1nn (legacy) | winner |
+|-----|-----------------|--------------|--------|
+| 400 | 3.84 @ .893 (λ.10) | 4.74 @ .890 (λ.03) | A, −19% |
+| 600 | 2.79 @ .892 (λ.05) | 2.85 @ .895 (λ.10) | A (−6% at matched λ.05) |
+| 800 | 2.06 @ .908 (λ.05) | 2.08 @ .907 (λ.05) | tie |
+
+Variant A wins or ties everywhere over 5 trials (a single split had 1nn ahead — noise).
+Mechanism: the more accurate ŷ keeps the true class unpenalized more reliably
+(ŷ=y* more often → zero penalty on the truth), so coverage holds even at λ=0.10,
+letting the penalty prune harder for smaller *valid* sets. Biggest gain at small cal.
+Variant A is now the default (`--yhat_mode ncm`); `--yhat_mode 1nn` keeps the legacy
+path for A/B. Implementation: GeodesicTopKMeanNCM.predict_class /
+predict_class_augmented_cal / _ensure_cal_yhat (no raw distance matrices).
