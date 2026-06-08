@@ -120,3 +120,33 @@ Takeaways under the new y_hat:
   `--exchangeable` for a coverage-valid result.
 
 Logs: output/mscs_centroid_contrib/comprehensive_{cluster,centroid}_ncm.log
+
+## Exchangeable pass for cal<=400 — does it restore small-cal validity? NO.
+
+Ran cluster + centroid MS-CS with --exchangeable, new y_hat, cal=200/300/400,
+5 trials. Key finding: **exchangeability does NOT fix the cal=200/300 under-coverage.**
+
+CLUSTER, exch vs non-exch (best per cal):
+
+| cal | baseline cov | non-exch best | exch best | valid? |
+|-----|--------------|---------------|-----------|--------|
+| 200 | .843 | 19.84 (λ.10, .836) | 22.51 (λ.10, .841) | both INVALID |
+| 300 | .875 | 5.61 (λ.10, .865)  | 6.32 (λ.10, .868)  | both INVALID |
+| 400 | .885 | 3.84 (λ.10, .893)  | 4.08 (λ.10, .895)  | both valid; non-exch tighter |
+
+Why: the lam=0 plain-FCP **baseline itself under-covers** at cal=200 (.843) and
+cal=300 (.875) — identical in both runs since lam=0 short-circuits to plain FCP.
+The MS-CS penalty (exchangeable or not) only re-ranks scores; it cannot lift the
+base predictor's coverage. So the small-cal under-coverage is a property of FCP at
+cal/K <= 3 (noisy 768-d whitening + adaptive k=2 + ~2 same-class scores per test
+point), NOT an artifact of the non-exchangeable penalty.
+
+Exchangeable is simply more conservative: marginally larger sets + marginally
+higher coverage at every cell, but it never crosses the validity threshold at
+cal=200/300, and at cal=400 it is slightly worse than non-exch (4.08 vs 3.84, both
+valid). Centroid exch at cal=200 even *grows* sets with lam (29.4->32.3) — a useless
+M (centroids from ~2 samples/class) injects noise the penalty can only amplify.
+
+Correction to earlier note: the right lever for small-cal validity is the BASE
+predictor (e.g. PCA-128 to denoise the whitening), not penalty exchangeability.
+Logs: output/mscs_centroid_contrib/exch_{cluster,centroid}_ncm.log
