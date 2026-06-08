@@ -548,8 +548,7 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
         k    = self.k
         mask_same  = (self.y_cal == y)
         mask_other = ~mask_same
-        if not np.any(mask_same):
-            return 1e9
+        has_same = bool(np.any(mask_same))
 
         def _topk_scalar(sim_arr):
             ke = min(k, len(sim_arr))
@@ -558,13 +557,19 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
             top = sim_arr[np.argpartition(sim_arr, -ke)[-ke:]] if ke < len(sim_arr) else sim_arr
             return float(top.sum()), float(ke)
 
-        # Same-class
+        # Same-class. When y is ABSENT from cal (no same-class neighbour) use the
+        # SAME zero-neighbour convention fit() applies to a sole-member cal class
+        # (topk: sum=0,k_eff=0 -> arccos(0)=pi/2; 1-NN: max_sim=-1 -> arccos(-1)=pi).
+        # This keeps a test point and a cal point in the identical situation
+        # EXCHANGEABLE. The old `return 1e9` made a test point whose class is
+        # missing from cal non-exchangeable with cal points, which under-covered
+        # coverage whenever classes were absent from cal (small-cal regime).
         if self.topk_same:
-            sum_s, ke_s = _topk_scalar(sims[mask_same])
+            sum_s, ke_s = _topk_scalar(sims[mask_same]) if has_same else (0.0, 0.0)
             max_s = None
         else:
             sum_s = ke_s = None
-            max_s = float(np.max(sims[mask_same]))
+            max_s = float(np.max(sims[mask_same])) if has_same else -1.0
 
         # Other-class
         if not self.numerator_only and np.any(mask_other):
