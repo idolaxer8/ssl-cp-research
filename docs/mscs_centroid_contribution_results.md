@@ -84,3 +84,39 @@ letting the penalty prune harder for smaller *valid* sets. Biggest gain at small
 Variant A is now the default (`--yhat_mode ncm`); `--yhat_mode 1nn` keeps the legacy
 path for A/B. Implementation: GeodesicTopKMeanNCM.predict_class /
 predict_class_augmented_cal / _ensure_cal_yhat (no raw distance matrices).
+
+## Comprehensive cal=200–800, MS-CS with variant-A y_hat (5 trials)
+
+CIFAR-100, 518 embeddings, geodesic_topk_mean, `--yhat_mode ncm`, test=300,
+n_clusters=20, tau=0.5*median_d^2, non-exchangeable, lam in {0,.02,.03,.05,.10}.
+(* = coverage invalid: cal/K < 5, non-exchangeable; even the lam=0 baseline
+under-covers there.)
+
+CLUSTER MS-CS (k-means on 10K unlabeled), best valid (cov >= .89, else best size):
+
+| cal | baseline (lam0) | best MS-CS | reduction |
+|-----|-----------------|------------|-----------|
+| 200 | 29.40 (.843*) | 19.84 (λ.10, .836*) | 33%* |
+| 300 | 10.85 (.875*) | 5.61 (λ.10, .865*)  | 48%* |
+| 400 | 5.87 (.885*)  | 3.84 (λ.10, .893)   | 35% |
+| 600 | 3.50 (.895)   | 2.79 (λ.05, .892)   | 20% |
+| 800 | 2.49 (.912)   | 2.06 (λ.05, .908)   | 17% |
+
+CENTROID (cal-only) best:
+
+| cal | best | note |
+|-----|------|------|
+| 800 | 2.00 (λ.10, .906) | edges cluster (2.06) — unlabeled redundant |
+| 600 | 3.31 (λ.02, .889) | under-covers for λ>=.03; cluster (2.79) clearly better+valid |
+| <=400 | barely moves | invalid; cluster cuts much more |
+
+Takeaways under the new y_hat:
+- **cal=800: unlabeled REDUNDANT** — centroid (2.00) even slightly beats cluster (2.06).
+- **cal=600: unlabeled HELPS** — cluster holds valid coverage at 2.79; centroid under-covers.
+- **cal<=400: unlabeled ESSENTIAL** — centroid nearly useless.
+- **vs legacy 1nn**: variant A improves cluster best-valid at cal=400 (4.74->3.84, −19%),
+  cal=600 (2.85->2.79), cal=800 tie — gain concentrated at small cal.
+- Only cal>=600 (and cal=400 at λ.10) hold valid coverage; cal=200/300 need
+  `--exchangeable` for a coverage-valid result.
+
+Logs: output/mscs_centroid_contrib/comprehensive_{cluster,centroid}_ncm.log
