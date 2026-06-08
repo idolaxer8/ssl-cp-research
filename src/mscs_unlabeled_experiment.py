@@ -249,8 +249,14 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
 
-    # Map class labels to indices in M
+    # Map class labels to indices in M (dict + vectorized lookup array;
+    # labels are small non-negative ints, so an array map is exact and fast).
     class_to_idx = {int(c): i for i, c in enumerate(all_classes)}
+    _maxlbl = int(max(int(c) for c in all_classes))
+    lbl2col = np.zeros(_maxlbl + 1, dtype=np.int64)
+    for c in all_classes:
+        lbl2col[int(c)] = class_to_idx[int(c)]
+    cal_row_idx = lbl2col[y_cal.astype(np.int64)]   # M row (true label) per cal pt
 
     # --- y_hat machinery: NCM-consistent (variant A) or legacy raw 1-NN ---
     n_cal = len(X_cal)
@@ -270,11 +276,7 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
         D_test_cal = euclidean_distances(X_test, X_cal)
 
     # Base cal penalty (used when exchangeable=False, or as starting point)
-    cal_penalty_base = np.zeros(n_cal)
-    for i in range(n_cal):
-        ci = class_to_idx[int(y_cal[i])]
-        cj = class_to_idx[int(cal_y_hat[i])]
-        cal_penalty_base[i] = lam * (1.0 - M[ci, cj])
+    cal_penalty_base = lam * (1.0 - M[cal_row_idx, lbl2col[cal_y_hat.astype(np.int64)]])
 
     # --- Predict with MS-CS penalty on test scores ---
     n_test = len(X_test)
@@ -311,13 +313,10 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                 # 2. Update cal y_hat for the augmented set {cal} u {(x_test, yc)}
                 if use_ncm_yhat:
                     # variant A: x_test (label yc) can only raise each cal point's
-                    # top-k sim to class yc; O(n_cal) exact update.
+                    # top-k sim to class yc; O(n_cal) exact, vectorized update.
                     cal_yhat_aug = cp.ncm.predict_class_augmented_cal(x_test, yc)
-                    cal_penalty = np.array([
-                        lam * (1.0 - M_aug[class_to_idx[int(y_cal[j])],
-                                           class_to_idx[int(cal_yhat_aug[j])]])
-                        for j in range(n_cal)
-                    ])
+                    cal_penalty = lam * (1.0 - M_aug[
+                        cal_row_idx, lbl2col[cal_yhat_aug.astype(np.int64)]])
                 else:
                     # legacy raw 1-NN: x_test becomes cal_j's NN iff it is closer
                     cal_penalty = cal_penalty_base.copy()
