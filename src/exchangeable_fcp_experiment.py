@@ -38,7 +38,9 @@ import torch
 
 from conformal_prediction import FullConformalPredictor, create_ncm
 from exchangeable_features import make_transform
-from mscs_unlabeled_experiment import build_cluster_similarity_matrix, run_fcp_with_mscs
+from mscs_unlabeled_experiment import (
+    build_cluster_similarity_matrix, build_centroid_similarity_matrix,
+    update_centroid_M_for_candidate, run_fcp_with_mscs)
 
 
 def random_split(X, y, cal, test, allc, rng):
@@ -81,6 +83,12 @@ def main():
     ap.add_argument("--mscs", action="store_true", help="Add the MS-CS penalty (exchangeable mode).")
     ap.add_argument("--n_clusters_mscs", type=int, default=20)
     ap.add_argument("--tau", type=float, default=0.5, help="MS-CS tau multiplier on median_d^2.")
+    ap.add_argument("--similarity", type=str, default="cluster", choices=["cluster", "centroid"],
+                    help="MS-CS M: 'cluster' = k-means on the unlabeled pool (default), "
+                         "'centroid' = cal class-centroid distances (no unlabeled, for the "
+                         "unlabeled-contribution comparison).")
+    ap.add_argument("--yhat_mode", type=str, default="ncm", choices=["ncm", "1nn"],
+                    help="Suspected-class ŷ for the penalty: 'ncm' (variant A) or '1nn' (legacy).")
     ap.add_argument("--lambdas", type=float, nargs="+", default=[0.0, 0.05, 0.1])
     ap.add_argument("--cal_sizes", type=int, nargs="+", default=[200, 300, 400, 600, 800])
     ap.add_argument("--test_size", type=int, default=300)
@@ -125,6 +133,7 @@ def main():
     results = {"tag": tag,
                "config": {"unlabeled": bool(args.unlabeled_path), "ncm": args.ncm,
                           "pca_dim": pca_dim, "whiten": whiten, "mscs": bool(mscs_ok),
+                          "similarity": args.similarity, "yhat_mode": args.yhat_mode,
                           "split": args.split, "n_trials": args.n_trials, "alpha": args.alpha},
                "rows": []}
 
@@ -146,14 +155,28 @@ def main():
                     cp.calibrate(Xc, yc, all_classes=allc)
                     m = cp.evaluate(Xt, yt, verbose=False)
                     covs.append(m["coverage"]); szs.append(m["avg_set_size"])
+                elif args.similarity == "centroid":
+                    # cal class-centroid M (no unlabeled) — for the contribution comparison
+                    (M, eff_tau, med_d2, cls_cen, cls_cnt
+                     ) = build_centroid_similarity_matrix(Xc, yc, allc, tau=tau_arg)
+                    update_fn = (lambda yc_idx, x_test, M_base:
+                                 update_centroid_M_for_candidate(
+                                     cls_cen, cls_cnt, eff_tau, yc_idx, x_test, M_base))
+                    cov, sz = run_fcp_with_mscs(
+                        Xc, yc, Xt, yt, allc, args.ncm, args.alpha, lam, M,
+                        exchangeable=True, yhat_mode=args.yhat_mode,
+                        class_centroids=cls_cen, class_counts=cls_cnt,
+                        effective_tau=eff_tau, update_M_fn=update_fn)
+                    covs.append(cov); szs.append(sz)
                 else:
+                    # unlabeled k-means cluster M (in the transformed space)
                     (M, c2c, eff_tau, med_d2, cls_cen, cls_cnt,
                      clu_cen, clu_d) = build_cluster_similarity_matrix(
                         transform.Xu_transformed_, Xc, yc, allc,
                         args.n_clusters_mscs, tau=tau_arg)
                     cov, sz = run_fcp_with_mscs(
                         Xc, yc, Xt, yt, allc, args.ncm, args.alpha, lam, M,
-                        exchangeable=True, yhat_mode="ncm",
+                        exchangeable=True, yhat_mode=args.yhat_mode,
                         class_centroids=cls_cen, class_counts=cls_cnt,
                         class_to_cluster=c2c, cluster_centroids=clu_cen,
                         cluster_dists=clu_d, effective_tau=eff_tau)
