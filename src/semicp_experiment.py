@@ -209,8 +209,9 @@ def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
             }
 
     # --- FCP (Full CP, uses all labeled budget) ---
+    # approved: legacy whitened-NCM experiment (cal-fit whitening, non-exchangeable)
     t0 = time.time()
-    ncm = create_ncm(ncm_fcp, k=5)
+    ncm = create_ncm(ncm_fcp, k=5, allow_nonexchangeable=True)
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
     m = cp.evaluate(X_test, y_test, verbose=False)
@@ -223,7 +224,7 @@ def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
     if pca_model is not None and X_test_pca is not None:
         t0 = time.time()
         X_cal_pca = pca_model.transform(X_cal)
-        ncm_pca = create_ncm(ncm_fcp, k=5)
+        ncm_pca = create_ncm(ncm_fcp, k=5, allow_nonexchangeable=True)
         cp_pca = FullConformalPredictor(ncm_pca, alpha=alpha)
         cp_pca.calibrate(X_cal_pca, y_cal, all_classes=all_classes)
         m = cp_pca.evaluate(X_test_pca, y_test, verbose=False)
@@ -243,7 +244,8 @@ def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
             mscs_n_clusters, tau=-mscs_tau_mult)
         cov, sz = run_fcp_with_mscs(
             X_cal_pca, y_cal, X_test_pca, y_test, all_classes,
-            ncm_fcp, alpha, mscs_lambda, M, exchangeable=False)
+            ncm_fcp, alpha, mscs_lambda, M, exchangeable=False,
+            allow_nonexchangeable=True)
         results["FCP+PCA+MS-CS"] = {
             'coverage': cov, 'avg_set_size': sz,
             'time': time.time() - t0

@@ -49,8 +49,9 @@ def run_trial(X_cal, y_cal, X_test, y_test, all_classes, ncm_full, ncm_cv,
     out = {}
 
     # ---- Full CP ----
+    # approved: legacy whitened-NCM experiment (cal-fit whitening, non-exchangeable)
     t0 = time.time()
-    ncm = create_ncm(ncm_full, k=5)
+    ncm = create_ncm(ncm_full, k=5, allow_nonexchangeable=True)
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
     m = cp.evaluate(X_test, y_test, verbose=False)
@@ -62,7 +63,7 @@ def run_trial(X_cal, y_cal, X_test, y_test, all_classes, ncm_full, ncm_cv,
 
     # ---- CV+ ----
     t0 = time.time()
-    ncm_factory = lambda: create_ncm(ncm_cv, k=5)
+    ncm_factory = lambda: create_ncm(ncm_cv, k=5, allow_nonexchangeable=True)
     cp_cv = CrossValidationPlusPredictor(ncm_factory, alpha=alpha, n_folds=n_folds)
     cp_cv.calibrate(X_cal, y_cal, all_classes=all_classes)
     m_cv = cp_cv.evaluate(X_test, y_test, verbose=False)

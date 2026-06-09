@@ -73,7 +73,8 @@ def run_fcp(X_cal, y_cal, X_test, y_test, all_classes, ncm_name, alpha,
             gpu_batch_size=256):
     """Calibrate + evaluate FCP. Uses CUDA fast-path when the NCM family supports it."""
     t0 = time.time()
-    ncm = create_ncm(ncm_name, k=5)
+    # approved: legacy whitened-NCM experiment (cal-fit whitening, non-exchangeable)
+    ncm = create_ncm(ncm_name, k=5, allow_nonexchangeable=True)
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
 
@@ -105,7 +106,8 @@ def run_fcp_mscs(X_cal, y_cal, X_test, y_test, X_unlabeled,
         X_unlabeled, X_cal, y_cal, all_classes, n_clusters, tau=tau_arg)
     cov, sz = run_fcp_with_mscs(
         X_cal, y_cal, X_test, y_test, all_classes,
-        ncm_name, alpha, lam, M, exchangeable=False)
+        ncm_name, alpha, lam, M, exchangeable=False,
+        allow_nonexchangeable=True)
     runtime = time.time() - t0
     return cov, sz, runtime
 

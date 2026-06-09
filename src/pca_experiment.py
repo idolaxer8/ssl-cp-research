@@ -29,6 +29,7 @@ from sklearn.decomposition import PCA
 from conformal_prediction import (
     FullConformalPredictor,
     create_ncm,
+    warn_nonexchangeable,
 )
 from autoencoder_utils import EmbeddingAutoencoder
 
@@ -289,6 +290,18 @@ def main():
                     else:
                         fit_data = X_cal_full
 
+                    # Fitting the reducer on cal (or the cal+test pool) is the
+                    # deliberate non-exchangeable CONTROL in this experiment; the
+                    # 'unlabeled' source is the exchangeable default. Surface it
+                    # (not approved -- the point of the control is to notify).
+                    if args.pca_source in ("cal", "pool"):
+                        warn_nonexchangeable(
+                            f"{args.reduction.upper()} fit on '{args.pca_source}' "
+                            f"(calibration-dependent reducer)",
+                            "Use --pca_source unlabeled to fit the reducer on an "
+                            "independent unlabeled pool (exchangeable).",
+                            order="O(1/n)")
+
                     if args.reduction == "pca":
                         max_components = min(fit_data.shape[0], fit_data.shape[1])
                         if dim > max_components:
@@ -306,7 +319,10 @@ def main():
                     X_test = reducer.transform(X_test_full)
                     label = f"{red_tag}-{dim}"
 
-                ncm = create_ncm(args.ncm, k=args.k)
+                # approved: NCM cal-fit whitening is not the subject of this
+                # experiment (the PCA/AE source is); the reducer-source warning
+                # above carries the validity signal.
+                ncm = create_ncm(args.ncm, k=args.k, allow_nonexchangeable=True)
                 cp = FullConformalPredictor(ncm, alpha=args.alpha)
                 t0 = time.time()
                 cp.calibrate(X_cal, y_cal, all_classes=all_classes)

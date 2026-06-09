@@ -10,11 +10,66 @@ This implementation provides:
 """
 
 import time
+import warnings
 from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
 from tqdm import tqdm
+
+
+# ----------------------------------------------------------------------------
+# Exchangeability guard
+# ----------------------------------------------------------------------------
+# FCP's 1 - alpha coverage guarantee requires every nonconformity score to be a
+# permutation-symmetric function of the calibration+test bag. The DEFAULT path
+# in this codebase is fully exchangeable: data-dependent transforms (whitening,
+# PCA, k-means, RBF bandwidth) are fit on an INDEPENDENT unlabeled pool -- see
+# exchangeable_features.UnlabeledTransform -- which is a fixed map w.r.t. the
+# bag. Any variant that instead fits such a transform on the CALIBRATION set
+# breaks exchangeability (even at O(1/n)) and voids the exact guarantee. Every
+# such variant must route through warn_nonexchangeable() so the loss of validity
+# is surfaced, and must be explicitly approved via allow_nonexchangeable=True.
+
+class ExchangeabilityWarning(UserWarning):
+    """Emitted when a code path breaks FCP's exchangeability assumption, so the
+    1 - alpha coverage guarantee is no longer exactly valid."""
+    pass
+
+
+def warn_nonexchangeable(source: str, detail: str = "",
+                         order: str = "O(1/n)", allow: bool = False) -> None:
+    """Surface a validity warning when a non-exchangeable (cal-fit /
+    data-dependent) transform is used in the FCP path.
+
+    The fully-exchangeable path (transforms fit on an independent unlabeled
+    pool, see exchangeable_features.UnlabeledTransform) is the DEFAULT and never
+    calls this. Any variant that breaks exchangeability -- even at O(1/n) -- must
+    route through here so the loss of the coverage guarantee is explicit.
+
+    Soft gate (warn-only): the offending variant still runs and is numerically
+    unchanged; this only emits a warning. Pass allow=True (the caller's explicit
+    approval via allow_nonexchangeable=True) to accept the broken guarantee and
+    silence the warning.
+
+    Args:
+        source: short name of the offending transform (e.g. "cal-fit whitening").
+        detail: how to recover exactness (e.g. point to the unlabeled-pool path).
+        order:  magnitude of the exchangeability break ("O(1/n)", "O(1/n^2)", ...).
+        allow:  approval flag. If True the caller has explicitly accepted the
+                broken guarantee, so the warning is suppressed.
+    """
+    if allow:
+        return
+    warnings.warn(
+        f"VALIDITY WARNING: {source} breaks FCP exchangeability ({order}); the "
+        f"1 - alpha coverage guarantee is NOT exactly valid. "
+        f"{('' if not detail else detail + ' ')}"
+        f"The exchangeable default fits this transform on an independent "
+        f"unlabeled pool (exchangeable_features.UnlabeledTransform). "
+        f"Pass allow_nonexchangeable=True to approve and silence this warning.",
+        ExchangeabilityWarning, stacklevel=3,
+    )
 
 
 class NonconformityMeasure:
@@ -74,8 +129,12 @@ class MahalNNRatio(NonconformityMeasure):
       for formal analysis of data-dependent preprocessing in conformal prediction.
     """
 
-    def __init__(self, reg: float = 1e-4):
+    def __init__(self, reg: float = 1e-4, allow_nonexchangeable: bool = False):
         self.reg = reg
+        # MahalNNRatio ALWAYS fits pooled within-class whitening on the
+        # calibration set, so it is intrinsically non-exchangeable (O(1/n)).
+        # allow_nonexchangeable=True approves this and silences the warning.
+        self.allow_nonexchangeable = allow_nonexchangeable
         self.X_cal = None
         self.y_cal = None
         self.inv_std = None      # (d,) element-wise 1/sqrt(pooled_var + reg)
@@ -100,6 +159,11 @@ class MahalNNRatio(NonconformityMeasure):
         return self._mcache_dists
 
     def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        warn_nonexchangeable(
+            "MahalNNRatio cal-fit pooled within-class whitening",
+            "Use create_ncm('unwhitened_topk_*') with an unlabeled-pool transform "
+            "for an exact guarantee.",
+            order="O(1/n)", allow=self.allow_nonexchangeable)
         self.X_cal = X_cal
         self.y_cal = y_cal
         n_cal = len(X_cal)
@@ -196,12 +260,17 @@ class WhitenedGeodesicNNRatio(NonconformityMeasure):
     - See Fan & Sesia (2025, arXiv 2512.15383) on transductive standardization.
     """
 
-    def __init__(self, reg: float = 1e-4):
+    def __init__(self, reg: float = 1e-4, allow_nonexchangeable: bool = False):
         """
         Args:
             reg: Whitening regularization floor (adaptive version used in fit()).
+            allow_nonexchangeable: WhitenedGeodesicNNRatio ALWAYS fits pooled
+                whitening on the calibration set, so it is intrinsically
+                non-exchangeable (O(1/n)). Set True to approve and silence the
+                validity warning.
         """
         self.reg = reg
+        self.allow_nonexchangeable = allow_nonexchangeable
         self.inv_std = None
         self.X_cal_wn = None        # whitened + L2-normalized cal embeddings (n_cal, d)
         self.y_cal = None
@@ -239,6 +308,11 @@ class WhitenedGeodesicNNRatio(NonconformityMeasure):
         return self._wcache_sims
 
     def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        warn_nonexchangeable(
+            "WhitenedGeodesicNNRatio cal-fit pooled whitening",
+            "Use create_ncm('unwhitened_topk_*') with an unlabeled-pool transform "
+            "for an exact guarantee.",
+            order="O(1/n)", allow=self.allow_nonexchangeable)
         self.y_cal = y_cal
         n_cal = len(X_cal)
         classes = np.unique(y_cal)
@@ -335,11 +409,16 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
     k selection (adaptive): k = max(1, min(K_MAX, n_cal // n_classes)).
     At k=1 all modes reduce to WhitenedGeodesicNNRatio.
 
-    Exchangeability (O(1/n) approximation):
-    - Whitening (inv_std) is fixed at fit() time from calibration data only.
-      For exact exchangeability, pooled_var should be recomputed on the augmented
-      bag {z1,...,zn,(x*,y*)} for each candidate. The asymmetry is O(1/n) and
-      negligible for n >= 200. See Fan & Sesia (2025, arXiv 2512.15383).
+    Exchangeability:
+    - DEFAULT whiten=False is fully exchangeable: the NCM applies only the
+      per-point L2 normalisation + geodesic top-k, which is a fixed map. Feed it
+      features from an exchangeable_features.UnlabeledTransform to recover the
+      whitening benefit while keeping the exact guarantee.
+    - whiten=True (must be approved via allow_nonexchangeable=True) fixes inv_std
+      at fit() time from calibration data only, which breaks exchangeability at
+      O(1/n): for exactness pooled_var would have to be recomputed on the
+      augmented bag {z1,...,zn,(x*,y*)} per candidate. Negligible for n >= 200 but
+      NOT exact. See Fan & Sesia (2025, arXiv 2512.15383).
 
     FCP O(N) compatibility: CASE A update is O(1) per calibration point.
     """
@@ -348,7 +427,8 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
 
     def __init__(self, reg: float = 1e-4, k: Optional[int] = None,
                  topk_same: bool = True, topk_other: bool = True,
-                 numerator_only: bool = False, whiten: bool = True):
+                 numerator_only: bool = False, whiten: bool = False,
+                 allow_nonexchangeable: bool = False):
         """
         Args:
             reg:            Whitening regularization floor.
@@ -357,7 +437,15 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
             topk_other:     If True, average other-class sims (denominator). Default True.
             numerator_only: If True, score = d_same only (no ratio). Avoids denominator
                             collapse on well-separated datasets. Ignores topk_other.
-            whiten:         If False, skip pooled whitening (ablation). Default True.
+            whiten:         If True, fit pooled within-class whitening on the
+                            CALIBRATION set. This breaks exchangeability (O(1/n))
+                            and voids the exact coverage guarantee, so it now
+                            DEFAULTS to False (fully-exchangeable path). To get the
+                            whitening benefit exactly, feed features through an
+                            exchangeable_features.UnlabeledTransform (whitening fit
+                            on an independent unlabeled pool) and keep whiten=False.
+            allow_nonexchangeable: Approve cal-fit whitening (whiten=True) and
+                            silence the validity warning.
         """
         self.reg           = reg
         self.k_override    = k
@@ -365,6 +453,7 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
         self.topk_other    = topk_other
         self.numerator_only = numerator_only
         self.whiten     = whiten
+        self.allow_nonexchangeable = allow_nonexchangeable
         self.k          = None      # resolved at fit()
         self.inv_std    = None
         self.X_cal_wn   = None
@@ -466,8 +555,14 @@ class GeodesicTopKMeanNCM(NonconformityMeasure):
         self.k = self.k_override if self.k_override is not None \
                  else max(1, min(self.K_MAX, n_per_class))
 
-        # Pooled whitening (Fix 4: adaptive reg) — skip if whiten=False (ablation)
+        # Pooled whitening (Fix 4: adaptive reg) — skip if whiten=False (default,
+        # fully-exchangeable). whiten=True fits on cal and breaks exchangeability.
         if self.whiten:
+            warn_nonexchangeable(
+                "GeodesicTopKMeanNCM cal-fit pooled whitening (whiten=True)",
+                "Set whiten=False and source whitening from an "
+                "exchangeable_features.UnlabeledTransform for an exact guarantee.",
+                order="O(1/n)", allow=self.allow_nonexchangeable)
             residuals = X_cal.copy()
             for c in classes:
                 idx = np.where(y_cal == c)[0]
@@ -780,7 +875,8 @@ class RBFDensityNCM(NonconformityMeasure):
                  same_agg: str = "sum",
                  whiten: bool = False,
                  reg: float = 1e-4,
-                 eps_log: float = 1e-30):
+                 eps_log: float = 1e-30,
+                 allow_nonexchangeable: bool = False):
         """
         Args:
             sigma: Kernel bandwidth. If None, set at fit() via bandwidth_rule.
@@ -797,13 +893,19 @@ class RBFDensityNCM(NonconformityMeasure):
             whiten: If True, apply pooled-within-class whitening before kernel dists.
             reg: Whitening regularization floor.
             eps_log: Floor inside the log when a class has no neighbors at all.
+            allow_nonexchangeable: Approve and silence the validity warning that
+                fires for cal-fit bandwidth (sigma=None) and/or cal-fit whitening
+                (whiten=True). For an exact guarantee, pass a precomputed sigma
+                from an independent unlabeled pool AND keep whiten=False.
         """
         self.sigma = sigma
+        self._sigma_provided = sigma is not None  # external (exchangeable) bandwidth?
         self.bandwidth_rule = bandwidth_rule
         self.sigma_scale = sigma_scale
         self.ratio = ratio
         self.same_agg = same_agg
         self.whiten = whiten
+        self.allow_nonexchangeable = allow_nonexchangeable
         self.reg = reg
         self.eps_log = eps_log
         self.inv_std_ = None
@@ -869,6 +971,19 @@ class RBFDensityNCM(NonconformityMeasure):
         return out
 
     def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        # Surface any cal-fit (non-exchangeable) component: auto bandwidth from
+        # cal (sigma not supplied externally) and/or cal-fit whitening.
+        _reasons = []
+        if not self._sigma_provided:
+            _reasons.append("cal-fit bandwidth (sigma auto from cal)")
+        if self.whiten:
+            _reasons.append("cal-fit pooled whitening")
+        if _reasons:
+            warn_nonexchangeable(
+                "RBFDensityNCM " + " + ".join(_reasons),
+                "Pass a precomputed sigma from an independent unlabeled pool "
+                "(and keep whiten=False) for an exact guarantee.",
+                order="O(1/n)", allow=self.allow_nonexchangeable)
         X_cal = X_cal.astype(np.float64)
         self.y_cal = np.asarray(y_cal)
         n_cal, _ = X_cal.shape
@@ -2607,49 +2722,71 @@ class CrossValidationPlusPredictor:
 
 
 def create_ncm(ncm_type: str, k: int = 5,
-               reg: float = 1e-4) -> NonconformityMeasure:
+               reg: float = 1e-4,
+               allow_nonexchangeable: bool = False) -> NonconformityMeasure:
     """
     Factory function to create NCM instances.
 
     Args:
         ncm_type: One of 'softmax', 'mahal_nn_ratio', 'whitened_geodesic',
-                  'geodesic_topk_mean', 'geodesic_topk_asym'
+                  'geodesic_topk_mean', 'geodesic_topk_asym',
+                  'unwhitened_topk_mean', 'unwhitened_topk_asym',
+                  'geodesic_topk', 'geodesic_1nn', 'rbf_density'
         k: Number of neighbors for top-k NCMs
         reg: Variance regularisation for Mahalanobis NCMs
+        allow_nonexchangeable: Approve (and silence the validity warning for) the
+            NCM types that fit a data-dependent transform on the CALIBRATION set
+            and therefore break FCP exchangeability at O(1/n): every whitened
+            geodesic variant ('geodesic_topk_mean', 'geodesic_topk_asym',
+            'geodesic_topk', 'geodesic_1nn', 'whitened_geodesic'),
+            'mahal_nn_ratio', and 'rbf_density'. The 'unwhitened_topk_*' types and
+            'softmax' are exchangeable and ignore this flag.
+
+    Exchangeable default: the 'unwhitened_topk_*' types fit NO cal-dependent
+    transform. To recover the whitening efficiency while staying exact, feed their
+    features through an exchangeable_features.UnlabeledTransform (whitening/PCA fit
+    on an independent unlabeled pool). The whitened named types below preserve
+    their historical (cal-fit) numeric behavior but now require this approval flag
+    to run without a validity warning.
     """
+    nx = allow_nonexchangeable  # shorthand
     if ncm_type == "softmax":
         return SoftmaxNonconformity()
     elif ncm_type == "mahal_nn_ratio":
-        return MahalNNRatio(reg=reg)
+        return MahalNNRatio(reg=reg, allow_nonexchangeable=nx)
     elif ncm_type == "whitened_geodesic":
-        return WhitenedGeodesicNNRatio(reg=reg)
+        return WhitenedGeodesicNNRatio(reg=reg, allow_nonexchangeable=nx)
     elif ncm_type == "geodesic_topk_mean":
-        # Symmetric: topk on both same and other
+        # Symmetric: topk on both same and other (cal-fit whitening -> approve)
         return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
-                                   topk_same=True, topk_other=True)
+                                   topk_same=True, topk_other=True,
+                                   whiten=True, allow_nonexchangeable=nx)
     elif ncm_type == "geodesic_topk_asym":
         # Asymmetric: 1-NN for same (tight numerator), topk for other (Trojan Horse fix)
         return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
-                                   topk_same=False, topk_other=True)
+                                   topk_same=False, topk_other=True,
+                                   whiten=True, allow_nonexchangeable=nx)
     elif ncm_type == "unwhitened_topk_mean":
-        # Ablation: symmetric topk WITHOUT whitening
+        # Exchangeable: symmetric topk WITHOUT whitening
         return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
                                    topk_same=True, topk_other=True, whiten=False)
     elif ncm_type == "unwhitened_topk_asym":
-        # Ablation: asymmetric topk WITHOUT whitening
+        # Exchangeable: asymmetric topk WITHOUT whitening
         return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
                                    topk_same=False, topk_other=True, whiten=False)
     elif ncm_type == "geodesic_topk":
         # Numerator-only: mean of top-k same-class geodesic distances, no ratio
         return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
-                                   topk_same=True, numerator_only=True)
+                                   topk_same=True, numerator_only=True,
+                                   whiten=True, allow_nonexchangeable=nx)
     elif ncm_type == "geodesic_1nn":
         # Numerator-only: 1-NN same-class geodesic distance, no ratio
         return GeodesicTopKMeanNCM(reg=reg, k=k if k != 5 else None,
-                                   topk_same=False, numerator_only=True)
+                                   topk_same=False, numerator_only=True,
+                                   whiten=True, allow_nonexchangeable=nx)
     elif ncm_type == "rbf_density":
         # Gaussian-kernel density NCM. Bandwidth auto from cal median heuristic.
-        return RBFDensityNCM()
+        return RBFDensityNCM(allow_nonexchangeable=nx)
     else:
         raise ValueError(f"Unknown NCM type: {ncm_type}")
 

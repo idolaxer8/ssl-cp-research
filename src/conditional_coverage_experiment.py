@@ -197,8 +197,9 @@ def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
         results["ClusterCP"] = m
 
     # --- FCP (Full CP) ---
+    # approved: legacy whitened-NCM experiment (cal-fit whitening, non-exchangeable)
     t0 = time.time()
-    ncm = create_ncm(ncm_fcp, k=5)
+    ncm = create_ncm(ncm_fcp, k=5, allow_nonexchangeable=True)
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
     pred_sets = cp.predict(X_test, verbose=False)["prediction_sets"]
@@ -210,7 +211,7 @@ def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
     if pca_model is not None and X_test_pca is not None:
         t0 = time.time()
         X_cal_pca = pca_model.transform(X_cal)
-        ncm_pca = create_ncm(ncm_fcp, k=5)
+        ncm_pca = create_ncm(ncm_fcp, k=5, allow_nonexchangeable=True)
         cp_pca = FullConformalPredictor(ncm_pca, alpha=alpha)
         cp_pca.calibrate(X_cal_pca, y_cal, all_classes=all_classes)
         pred_sets = cp_pca.predict(X_test_pca, verbose=False)["prediction_sets"]
@@ -229,7 +230,7 @@ def run_trial(X_cal, y_cal, X_test, y_test, X_unlabeled, all_classes,
         _, _, pred_sets = run_fcp_with_mscs(
             X_cal_pca, y_cal, X_test_pca, y_test, all_classes,
             ncm_fcp, alpha, mscs_lambda, M, exchangeable=False,
-            return_sets=True)
+            return_sets=True, allow_nonexchangeable=True)
         m = per_class_metrics(pred_sets, y_test, all_classes, alpha)
         m["time"] = time.time() - t0
         results["FCP+PCA+MS-CS"] = m

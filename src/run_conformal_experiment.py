@@ -19,6 +19,7 @@ from conformal_prediction import (
     cal_test_split,
     train_cal_test_split,
     stratified_cal_test_split,
+    warn_nonexchangeable,
 )
 
 
@@ -240,7 +241,7 @@ def compare_k_values(X_cal, y_cal, X_test, y_test, args, output_dir: str):
     
     for k in k_values:
         print(f"\nEvaluating k={k}...")
-        ncm = create_ncm(args.ncm, k=k)
+        ncm = create_ncm(args.ncm, k=k, allow_nonexchangeable=True)
         cp = FullConformalPredictor(ncm, alpha=args.alpha)
         cp.calibrate(X_cal, y_cal)
         metrics = cp.evaluate(X_test, y_test, verbose=False)
@@ -373,6 +374,15 @@ def compare_ssl_vs_baseline(X_ssl, y_ssl, X_raw, y_raw, args, output_dir: str):
         print(f"\nApplying PCA to raw features: {X_raw.shape[1]}D → {max_components}D")
         print("  (For fair comparison: k-NN is sensitive to dimensionality)")
         
+        # Raw-pixel baseline only: this PCA is fit on CALIBRATION data (cal-fit),
+        # which breaks exchangeability for the raw-pixel FCP arm. The SSL pipeline
+        # is unaffected. Not approved -- surfaced so the baseline's looser
+        # guarantee is explicit.
+        warn_nonexchangeable(
+            "Raw-pixel baseline PCA fit on calibration data",
+            "Fit this PCA on an independent unlabeled pool to keep the baseline "
+            "exchangeable.",
+            order="O(1/n)")
         pca = PCA(n_components=max_components, random_state=args.seed)
         X_cal_raw_pca = pca.fit_transform(X_cal_raw)
         X_test_raw_pca = pca.transform(X_test_raw)
@@ -397,7 +407,7 @@ def compare_ssl_vs_baseline(X_ssl, y_ssl, X_raw, y_raw, args, output_dir: str):
         print(f"  Feature dimension: {X_cal.shape[1]}")
         
         # Create NCM and predictor
-        ncm = create_ncm(args.ncm, k=args.k)
+        ncm = create_ncm(args.ncm, k=args.k, allow_nonexchangeable=True)
         cp = FullConformalPredictor(ncm, alpha=args.alpha)
         cp.calibrate(X_cal, y_cal)
         
@@ -556,7 +566,7 @@ def compare_full_cp_vs_split_cp(
             )
             
             # Create NCM
-            ncm = create_ncm(args.ncm, k=args.k)
+            ncm = create_ncm(args.ncm, k=args.k, allow_nonexchangeable=True)
 
             print("  Running Full CP...")
             t_start_full = time.time()
@@ -959,7 +969,7 @@ def compare_cp_methods(
             # ---------- FULL CP ----------
             # softmax NCM doesn't support Full CP (no hypothetical update)
             if args.ncm != "softmax":
-                ncm = create_ncm(args.ncm, k=args.k)
+                ncm = create_ncm(args.ncm, k=args.k, allow_nonexchangeable=True)
                 print(f"    Full CP...")
                 t0 = time.time()
                 cp_full = FullConformalPredictor(ncm, alpha=args.alpha)
@@ -979,7 +989,7 @@ def compare_cp_methods(
                       f"T={t_full:.2f}s")
 
             # ---------- CV+ ----------
-            ncm_factory = lambda: create_ncm(ncm_cv_type, k=args.k)
+            ncm_factory = lambda: create_ncm(ncm_cv_type, k=args.k, allow_nonexchangeable=True)
             print(f"    CV+...")
             t0 = time.time()
             cp_cv = CrossValidationPlusPredictor(
@@ -1272,7 +1282,7 @@ def main():
         print(f"\n[3/5] Creating nonconformity measure: {args.ncm} (k={args.k})...")
     else:
         print(f"\n[3/5] Creating nonconformity measure: {args.ncm}...")
-    ncm = create_ncm(args.ncm, k=args.k)
+    ncm = create_ncm(args.ncm, k=args.k, allow_nonexchangeable=True)
     
     # 3b. Optional: Compare both methods
     if args.compare_methods:
@@ -1280,8 +1290,10 @@ def main():
         print("="*70)
         
         methods = {
-            'mahal_nn_ratio': create_ncm('mahal_nn_ratio', k=args.k),
-            'geodesic_topk_mean': create_ncm('geodesic_topk_mean', k=args.k)
+            'mahal_nn_ratio': create_ncm('mahal_nn_ratio', k=args.k,
+                                         allow_nonexchangeable=True),
+            'geodesic_topk_mean': create_ncm('geodesic_topk_mean', k=args.k,
+                                             allow_nonexchangeable=True)
         }
         
         comparison_results = {}

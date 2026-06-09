@@ -150,7 +150,7 @@ def main():
 
             # --- FCP: full budget, full dim ---
             t0 = time.time()
-            ncm = create_ncm(NCM, k=5)
+            ncm = create_ncm(NCM, k=5, allow_nonexchangeable=True)
             cp = FullConformalPredictor(ncm, alpha=ALPHA)
             cp.calibrate(X_cal, y_cal, all_classes=all_classes)
             m = cp.evaluate(X_test, y_test, verbose=False)
@@ -161,7 +161,7 @@ def main():
             # --- FCP+PCA: full budget, PCA-projected ---
             X_cal_pca = pca.transform(X_cal)
             t0 = time.time()
-            ncm_pca = create_ncm(NCM, k=5)
+            ncm_pca = create_ncm(NCM, k=5, allow_nonexchangeable=True)
             cp_pca = FullConformalPredictor(ncm_pca, alpha=ALPHA)
             cp_pca.calibrate(X_cal_pca, y_cal, all_classes=all_classes)
             m = cp_pca.evaluate(X_test_pca, y_test, verbose=False)
@@ -172,7 +172,7 @@ def main():
             # --- FCP+AE: full budget, AE-projected ---
             X_cal_ae = ae.transform(X_cal)
             t0 = time.time()
-            ncm_ae = create_ncm(NCM, k=5)
+            ncm_ae = create_ncm(NCM, k=5, allow_nonexchangeable=True)
             cp_ae = FullConformalPredictor(ncm_ae, alpha=ALPHA)
             cp_ae.calibrate(X_cal_ae, y_cal, all_classes=all_classes)
             m = cp_ae.evaluate(X_test_ae, y_test, verbose=False)
@@ -189,7 +189,8 @@ def main():
                 MSCS_N_CLUSTERS, tau=MSCS_TAU)
             cov_mscs, sz_mscs = run_fcp_with_mscs(
                 X_cal, y_cal, X_test, y_test, all_classes,
-                NCM, ALPHA, MSCS_LAMBDA, M_mscs)
+                NCM, ALPHA, MSCS_LAMBDA, M_mscs,
+                allow_nonexchangeable=True)
             results[cs]["FCP+MS-CS"].append({
                 'coverage': cov_mscs, 'avg_set_size': sz_mscs,
                 'time': time.time() - t0})

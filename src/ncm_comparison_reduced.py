@@ -83,7 +83,8 @@ def run_ncm_comparison(X_cal_full, y_cal, X_test, y_test, all_classes,
     """Run all NCMs on one (cal, test) split. Returns {ncm: {cov, sz, time}}."""
     out = {}
     for ncm_name in ncm_names:
-        ncm = create_ncm(ncm_name, k=5)
+        # approved: comparison sweep may include whitened (cal-fit) NCMs
+        ncm = create_ncm(ncm_name, k=5, allow_nonexchangeable=True)
         cp = FullConformalPredictor(ncm, alpha=alpha)
         t0 = time.time()
         cp.calibrate(X_cal_full, y_cal, all_classes=all_classes)

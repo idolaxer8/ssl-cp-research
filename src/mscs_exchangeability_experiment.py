@@ -208,10 +208,12 @@ def run_modes(X_cal_pca, y_cal, X_test_pca, y_test, X_unlabeled_pca, all_classes
         tau=-tau_mult)  # negative tau => effective_tau = tau_mult * median_d^2
 
     # (A) Frozen / O(1/n): M and y_hat fixed at cal-only values.
+    # approved: this branch deliberately studies the non-exchangeable mode
+    # (and the whitened NCM is itself cal-fit non-exchangeable).
     t0 = time.time()
     _, _, sets_frozen = run_fcp_with_mscs(
         X_cal_pca, y_cal, X_test_pca, y_test, all_classes, ncm, alpha, lam, M,
-        exchangeable=False, return_sets=True)
+        exchangeable=False, return_sets=True, allow_nonexchangeable=True)
     t_frozen = time.time() - t0
     m = per_class_metrics(sets_frozen, y_test, all_classes, alpha)
     m["time"] = t_frozen
@@ -221,12 +223,15 @@ def run_modes(X_cal_pca, y_cal, X_test_pca, y_test, X_unlabeled_pca, all_classes
     # (B) Exact / exchangeable: M and y_hat recomputed per augmented bag.
     if do_exact:
         t0 = time.time()
+        # MS-CS ŷ/M are bag-symmetric here; the cal-fit whitened NCM is the only
+        # remaining O(1/n) break, approved below.
         _, _, sets_exact = run_fcp_with_mscs(
             X_cal_pca, y_cal, X_test_pca, y_test, all_classes, ncm, alpha, lam, M,
             exchangeable=True, return_sets=True,
             class_centroids=cls_centroids, class_counts=cls_counts,
             class_to_cluster=c2c, cluster_centroids=clust_centroids,
-            cluster_dists=clust_dists, effective_tau=eff_tau)
+            cluster_dists=clust_dists, effective_tau=eff_tau,
+            allow_nonexchangeable=True)
         t_exact = time.time() - t0
         m = per_class_metrics(sets_exact, y_test, all_classes, alpha)
         m["time"] = t_exact
@@ -236,7 +241,7 @@ def run_modes(X_cal_pca, y_cal, X_test_pca, y_test, X_unlabeled_pca, all_classes
     # Anchor: plain FCP+PCA, no penalty (context; GPU-accelerable).
     if do_anchor:
         t0 = time.time()
-        ncm_obj = create_ncm(ncm, k=5)
+        ncm_obj = create_ncm(ncm, k=5, allow_nonexchangeable=True)
         cp = FullConformalPredictor(ncm_obj, alpha=alpha)
         cp.calibrate(X_cal_pca, y_cal, all_classes=all_classes)
         res = cp.predict(X_test_pca, verbose=False, device=anchor_device)

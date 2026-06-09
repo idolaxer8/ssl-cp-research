@@ -24,7 +24,9 @@ import numpy as np
 import torch
 from sklearn.cluster import KMeans
 from sklearn.metrics import euclidean_distances
-from conformal_prediction import FullConformalPredictor, create_ncm
+from conformal_prediction import (
+    FullConformalPredictor, create_ncm, warn_nonexchangeable,
+)
 
 
 def build_cluster_similarity_matrix(X_unlabeled, X_cal, y_cal, all_classes, n_clusters, tau=1.0):
@@ -222,7 +224,8 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                       class_centroids=None, class_counts=None,
                       class_to_cluster=None, cluster_centroids=None,
                       cluster_dists=None, effective_tau=None,
-                      return_sets=False, update_M_fn=None, yhat_mode="ncm"):
+                      return_sets=False, update_M_fn=None, yhat_mode="ncm",
+                      allow_nonexchangeable=False):
     """Run FCP with MS-CS continuous penalty.
 
     Args:
@@ -244,8 +247,21 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                 NCM's neighbour computation — no extra distance matrices.
                 Requires a GeodesicTopKMeanNCM; falls back to "1nn" otherwise.
             "1nn": legacy raw-Euclidean LOO 1-NN (kept for A/B comparison).
+        allow_nonexchangeable: Approve (and silence the validity warning for) the
+            non-exchangeable components: a whitened cal-fit NCM (ncm_name) and the
+            fixed-ŷ/M penalty used when exchangeable=False. exchangeable=True with
+            an unwhitened NCM (from an unlabeled-pool transform) is exact and needs
+            no approval.
     """
-    ncm = create_ncm(ncm_name, k=5)
+    # The exchangeable=False MS-CS penalty freezes ŷ/M at fit() time rather than
+    # recomputing them on the augmented bag per candidate -> O(1/n) break.
+    if not exchangeable:
+        warn_nonexchangeable(
+            "MS-CS fixed-ŷ/M penalty (exchangeable=False)",
+            "Pass exchangeable=True (bag-symmetric ŷ/M update) for an exact "
+            "guarantee.",
+            order="O(1/n)", allow=allow_nonexchangeable)
+    ncm = create_ncm(ncm_name, k=5, allow_nonexchangeable=allow_nonexchangeable)
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
 
@@ -523,7 +539,8 @@ def main():
 
                         if lam == 0.0:
                             # Plain FCP (no penalty) — baseline
-                            ncm = create_ncm(args.ncm, k=5)
+                            # approved: legacy whitened-NCM experiment (non-exchangeable)
+                            ncm = create_ncm(args.ncm, k=5, allow_nonexchangeable=True)
                             cp = FullConformalPredictor(ncm, alpha=args.alpha)
                             cp.calibrate(X_cal, y_cal, all_classes=all_classes)
                             m = cp.evaluate(X_test, y_test, verbose=False)
@@ -549,7 +566,8 @@ def main():
                                 class_counts=cls_counts,
                                 effective_tau=eff_tau,
                                 update_M_fn=update_fn,
-                                yhat_mode=args.yhat_mode)
+                                yhat_mode=args.yhat_mode,
+                                allow_nonexchangeable=True)
                             covs.append(cov)
                             szs.append(sz)
                         else:
@@ -569,7 +587,8 @@ def main():
                                 cluster_centroids=clust_centroids,
                                 cluster_dists=clust_dists,
                                 effective_tau=eff_tau,
-                                yhat_mode=args.yhat_mode)
+                                yhat_mode=args.yhat_mode,
+                                allow_nonexchangeable=True)
                             covs.append(cov)
                             szs.append(sz)
 

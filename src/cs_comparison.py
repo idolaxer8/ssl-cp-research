@@ -95,7 +95,8 @@ def main():
                 X, y, all_classes, cs, args.test_size, rng)
 
             # --- FCP baseline ---
-            ncm = create_ncm(args.ncm, k=5)
+            # approved: legacy whitened-NCM experiment (cal-fit whitening, non-exchangeable)
+            ncm = create_ncm(args.ncm, k=5, allow_nonexchangeable=True)
             cp = FullConformalPredictor(ncm, alpha=args.alpha)
             cp.calibrate(X_cal, y_cal, all_classes=all_classes)
             m = cp.evaluate(X_test, y_test, verbose=False)
@@ -105,7 +106,8 @@ def main():
             # --- FCP + MA-CS ---
             cov, sz = run_fcp_with_macs(
                 X_cal, y_cal, X_test, y_test, all_classes,
-                args.ncm, args.alpha, args.macs_lambda)
+                args.ncm, args.alpha, args.macs_lambda,
+                allow_nonexchangeable=True)
             all_results[cs]["FCP+MA-CS"]["cov"].append(cov)
             all_results[cs]["FCP+MA-CS"]["sz"].append(sz)
 
@@ -120,7 +122,7 @@ def main():
             cov, sz = run_fcp_with_mscs(
                 X_cal, y_cal, X_test, y_test, all_classes,
                 args.ncm, args.alpha, args.mscs_lambda, M,
-                exchangeable=False)
+                exchangeable=False, allow_nonexchangeable=True)
             all_results[cs]["FCP+MS-CS"]["cov"].append(cov)
             all_results[cs]["FCP+MS-CS"]["sz"].append(sz)
 

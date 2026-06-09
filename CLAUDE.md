@@ -83,6 +83,27 @@ python src/run_conformal_experiment.py --embeddings_path output/embeddings.pt --
 
 **Best NCM**: `geodesic_topk_asym` (asymmetric: 1-NN numerator / mean-k denominator). Use `geodesic_topk_mean` for theoretical simplicity.
 
+### Exchangeability policy (DEFAULT = exact guarantee)
+The fully-exchangeable path is the default; any variant that breaks FCP's
+exchangeability — even at O(1/n) — must be explicitly approved and emits a
+validity warning otherwise. Soft gate (warn-only): the variant still runs and is
+numerically unchanged, it just warns.
+- **Exact (default):** fit every data-dependent transform (whitening / PCA /
+  k-means / RBF bandwidth) on an INDEPENDENT unlabeled pool via
+  `exchangeable_features.UnlabeledTransform`, and use an unwhitened NCM
+  (`unwhitened_topk_mean` / `unwhitened_topk_asym`). `GeodesicTopKMeanNCM` now
+  defaults to `whiten=False`. See `src/exchangeable_fcp_experiment.py`.
+- **Non-exchangeable (must approve):** cal-fit whitening (`whiten=True`, and
+  always-on for `mahal_nn_ratio` / `whitened_geodesic`), cal-fit RBF bandwidth
+  (`rbf_density` with `sigma=None`), cal-fit PCA/AE (`pca_experiment.py
+  --pca_source cal|pool`), and the MS-CS fixed-ŷ/M penalty
+  (`run_fcp_with_mscs(exchangeable=False)`). Pass `allow_nonexchangeable=True`
+  (to `create_ncm`, the NCM ctor, or `run_fcp_with_mscs`) to approve + silence.
+- Helper: `conformal_prediction.warn_nonexchangeable(...)` +
+  `ExchangeabilityWarning`. The named whitened NCMs (`geodesic_topk_*`,
+  `whitened_geodesic`, `mahal_nn_ratio`, `rbf_density`) keep their historical
+  cal-fit numeric behavior but require this approval to run warning-free.
+
 ### Active experiment scripts
 - `src/macs_experiment.py` -- MA-CS binary superclass penalty (Fargion et al. 2025)
 - `src/mscs_unlabeled_experiment.py` -- MS-CS with unlabeled data (k-means clustering)

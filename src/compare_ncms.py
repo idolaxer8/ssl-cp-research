@@ -60,7 +60,8 @@ def run_one(X, y, ncm_name, cal_size, test_size, alpha, n_trials, seed):
         X_cal, y_cal   = X[cal_idx], y[cal_idx]
         X_test, y_test = X[test_idx], y[test_idx]
 
-        ncm = create_ncm(ncm_name)
+        # approved: comparison sweep may include whitened (cal-fit) NCMs
+        ncm = create_ncm(ncm_name, allow_nonexchangeable=True)
         cp  = FullConformalPredictor(ncm, alpha=alpha)
 
         t0 = time.time()

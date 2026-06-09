@@ -71,7 +71,8 @@ def run_fcp(X_cal, y_cal, X_test, y_test, all_classes, ncm_name, alpha,
             gpu_batch_size=256):
     """FCP with optional CUDA fast-path for GeodesicTopKMeanNCM-family NCMs."""
     t0 = time.time()
-    ncm = create_ncm(ncm_name, k=5)
+    # approved: legacy whitened-NCM experiment (cal-fit whitening, non-exchangeable)
+    ncm = create_ncm(ncm_name, k=5, allow_nonexchangeable=True)
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
     if _USE_GPU and isinstance(ncm, GeodesicTopKMeanNCM):
@@ -109,11 +110,13 @@ def run_fcp_mscs(X_cal, y_cal, X_test, y_test, X_unlabeled,
             ncm_name, alpha, lam, M, exchangeable=True,
             class_centroids=cls_centroids, class_counts=cls_counts,
             class_to_cluster=c2c, cluster_centroids=clust_centroids,
-            cluster_dists=clust_dists, effective_tau=eff_tau)
+            cluster_dists=clust_dists, effective_tau=eff_tau,
+            allow_nonexchangeable=True)
     else:
         cov, sz = run_fcp_with_mscs(
             X_cal, y_cal, X_test, y_test, all_classes,
-            ncm_name, alpha, lam, M, exchangeable=False)
+            ncm_name, alpha, lam, M, exchangeable=False,
+            allow_nonexchangeable=True)
     return cov, sz, time.time() - t0
 
 

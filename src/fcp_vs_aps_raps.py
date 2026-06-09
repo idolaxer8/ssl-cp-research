@@ -88,8 +88,9 @@ def main():
             X_cal, y_cal = stratified_cal(X_labeled, y_labeled, all_classes, cs, rng)
 
             # --- FCP: full budget as calibration ---
+            # approved: legacy whitened-NCM experiment (cal-fit whitening, non-exchangeable)
             t1 = time.time()
-            ncm = create_ncm(NCM, k=5)
+            ncm = create_ncm(NCM, k=5, allow_nonexchangeable=True)
             cp = FullConformalPredictor(ncm, alpha=ALPHA)
             cp.calibrate(X_cal, y_cal, all_classes=all_classes)
             m = cp.evaluate(X_test, y_test, verbose=False)

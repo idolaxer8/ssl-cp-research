@@ -212,7 +212,7 @@ def main():
 
             # ── FCP: full budget ──────────────────────────────────────────
             t0 = time.time()
-            ncm = create_ncm(NCM, k=5)
+            ncm = create_ncm(NCM, k=5, allow_nonexchangeable=True)
             cp = FullConformalPredictor(ncm, alpha=ALPHA)
             cp.calibrate(X_cal_all, y_cal_all, all_classes=all_classes)
             m = cp.evaluate(X_test, y_test, verbose=False)
@@ -225,7 +225,7 @@ def main():
             # ── FCP+PCA: full budget, projected ───────────────────────────
             t0 = time.time()
             X_cal_pca = pca.transform(X_cal_all)
-            ncm_pca = create_ncm(NCM, k=5)
+            ncm_pca = create_ncm(NCM, k=5, allow_nonexchangeable=True)
             cp_pca = FullConformalPredictor(ncm_pca, alpha=ALPHA)
             cp_pca.calibrate(X_cal_pca, y_cal_all, all_classes=all_classes)
             m = cp_pca.evaluate(X_test_pca, y_test, verbose=False)

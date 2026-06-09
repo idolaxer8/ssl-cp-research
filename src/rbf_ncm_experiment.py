@@ -49,7 +49,8 @@ def smoke():
     X_cal, y_cal = X[:n_cal], y[:n_cal]
     X_te, y_te = X[n_cal:], y[n_cal:]
 
-    ncm = RBFDensityNCM()
+    # approved: cal-fit RBF bandwidth (non-exchangeable smoke test)
+    ncm = RBFDensityNCM(allow_nonexchangeable=True)
     fcp = FullConformalPredictor(ncm, alpha=0.1)
     fcp.calibrate(X_cal, y_cal, all_classes=np.arange(3))
     res = fcp.predict(X_te, verbose=False)
@@ -92,10 +93,14 @@ def fit_ae(X_unl, dim, seed=42):
 # ------------------------------------------------------------------
 def run_one(X_cal_red, y_cal, X_te_red, y_te, ncm_name, alpha=0.1, all_classes=None):
     if ncm_name == "geodesic_topk_mean":
-        ncm = GeodesicTopKMeanNCM(topk_same=True, topk_other=True)
+        # whiten=True preserves the historical (cal-fit) behavior after the
+        # default flip to whiten=False; approved as non-exchangeable.
+        ncm = GeodesicTopKMeanNCM(topk_same=True, topk_other=True,
+                                  whiten=True, allow_nonexchangeable=True)
     elif ncm_name == "rbf_density":
         # Tuned: scale=0.2 ratio=True from rbf_bandwidth_sweep
-        ncm = RBFDensityNCM(bandwidth_rule="median", sigma_scale=0.2, ratio=True)
+        ncm = RBFDensityNCM(bandwidth_rule="median", sigma_scale=0.2, ratio=True,
+                            allow_nonexchangeable=True)
     else:
         raise ValueError(ncm_name)
     fcp = FullConformalPredictor(ncm, alpha=alpha)

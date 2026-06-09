@@ -38,9 +38,13 @@ def get_superclass(y):
 
 
 def run_fcp_with_macs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
-                      alpha, lam):
-    """Run FCP with MA-CS binary penalty applied post-hoc."""
-    ncm = create_ncm(ncm_name, k=5)
+                      alpha, lam, allow_nonexchangeable=False):
+    """Run FCP with MA-CS binary penalty applied post-hoc.
+
+    allow_nonexchangeable approves (and silences the warning for) a whitened
+    cal-fit NCM passed via ncm_name.
+    """
+    ncm = create_ncm(ncm_name, k=5, allow_nonexchangeable=allow_nonexchangeable)
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
 
@@ -173,7 +177,8 @@ def main():
 
                 if lam == 0.0:
                     # Plain FCP (no penalty)
-                    ncm = create_ncm(NCM, k=5)
+                    # approved: legacy whitened-NCM experiment (non-exchangeable)
+                    ncm = create_ncm(NCM, k=5, allow_nonexchangeable=True)
                     cp = FullConformalPredictor(ncm, alpha=ALPHA)
                     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
                     m = cp.evaluate(X_test, y_test, verbose=False)
