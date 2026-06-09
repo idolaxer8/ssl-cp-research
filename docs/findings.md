@@ -121,6 +121,50 @@ K-means on unlabeled pool → similarity matrix M from cluster co-assignment →
 
 **Effects decompose roughly additively** at cal=800: PCA −19%, MS-CS −13%, combined −24% (vs FCP baseline 2.30 → 1.74 local, 1.87 → 1.41 cluster).
 
+### 4.1 Unlabeled-pool M vs naive cal-centroid M — the unlabeled advantage (2026-06-08)
+
+Isolated the contribution of the unlabeled data: build M from k-means on the **unlabeled pool** ("cluster") vs purely from **calibration class-centroid distances** ("centroid", `M[c,c']=exp(-‖μ_c-μ_c'‖²/τ)`, no unlabeled data). Identical splits, 518 embeddings, full-768, geodesic_topk_mean, 5 trials, best-valid λ (CIFAR-100):
+
+| cal | cal-only centroid M | unlabeled-cluster M | unlabeled gain |
+|-----|---------------------|---------------------|----------------|
+| 200 | 28.96 (barely moves, .847*) | 20.03 (.835*) | **−32%** |
+| 400 | none valid (≈5.4 @ .881) | 4.74 (.890) | **large** (centroid can't hold coverage) |
+| 600 | 3.04 (.890) | 2.79–2.85 (.892–.895) | ~6% |
+| 800 | 2.06 (.910) | 2.06–2.08 (.907) | **~0% (tie)** |
+
+**The unlabeled pool is a small-calibration insurance policy.** Centroid M needs reliable per-class centroids, whose quality ∝ samples/class: at cal=800 (~8/class) they're reliable, so centroid M ties/edges cluster M and the unlabeled data is **redundant**; at cal=600 a modest gain; at **cal≤400 (~2–4/class) cal centroids are noise**, so centroid M barely shrinks sets and under-covers, while the 10K-unlabeled clustering supplies a stable class-similarity prior decoupled from cal size. (* coverage invalid at cal/K<3, non-exch — sizes show the *relative* contribution.) Logs: `output/mscs_centroid_contrib/`. Flag via `--similarity {cluster,centroid}`.
+
+### 4.2 Improved ŷ — variant A (NCM-consistent, no redundant compute) (2026-06-08)
+
+Replaced the naive raw-Euclidean **1-NN** ŷ in the penalty with **ŷ(x) = argmaxₖ (top-k mean similarity to class c)** = the NCM numerator's own class prediction (a top-k vote in the whitened/geodesic metric, vs a single raw-Euclidean neighbour). It **reuses quantities the NCM already computes** (test ŷ free from the candidate loop; cal ŷ from the cached pairwise matrix; exchangeable update O(n_cal)) and removes the two separate `D_cal`/`D_test_cal` distance-matrix builds. A/B (5 trials, cluster MS-CS, best-valid): cal=400 **3.84 vs 4.74 (−19%)**, cal=600 2.79 vs 2.85, cal=800 tie — gain concentrated at small cal because a more accurate ŷ keeps the true class unpenalised (ŷ=y* ⇒ zero penalty), so coverage holds even at λ=0.10 and the penalty can prune harder. Default `--yhat_mode ncm` (legacy `1nn` kept for A/B). Code: `GeodesicTopKMeanNCM.predict_class / _ensure_cal_yhat / predict_class_augmented_cal`.
+
+### 4.3 MS-CS LOO is correct and the M update is optimal
+
+For each hypothesised test label `yc`, FCP forms the augmented set `{cal ∪ (x_test, yc)}` and the penalty must reflect it. Adding **one** point labelled `yc` shifts **only class yc's centroid** `μ_yc ← (n·μ_yc + x_test)/(n+1)`; every other class's centroid/cluster is unchanged. Hence **only row/column `yc` of M can change**:
+- `update_M_for_candidate` (cluster M) re-predicts `yc`'s cluster and recomputes **only row+col `yc`** (O(K)); if `yc`'s nearest cluster is unchanged it returns M **untouched** (O(1)).
+- `update_centroid_M_for_candidate` (centroid M) recomputes **only row+col `yc`** = `exp(-‖μ_yc'-μ_j‖²/τ)`.
+- `predict_class_augmented_cal` (ŷ) recomputes **only column `yc`** of the per-class top-k — `x_test` (label `yc`) can only *raise* each cal point's similarity to class `yc`, so ŷ flips to `yc` exactly where the augmented class-`yc` mean beats the prior best (O(n_cal)).
+
+This is the minimal exact update — O(K)/O(n_cal) per candidate instead of an O(K²)/O(n_cal·K) rebuild — and matches the true LOO semantics.
+
+---
+
+## 4c. Exchangeability — Missing-Class Validity Fix & Fully-Exchangeable Pipeline (2026-06-09)
+
+**Validity bug found & fixed (affects all small-cal coverage numbers).** Small-cal FCP under-covered (CIFAR-100 cal=200 baseline cov **0.844**). Root cause was *not* whitening or the split but an **asymmetric missing-class sentinel** in `GeodesicTopKMeanNCM.score_x`: a test point whose class is absent from cal returned `1e9` (always excluded), while the identical zero-same-neighbour case for a *cal* point flows through `fit()` to a finite `arccos(0)=π/2`. That asymmetry breaks exchangeability exactly when classes go missing from cal (small-cal regime). Fix: score the no-same-class case with the same zero-neighbour convention `fit()` uses. **Proven exactly exchangeable** (fast path == brute-force augmented-bag scores to float32, incl. missing/singleton classes) ⇒ coverage ≥ 1−α by the conformal theorem; empirically restores ≈0.90 at every cal size (cal=200: 0.844 → 0.91). The deficit had tracked the missing-class count precisely.
+
+**Split note.** `stratified_split` balances the *pool* and cal-from-remainder but carves *test* as a random slice first, so at small cal a few classes drain entirely into test ⇒ absent from cal. P(class missing) ≈ (test/(cal+test))^(samples/class): ~8%/class at cal=200 (≈7 classes), ≈0 at cal≥600. **Balancing cal directly** (cal/K per class) is a label-dependent split ⇒ **over-covers** (conservative ~+1–3pp, valid but loose). **Random split + the fix is tight at ≈0.90** even with classes missing.
+
+**Fully-exchangeable pipeline with best set sizes.** Move whitening/PCA off the cal set onto the **independent unlabeled pool** (a fixed map w.r.t. the bag ⇒ exchangeable). `src/exchangeable_features.py` (`UnlabeledTransform`: PCA + within-cluster whitening + k-means, all fit on unlabeled; `IdentityTransform` fallback) + runner `src/exchangeable_fcp_experiment.py` (`--unlabeled_path` ⇒ whiten+PCA+MS-CS; omit ⇒ degrade, still exchangeable). Key isolations: **PCA (from unlabeled) is the efficiency lever**; whitening alone in full-768 does nothing; cluster-whitening *within PCA space* matches the non-exchangeable cal-whiten (cal=800 sz 1.65 vs 1.64); global-whitening hurts. Full pipeline (random split, 10 trials, CIFAR-100):
+
+| cal | degraded FCP | full FCP (PCA+whiten) | + MS-CS (λ=0.1) |
+|-----|--------------|-----------------------|-----------------|
+| 400 | 5.99 | 3.43 | 2.70 |
+| 600 | 2.58 | 1.85 | 1.75 |
+| 800 | 2.00 | 1.61 | 1.56 |
+
+Valid coverage ~0.90 throughout; cal=800 sz **1.56** (vs non-exchangeable headline 1.41 — a small price for an *exact* guarantee). Figure + JSON: `output/exchangeable_fcp/exchangeable_fcp.png`. See `[[fcp-missing-class-validity-fix]]`, `[[exchangeable-unlabeled-pipeline]]`.
+
 ---
 
 ## 4b. MS-CS Exact vs O(1/n) — Exchangeability of the Penalty Path
