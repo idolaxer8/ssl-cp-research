@@ -225,7 +225,7 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                       class_to_cluster=None, cluster_centroids=None,
                       cluster_dists=None, effective_tau=None,
                       return_sets=False, update_M_fn=None, yhat_mode="ncm",
-                      allow_nonexchangeable=False):
+                      allow_nonexchangeable=False, device="cpu", gpu_batch_size=128):
     """Run FCP with MS-CS continuous penalty.
 
     Args:
@@ -264,6 +264,23 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
     ncm = create_ncm(ncm_name, k=5, allow_nonexchangeable=allow_nonexchangeable)
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
+
+    # GPU/torch fast path (set-parity with the loop below; ~7-30x faster). Covers
+    # the canonical config (GeodesicTopKMeanNCM topk_same+topk_other, yhat_mode
+    # "ncm", cluster-M built-in update or frozen penalty); falls back to the CPU
+    # loop for anything else.
+    if device == "cuda":
+        try:
+            from mscs_gpu import run_mscs_torch, MSCSGpuUnsupported
+            return run_mscs_torch(
+                cp, X_cal, y_cal, X_test, y_test, all_classes, alpha, lam, M,
+                exchangeable=exchangeable, yhat_mode=yhat_mode, update_M_fn=update_M_fn,
+                class_centroids=class_centroids, class_counts=class_counts,
+                class_to_cluster=class_to_cluster, cluster_centroids=cluster_centroids,
+                cluster_dists=cluster_dists, effective_tau=effective_tau,
+                device="cuda", batch_size=gpu_batch_size, return_sets=return_sets)
+        except MSCSGpuUnsupported:
+            pass  # unsupported config -> CPU loop below
 
     # Map class labels to indices in M (dict + vectorized lookup array;
     # labels are small non-negative ints, so an array map is exact and fast).

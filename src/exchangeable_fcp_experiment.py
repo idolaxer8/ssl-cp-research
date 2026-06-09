@@ -95,6 +95,9 @@ def main():
     ap.add_argument("--n_trials", type=int, default=10)
     ap.add_argument("--alpha", type=float, default=0.1)
     ap.add_argument("--split", type=str, default="random", choices=list(SPLITS))
+    ap.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"],
+                    help="MS-CS penalty backend: 'cuda' uses the GPU fast path "
+                         "(set-parity, ~7-30x); centroid-M falls back to CPU.")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--output_dir", type=str, default="output/exchangeable_fcp",
                     help="Where to save results JSON (consumed by plot_exchangeable.py).")
@@ -166,7 +169,8 @@ def main():
                         Xc, yc, Xt, yt, allc, args.ncm, args.alpha, lam, M,
                         exchangeable=True, yhat_mode=args.yhat_mode,
                         class_centroids=cls_cen, class_counts=cls_cnt,
-                        effective_tau=eff_tau, update_M_fn=update_fn)
+                        effective_tau=eff_tau, update_M_fn=update_fn,
+                        device=args.device)  # centroid-M unsupported on GPU -> CPU fallback
                     covs.append(cov); szs.append(sz)
                 else:
                     # unlabeled k-means cluster M (in the transformed space)
@@ -179,7 +183,8 @@ def main():
                         exchangeable=True, yhat_mode=args.yhat_mode,
                         class_centroids=cls_cen, class_counts=cls_cnt,
                         class_to_cluster=c2c, cluster_centroids=clu_cen,
-                        cluster_dists=clu_d, effective_tau=eff_tau)
+                        cluster_dists=clu_d, effective_tau=eff_tau,
+                        device=args.device)
                     covs.append(cov); szs.append(sz)
             cov_m, sz_m = float(np.mean(covs)), float(np.mean(szs))
             valid = "OK" if cov_m >= args.alpha * 0 + (1 - args.alpha) - 0.005 else "!!"
