@@ -451,6 +451,33 @@ def test_fine_grained_datasets():
 # Main
 # ----------------------------------------------------------------------
 
+# ----------------------------------------------------------------------
+# Test H: Classes absent from calibration (missing-class symmetry fix)
+# ----------------------------------------------------------------------
+
+def test_missing_classes():
+    """Candidate classes ABSENT from calibration must score identically on CPU and
+    GPU. Regression for the missing-class symmetry fix: the old GPU path forced
+    1e9 for the no-same-class case, diverging from the fixed CPU score_x (which
+    scores it with the zero-neighbour convention -> finite). Every other parity
+    test uses class-complete cal, so this case was previously unguarded."""
+    print("\n=== Test H: Missing classes (absent from cal) ===")
+    results = []
+    for (K, per_class, n_missing, d, seed) in [(20, 25, 4, 64, 10), (50, 12, 9, 128, 11)]:
+        X_all, y_all = make_gmm(K, per_class, d, seed)
+        X_test, _ = make_gmm(K, 8, d, seed + 100)        # test spans ALL K classes
+        keep = y_all < (K - n_missing)                    # drop the last n_missing classes from cal
+        X_cal, y_cal = X_all[keep], y_all[keep]
+        present = len(np.unique(y_cal))
+        assert present == K - n_missing, present
+        for ncm_name in ("geodesic_topk_mean", "geodesic_topk_asym"):
+            r_cpu, r_gpu = run_pair(X_cal, y_cal, X_test, K, ncm_name)
+            results.append(compare(
+                f"K={K} missing={n_missing} ({ncm_name})",
+                r_cpu, r_gpu, K, len(X_cal), ncm_name))
+    return all(results)
+
+
 if __name__ == "__main__":
     if not torch.cuda.is_available():
         print("CUDA not available — cannot run GPU parity tests.")
@@ -469,6 +496,7 @@ if __name__ == "__main__":
         ("E:  Real CIFAR-100",            test_real_cifar100),
         ("F:  API surface parity",        test_api_parity),
         ("G:  Fine-grained datasets",     test_fine_grained_datasets),
+        ("H:  Missing classes",           test_missing_classes),
     ]
     summary = []
     for label, fn in suites:

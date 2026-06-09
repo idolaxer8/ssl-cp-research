@@ -1378,9 +1378,13 @@ class FullConformalPredictor:
                     d_other_test = torch.arccos(max_o.clamp(-1.0, 1.0))
                 test_scores = d_same_test / (d_other_test + eps)
 
-            # No same-class cal points => max nonconformity (matches CPU return 1e9 branch)
-            no_same = (n_same_per_class == 0).unsqueeze(0).expand(B, K)
-            test_scores = torch.where(no_same, torch.full_like(test_scores, 1e9), test_scores)
+            # Missing-class symmetry fix (mirrors the fixed GeodesicTopKMeanNCM.score_x):
+            # a candidate class ABSENT from cal has an all -inf same-class row, so
+            # _topk_mean_along already yields mean 0 -> arccos(0)=pi/2 -- the same
+            # zero-neighbour convention fit() uses for a sole-member class. We must NOT
+            # force 1e9 here: the old override made a test point whose class is missing
+            # from cal non-exchangeable with cal points and under-covered at small cal.
+            # Keep only the genuine non-finite guard (div-by-zero etc.).
             test_scores = torch.where(torch.isfinite(test_scores), test_scores,
                                        torch.full_like(test_scores, 1e9))
 
