@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Response formatting (IMPORTANT)
+
+- **Math must be plain text, never LaTeX.** The user's terminal does NOT render LaTeX/MathJax — `$...$`, `\(...\)`, `\[...\]`, `\frac`, `\sum`, `\hat`, etc. show up as raw unreadable source. Write all equations in plain ASCII/Unicode instead.
+  - Use spelled-out or Unicode operators: `sum_over_c`, `prod`, `sqrt(x)`, `<=`, `>=`, `~=`, `->`.
+  - Subscripts/superscripts with `_` and `^`: `F_c`, `q_hat`, `x^2`, `Fbar^{-1}`.
+  - Greek letters spelled out (`alpha`, `lambda`, `tau`) or Unicode (α, λ, τ) — not `\alpha`.
+  - Use fenced code blocks for multi-line derivations so spacing is preserved.
+  - Define every symbol inline in a `where ...` clause.
+
 ## Project Overview
 
 SSL + Conformal Prediction research: applying Full Conformal Prediction on top of Self-Supervised Learning (SSL) image embeddings for uncertainty quantification. Core pipeline: extract embeddings -> run conformal prediction -> analyze results.
