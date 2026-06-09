@@ -121,22 +121,31 @@ K-means on unlabeled pool → similarity matrix M from cluster co-assignment →
 
 **Effects decompose roughly additively** at cal=800: PCA −19%, MS-CS −13%, combined −24% (vs FCP baseline 2.30 → 1.74 local, 1.87 → 1.41 cluster).
 
-### 4.1 Unlabeled-pool M vs naive cal-centroid M — the unlabeled advantage (2026-06-08)
+### 4.1 Unlabeled-pool M vs cal-centroid M — the unlabeled advantage (re-run post-fix, 2026-06-09)
 
-Isolated the contribution of the unlabeled data: build M from k-means on the **unlabeled pool** ("cluster") vs purely from **calibration class-centroid distances** ("centroid", `M[c,c']=exp(-‖μ_c-μ_c'‖²/τ)`, no unlabeled data). Identical splits, 518 embeddings, full-768, geodesic_topk_mean, 5 trials, best-valid λ (CIFAR-100):
+Contribution of the unlabeled data: M from k-means on the **unlabeled pool** ("cluster") vs purely from **calibration class-centroid distances** ("centroid", `M[c,c']=exp(-‖μ_c-μ_c'‖²/τ)`, no unlabeled). Run **inside the exchangeable pipeline** — PCA-128 (from unlabeled) + unwhitened NCM + missing-class fix + uniform-random split + exchangeable MS-CS + variant-A ŷ; identical splits, 5 trials, best MS-CS set size per cal. Coverage now **valid throughout** (~0.89–0.92; FCP baseline identical across modes):
 
-| cal | cal-only centroid M | unlabeled-cluster M | unlabeled gain |
-|-----|---------------------|---------------------|----------------|
-| 200 | 28.96 (barely moves, .847*) | 20.03 (.835*) | **−32%** |
-| 400 | none valid (≈5.4 @ .881) | 4.74 (.890) | **large** (centroid can't hold coverage) |
-| 600 | 3.04 (.890) | 2.79–2.85 (.892–.895) | ~6% |
-| 800 | 2.06 (.910) | 2.06–2.08 (.907) | **~0% (tie)** |
+| cal | FCP baseline | centroid M (best) | cluster M (best) | unlabeled gain |
+|-----|--------------|-------------------|------------------|----------------|
+| 200 | 19.21 (.921) | 18.87 (λ.10, .915) | **15.55** (λ.10, .914) | **−18%** |
+| 400 | 3.06 (.890)  | 2.57 (λ.10, .886)  | 2.55 (λ.10, .897)  | ~tie |
+| 600 | 1.77 (.912)  | 1.69 (λ.10, .915)  | 1.66 (λ.10, .914)  | ~2% |
+| 800 | 1.63 (.889)  | 1.58 (λ.10, .892)  | 1.53 (λ.10, .891)  | ~3% |
 
-**The unlabeled pool is a small-calibration insurance policy.** Centroid M needs reliable per-class centroids, whose quality ∝ samples/class: at cal=800 (~8/class) they're reliable, so centroid M ties/edges cluster M and the unlabeled data is **redundant**; at cal=600 a modest gain; at **cal≤400 (~2–4/class) cal centroids are noise**, so centroid M barely shrinks sets and under-covers, while the 10K-unlabeled clustering supplies a stable class-similarity prior decoupled from cal size. (* coverage invalid at cal/K<3, non-exch — sizes show the *relative* contribution.) Logs: `output/mscs_centroid_contrib/`. Flag via `--similarity {cluster,centroid}`.
+**Unlabeled M is a small-cal insurance policy, and PCA shrinks that window to cal≈200.** In PCA-128 space the cal class-centroids are denoised, so the cal-only centroid M nearly matches the unlabeled-cluster M from cal=400 onward. The unlabeled pool clearly wins only at **cal=200** (15.55 vs 18.87, −18%), where ~2 samples/class make even PCA-space centroids noisy and the 10K-unlabeled clustering supplies a stable prior. (This supersedes the earlier full-768/non-exchangeable numbers where centroid M failed through cal=400 — PCA + the validity fix narrow the gap.) Flag `--similarity {cluster,centroid}`.
 
-### 4.2 Improved ŷ — variant A (NCM-consistent, no redundant compute) (2026-06-08)
+### 4.2 Improved ŷ — variant A (NCM-consistent, no redundant compute; re-run post-fix, 2026-06-09)
 
-Replaced the naive raw-Euclidean **1-NN** ŷ in the penalty with **ŷ(x) = argmaxₖ (top-k mean similarity to class c)** = the NCM numerator's own class prediction (a top-k vote in the whitened/geodesic metric, vs a single raw-Euclidean neighbour). It **reuses quantities the NCM already computes** (test ŷ free from the candidate loop; cal ŷ from the cached pairwise matrix; exchangeable update O(n_cal)) and removes the two separate `D_cal`/`D_test_cal` distance-matrix builds. A/B (5 trials, cluster MS-CS, best-valid): cal=400 **3.84 vs 4.74 (−19%)**, cal=600 2.79 vs 2.85, cal=800 tie — gain concentrated at small cal because a more accurate ŷ keeps the true class unpenalised (ŷ=y* ⇒ zero penalty), so coverage holds even at λ=0.10 and the penalty can prune harder. Default `--yhat_mode ncm` (legacy `1nn` kept for A/B). Code: `GeodesicTopKMeanNCM.predict_class / _ensure_cal_yhat / predict_class_augmented_cal`.
+ŷ(x) = **argmaxₖ (top-k mean similarity to class c)** = the NCM numerator's own class prediction (a top-k vote vs a single neighbour), replacing the naive 1-NN ŷ. **Reuses** quantities the NCM already computes (test ŷ free from the candidate loop; cal ŷ from the cached pairwise matrix; exchangeable update O(n_cal)) and drops the separate `D_cal`/`D_test_cal` builds. A/B in the exchangeable pipeline (cluster M, PCA-128, random split, 5 trials, best MS-CS set size per cal):
+
+| cal | variant-A ŷ (ncm) | legacy 1-NN ŷ |
+|-----|--------------------|----------------|
+| 200 | **15.55** (.914) | 17.28 (.921) |
+| 400 | 2.55 (.897) | 2.55 (.892) |
+| 600 | 1.66 (.914) | 1.67 (.909) |
+| 800 | 1.53 (.891) | 1.52 (.887) |
+
+Variant-A wins at **cal=200 (15.55 vs 17.28, −10%)** and ties at cal≥400: a more accurate ŷ keeps the true class unpenalised (ŷ=y* ⇒ 0 penalty) so the penalty prunes harder, but in denoised PCA space the 1-NN ŷ is already reliable, so the gain concentrates at the smallest cal. (Supersedes the earlier full-768 −19%@cal=400 figure.) Default `--yhat_mode ncm` (`1nn` kept for A/B). Code: `GeodesicTopKMeanNCM.predict_class / _ensure_cal_yhat / predict_class_augmented_cal`.
 
 ### 4.3 MS-CS LOO is correct and the M update is optimal
 
@@ -164,6 +173,15 @@ This is the minimal exact update — O(K)/O(n_cal) per candidate instead of an O
 | 800 | 2.00 | 1.61 | 1.56 |
 
 Valid coverage ~0.90 throughout; cal=800 sz **1.56** (vs non-exchangeable headline 1.41 — a small price for an *exact* guarantee). Figure + JSON: `output/exchangeable_fcp/exchangeable_fcp.png`. See `[[fcp-missing-class-validity-fix]]`, `[[exchangeable-unlabeled-pipeline]]`.
+
+**Coverage robustness at high cal — under-coverage does NOT worsen.** Fully-exchangeable config (PCA-128, random split), plain FCP, 30 trials, GPU fast-path (verified bit-identical to CPU: set-parity True, ~22× faster):
+
+| cal      | 600  | 800  | 1000 | 1400 | 1800 |
+|----------|------|------|------|------|------|
+| coverage | .894 | .893 | .905 | .899 | .904 |
+| avg size | 1.89 | 1.65 | 1.54 | 1.35 | 1.27 |
+
+No downward drift — coverage holds at the 0.90 target (0.89–0.905) from cal=600→1800 while set size shrinks monotonically (1.89→1.27). Exactly as exact-exchangeability predicts: FCP gets *less* conservative as n grows (bound [1−α, 1−α+1/(n+1)] → 0.90), so it settles at 0.90 rather than degrading. The earlier "0.882 @ cal=800" was a 10-trial noise artifact (0.893 at 30 trials; per-trial swing ±0.02 on 300 test points). Caveat: the GPU path (`_predict_geodesic_gpu`) does **not** yet carry the missing-class fix — use it only where no classes go missing (cal ≳ 600); at small cal use the CPU path.
 
 ---
 
