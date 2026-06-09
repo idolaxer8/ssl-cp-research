@@ -181,7 +181,7 @@ Valid coverage ~0.90 throughout; cal=800 sz **1.56** (vs non-exchangeable headli
 | coverage | .894 | .893 | .905 | .899 | .904 |
 | avg size | 1.89 | 1.65 | 1.54 | 1.35 | 1.27 |
 
-No downward drift — coverage holds at the 0.90 target (0.89–0.905) from cal=600→1800 while set size shrinks monotonically (1.89→1.27). Exactly as exact-exchangeability predicts: FCP gets *less* conservative as n grows (bound [1−α, 1−α+1/(n+1)] → 0.90), so it settles at 0.90 rather than degrading. The earlier "0.882 @ cal=800" was a 10-trial noise artifact (0.893 at 30 trials; per-trial swing ±0.02 on 300 test points). Caveat: the GPU path (`_predict_geodesic_gpu`) does **not** yet carry the missing-class fix — use it only where no classes go missing (cal ≳ 600); at small cal use the CPU path.
+No downward drift — coverage holds at the 0.90 target (0.89–0.905) from cal=600→1800 while set size shrinks monotonically (1.89→1.27). Exactly as exact-exchangeability predicts: FCP gets *less* conservative as n grows (bound [1−α, 1−α+1/(n+1)] → 0.90), so it settles at 0.90 rather than degrading. The earlier "0.882 @ cal=800" was a 10-trial noise artifact (0.893 at 30 trials; per-trial swing ±0.02 on 300 test points). The GPU path (`_predict_geodesic_gpu`) now **also carries the missing-class fix** (the old `1e9` no-same-class override removed; verified bit-identical to the fixed CPU at cal=200 with 9–17 classes missing — regression `tests/test_gpu_fcp_parity.py::test_missing_classes`), so it is valid at every cal size.
 
 ---
 
