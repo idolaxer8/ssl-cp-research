@@ -30,7 +30,7 @@ python src/exchangeable_fcp_experiment.py \
 # degraded but fully-exchangeable fallback (no unlabeled pool)
 python src/exchangeable_fcp_experiment.py --embeddings_path output/embeddings_cifar100.pt
 """
-import sys, os, time, argparse
+import sys, os, time, json, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
@@ -88,6 +88,10 @@ def main():
     ap.add_argument("--alpha", type=float, default=0.1)
     ap.add_argument("--split", type=str, default="random", choices=list(SPLITS))
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--output_dir", type=str, default="output/exchangeable_fcp",
+                    help="Where to save results JSON (consumed by plot_exchangeable.py).")
+    ap.add_argument("--tag", type=str, default=None,
+                    help="Label for this run (default: 'full' if --unlabeled_path else 'degraded').")
     args = ap.parse_args()
 
     data = torch.load(args.embeddings_path, map_location="cpu", weights_only=False)
@@ -116,6 +120,13 @@ def main():
     split_fn = SPLITS[args.split]
     tau_arg = -args.tau  # negative => normalize by median_d^2 (see build_cluster_similarity_matrix)
     lambdas = args.lambdas if mscs_ok else [0.0]
+
+    tag = args.tag or ("full" if args.unlabeled_path else "degraded")
+    results = {"tag": tag,
+               "config": {"unlabeled": bool(args.unlabeled_path), "ncm": args.ncm,
+                          "pca_dim": pca_dim, "whiten": whiten, "mscs": bool(mscs_ok),
+                          "split": args.split, "n_trials": args.n_trials, "alpha": args.alpha},
+               "rows": []}
 
     for cal in args.cal_sizes:
         print(f"\ncal={cal}")
@@ -150,9 +161,17 @@ def main():
             cov_m, sz_m = float(np.mean(covs)), float(np.mean(szs))
             valid = "OK" if cov_m >= args.alpha * 0 + (1 - args.alpha) - 0.005 else "!!"
             label = "FCP (no penalty)" if lam == 0.0 else f"MS-CS lam={lam:.2f}"
+            method = "FCP" if lam == 0.0 else f"MS-CS λ={lam:g}"
+            results["rows"].append({"cal": cal, "lam": lam, "method": method,
+                                    "cov": cov_m, "sz": sz_m})
             print(f"  {label:18s} cov={cov_m:.4f} {valid}  sz={sz_m:.2f}  ({time.time()-t0:.1f}s)")
 
-    print("\nDone.")
+    os.makedirs(args.output_dir, exist_ok=True)
+    out_json = os.path.join(args.output_dir, f"results_{tag}.json")
+    with open(out_json, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nSaved results -> {out_json}")
+    print("Done.")
 
 
 if __name__ == "__main__":
