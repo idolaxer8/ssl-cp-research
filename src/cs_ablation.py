@@ -12,6 +12,9 @@ Usage:
     python src/cs_ablation.py
     python src/cs_ablation.py --cal_sizes 400 600 800 --n_trials 5
 """
+# ARCHIVE-CANDIDATE (review 2026-06-24): HOLD for findings sec 10 P0.4 (per-dataset AE retrain on miniImageNet); archive once P0.4 closes.
+# If unused by the review date, move to src/archive/ -- watch list: src/archive/README.md.
+
 import sys, os, time, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

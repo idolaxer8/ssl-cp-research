@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
 # Make sure src/ is on the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from conformal_prediction import (
     FullConformalPredictor,
     CrossValidationPlusPredictor,

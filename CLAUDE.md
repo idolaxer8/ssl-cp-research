@@ -55,28 +55,37 @@ python src/run_conformal_experiment.py --embeddings_path output/embeddings.pt --
 4. `src/run_conformal_experiment.py` -- Orchestrates CP experiments and multi-method comparisons
 5. `output/` -- All results: `.pt` files (data), `.png` files (plots)
 
-### `conformal_prediction.py` -- key components
+### `conformal_prediction.py` -- transductive FCP core
 
 **Nonconformity Measures** (all subclass `NonconformityMeasure`):
 - `MahalNNRatio` -- Mahalanobis-whitened NN ratio (baseline)
 - `WhitenedGeodesicNNRatio` -- whitened geodesic NN ratio
 - `GeodesicTopKMeanNCM` -- top-k averaged geodesic ratio (symmetric/asymmetric variants, main NCM)
+- `RBFDensityNCM` -- Gaussian kernel density NCM
 - `SoftmaxNonconformity` -- softmax head for split CP baseline
 
 **Predictors**:
-- `FullConformalPredictor` -- Full (transductive) CP
-- `SoftmaxSplitCP` -- Inductive/split CP with softmax classifier (THR score)
-- `SemiCP` -- Semi-supervised CP with NNM augmentation (THR/APS/RAPS scores; Zhou et al. 2025)
+- `FullConformalPredictor` -- Full (transductive) CP; GPU fast path via
+  `predict(device='cuda')`; `predict(update_calibration_scores=False)` gives
+  the SCP-geodesic variant (same sets, no per-candidate refit)
 - `CrossValidationPlusPredictor` -- CV+/Jackknife+
-
-**Score functions** (used by `SemiCP`):
-- `compute_cp_scores(probs, y_indices, score_fn)` -- batch score computation
-- `compute_cp_sets(probs, q_hat, score_fn)` -- prediction set construction
-- Score types: `THR` (1 - p(y)), `APS` (cumulative sorted probs), `RAPS` (APS + rank penalty)
 
 **Utilities**:
 - `create_ncm(ncm_type, k)` -- factory function
-- `cal_test_split` / `stratified_cal_test_split` -- dataset splitting
+- `cal_test_split` / `stratified_cal_test_split` / `stratified_pool_split` /
+  `train_cal_test_split` -- dataset splitting (`stratified_pool_split` is the
+  pool-balanced, random-boundary variant used by macs/mscs experiments)
+- `warn_nonexchangeable` + `ExchangeabilityWarning` -- exchangeability gate
+
+### `split_cp_baselines.py` -- inductive baselines
+
+Re-exported through `conformal_prediction`, so
+`from conformal_prediction import SemiCP, ...` keeps working.
+- `SoftmaxSplitCP` -- Inductive/split CP with softmax classifier (THR score)
+- `SemiCP` -- Semi-supervised CP with NNM augmentation (THR/APS/RAPS scores; Zhou et al. 2025)
+- `ClusteredSplitCP` -- Clustered CP baseline (Ding et al. 2023)
+- `compute_cp_scores(probs, y_indices, score_fn)` / `compute_cp_sets(probs, q_hat, score_fn)`
+  -- score types: `THR` (1 - p(y)), `APS` (cumulative sorted probs), `RAPS` (APS + rank penalty)
 
 ### NCM choices (`--ncm` argument)
 `mahal_nn_ratio`, `whitened_geodesic`, `geodesic_topk_mean`, `geodesic_topk_asym`, `softmax`
@@ -105,16 +114,27 @@ numerically unchanged, it just warns.
   cal-fit numeric behavior but require this approval to run warning-free.
 
 ### Active experiment scripts
+- `src/exchangeable_fcp_experiment.py` -- main exchangeable FCP runner (pool transform + MS-CS)
+- `src/pool_ablation_hightrial.py` / `src/pool_source_comparison.py` / `src/pool_source_limits.py` -- unlabeled-pool ablations (+ cal+test transduction, findings 4d; plots via `src/plot_pool_source.py`)
+- `src/mscs_unlabeled_experiment.py` -- MS-CS with unlabeled data (also the `run_fcp_with_mscs` library)
+- `src/mscs_exchangeability_experiment.py` -- MS-CS exact vs O(1/n) penalty path
 - `src/macs_experiment.py` -- MA-CS binary superclass penalty (Fargion et al. 2025)
-- `src/mscs_unlabeled_experiment.py` -- MS-CS with unlabeled data (k-means clustering)
+- `src/mscs_vs_macs_experiment.py` -- MS-CS vs MA-CS head-to-head on the exchangeable engine
+- `src/cs_comparison.py` / `src/cs_ablation.py` -- MA-CS vs MS-CS (legacy engine); reduction x MS-CS ablation
 - `src/semicp_experiment.py` -- SemiCP vs FCP comparison (Zhou et al. 2025)
-- `src/pca_experiment.py` -- PCA dimensionality reduction
-- `src/compare_ncms.py` -- NCM comparison
+- `src/conditional_coverage_experiment.py` -- class-conditional coverage (CovGap, ClusterCP baseline)
+- `src/pca_experiment.py` -- PCA/AE dimensionality reduction
+- `src/ncm_comparison_reduced.py` -- NCM comparison across reductions
+- `src/rbf_ncm_experiment.py` -- RBF density NCM iteration
 - `src/compare_backbones.py` -- SSL backbone comparison
-- `src/run_multi_dataset_experiments.py` -- multi-dataset FCP vs CV+ vs SCP
 
-### Archived (in `src/archive/`)
-Completed/failed investigations: pool augmentation, LATA score smoothing, split audit, few-shot, old SSL comparison, rank diagnostic, old plots.
+### Archived (in `src/archive/`, see its README.md)
+Completed/failed/superseded investigations: pool augmentation, LATA score
+smoothing, split audit, few-shot, old SSL comparison, rank diagnostic, old
+plots; since 2026-06-10 also the superseded one-off comparisons
+(`run_multi_dataset_experiments`, `compare_ncms`, `fcp_vs_aps_raps`,
+`fcp_vs_scp_mlp`, `pca_vs_semicp`, `visualize_embeddings`) and the RBF NCM
+dev iterations.
 
 ## Notes
 

@@ -7,6 +7,9 @@ Usage:
         --backbone_names dinov2-base clip-base beitv2-base \
         --n_trials 5 --output_dir output/backbone_comparison
 """
+# ARCHIVE-CANDIDATE (review 2026-06-24): HOLD for P2.11 (backbone sensitivity on cluster); archive if P2.11 is dropped.
+# If unused by the review date, move to src/archive/ -- watch list: src/archive/README.md.
+
 
 import sys, os, time, argparse, json, math
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

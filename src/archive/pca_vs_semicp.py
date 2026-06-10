@@ -30,7 +30,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from conformal_prediction import FullConformalPredictor, create_ncm
 from mscs_unlabeled_experiment import build_cluster_similarity_matrix, run_fcp_with_mscs
 from autoencoder_utils import EmbeddingAutoencoder

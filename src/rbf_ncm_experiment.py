@@ -11,6 +11,9 @@ Pipeline:
      candidate D    PCA-32  + rbf_density           (linear features + nonlinear NCM)
      candidate E    AE-32   + rbf_density           (nonlinear + nonlinear)
 """
+# ARCHIVE-CANDIDATE (review 2026-06-24): HOLD for P1.5 (RBF NCM multi-dataset confirmation); archive if P1.5 is dropped.
+# If unused by the review date, move to src/archive/ -- watch list: src/archive/README.md.
+
 
 import sys
 import time

@@ -4,6 +4,12 @@
 > Detailed tables, retracted results, and superseded numbers: `archive/findings_archive.md`.
 > Per-experiment raw outputs: `output/`, cluster runs in `output/from_cluster/`.
 
+<!-- De-bloat convention (docs/repo_cleanup_routine.md step 4): to schedule a
+     section for archiving, add an HTML comment directly under its heading
+     containing:  ARCHIVE-SECTION (review YYYY-MM-DD): reason
+     The bi-weekly cleanup routine moves past-due tagged sections VERBATIM to
+     archive/findings_archive.md and leaves a tombstone pointer here. -->
+
 ---
 
 ## 1. Headline & Setup

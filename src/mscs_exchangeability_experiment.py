@@ -47,6 +47,9 @@ Laptop smoke test (synthetic data, no .pt files needed, ~30 s):
 Run from a different checkout (point at an existing output/ dir):
     python src/mscs_exchangeability_experiment.py --embeddings_root /path/to/repo
 """
+# ARCHIVE-CANDIDATE (review 2026-06-24): question settled (findings sec 4b: exact vs frozen penalty ~identical).
+# If unused by the review date, move to src/archive/ -- watch list: src/archive/README.md.
+
 
 import argparse
 import csv
