@@ -74,6 +74,14 @@ must stay re-runnable, so structural changes are verbatim moves verified
 bit-identical (same RNG stream -> same splits -> same numbers) and gated by
 the two GPU parity tests in `tests/`.
 
+The layout is kept ordered by a standing cadence rather than ad-hoc cleanups:
+borderline scripts carry greppable `ARCHIVE-CANDIDATE (review <date>)` notes
+collected in a watch list (`src/archive/README.md`), and a bi-weekly cloud
+routine executes `docs/repo_cleanup_routine.md` — archiving past-due unused
+candidates, flagging newly stale files, and delivering a review PR. Scripts
+tied to pending `docs/findings.md` §10 items are HOLD-marked and outlive
+their review date until the item closes.
+
 Deliberately *not* unified: the three `stratified_split` variants
 (pool-balanced random-boundary in macs/mscs; exact per-class in semicp;
 generic N-way in pca_experiment) encode different statistical designs —
