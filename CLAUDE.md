@@ -105,16 +105,26 @@ numerically unchanged, it just warns.
   cal-fit numeric behavior but require this approval to run warning-free.
 
 ### Active experiment scripts
+- `src/exchangeable_fcp_experiment.py` -- main exchangeable FCP runner (pool transform + MS-CS)
+- `src/pool_ablation_hightrial.py` / `src/pool_source_comparison.py` -- unlabeled-pool ablations
+- `src/mscs_unlabeled_experiment.py` -- MS-CS with unlabeled data (also the `run_fcp_with_mscs` library)
+- `src/mscs_exchangeability_experiment.py` -- MS-CS exact vs O(1/n) penalty path
 - `src/macs_experiment.py` -- MA-CS binary superclass penalty (Fargion et al. 2025)
-- `src/mscs_unlabeled_experiment.py` -- MS-CS with unlabeled data (k-means clustering)
+- `src/cs_comparison.py` / `src/cs_ablation.py` -- MA-CS vs MS-CS; reduction x MS-CS ablation
 - `src/semicp_experiment.py` -- SemiCP vs FCP comparison (Zhou et al. 2025)
-- `src/pca_experiment.py` -- PCA dimensionality reduction
-- `src/compare_ncms.py` -- NCM comparison
+- `src/conditional_coverage_experiment.py` -- class-conditional coverage (CovGap, ClusterCP baseline)
+- `src/pca_experiment.py` -- PCA/AE dimensionality reduction
+- `src/ncm_comparison_reduced.py` -- NCM comparison across reductions
+- `src/rbf_ncm_experiment.py` -- RBF density NCM iteration
 - `src/compare_backbones.py` -- SSL backbone comparison
-- `src/run_multi_dataset_experiments.py` -- multi-dataset FCP vs CV+ vs SCP
 
-### Archived (in `src/archive/`)
-Completed/failed investigations: pool augmentation, LATA score smoothing, split audit, few-shot, old SSL comparison, rank diagnostic, old plots.
+### Archived (in `src/archive/`, see its README.md)
+Completed/failed/superseded investigations: pool augmentation, LATA score
+smoothing, split audit, few-shot, old SSL comparison, rank diagnostic, old
+plots; since 2026-06-10 also the superseded one-off comparisons
+(`run_multi_dataset_experiments`, `compare_ncms`, `fcp_vs_aps_raps`,
+`fcp_vs_scp_mlp`, `pca_vs_semicp`, `visualize_embeddings`) and the RBF NCM
+dev iterations.
 
 ## Notes
 

@@ -45,23 +45,15 @@ python src/extract_features.py \
 
 This saves embeddings to `output/embeddings.pt`.
 
-### Step 2: (Optional) Visualize Embeddings
+### Step 2: Run Conformal Prediction
 
-```bash
-python src/visualize_embeddings.py \
-    --input_path output/embeddings.pt \
-    --method tsne
-```
-
-### Step 3: Run Conformal Prediction
-
-Run Full CP with k-NN nonconformity measure:
+Run Full CP with the geodesic top-k nonconformity measure:
 
 ```bash
 python src/run_conformal_experiment.py \
     --embeddings_path output/embeddings.pt \
     --alpha 0.1 \
-    --ncm simplified_knn \
+    --ncm geodesic_topk_mean \
     --k 5 \
     --cal_ratio 0.5 \
     --save_predictions
