@@ -119,7 +119,8 @@ numerically unchanged, it just warns.
 - `src/mscs_unlabeled_experiment.py` -- MS-CS with unlabeled data (also the `run_fcp_with_mscs` library)
 - `src/mscs_exchangeability_experiment.py` -- MS-CS exact vs O(1/n) penalty path
 - `src/macs_experiment.py` -- MA-CS binary superclass penalty (Fargion et al. 2025)
-- `src/cs_comparison.py` / `src/cs_ablation.py` -- MA-CS vs MS-CS; reduction x MS-CS ablation
+- `src/mscs_vs_macs_experiment.py` -- MS-CS vs MA-CS head-to-head on the exchangeable engine
+- `src/cs_comparison.py` / `src/cs_ablation.py` -- MA-CS vs MS-CS (legacy engine); reduction x MS-CS ablation
 - `src/semicp_experiment.py` -- SemiCP vs FCP comparison (Zhou et al. 2025)
 - `src/conditional_coverage_experiment.py` -- class-conditional coverage (CovGap, ClusterCP baseline)
 - `src/pca_experiment.py` -- PCA/AE dimensionality reduction

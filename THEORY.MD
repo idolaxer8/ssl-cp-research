@@ -108,8 +108,6 @@ them would silently change experiment semantics.
   the cluster matched-518 setup, nor through the SCP-geodesic equivalence.
 - Multi-dataset breadth for the penalty story (MA-CS/MS-CS on CUB-200,
   miniImageNet) and the very-small-cal regime (cal/K = 2-8) are the main
-  unproven legs of the paper's headline table.
-- The lost `mscs_vs_macs_experiment.py` driver (worktree consolidation,
-  2026-06-07): its results survive in `output/mscs_vs_macs/` and memory, but
-  re-running that head-to-head requires rebuilding the driver on the
-  exchangeable engine.
+  unproven legs of the paper's headline table. The MA-CS-vs-MS-CS
+  head-to-head driver on the exchangeable engine is
+  `src/mscs_vs_macs_experiment.py` (results in `output/mscs_vs_macs{,_pca}/`).
