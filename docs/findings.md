@@ -202,6 +202,28 @@ The MS-CS penalty (§4) runs two ways in `run_fcp_with_mscs`: **frozen** (M and 
 
 ---
 
+## 4d. Pool Source — cal+test Transduction Can Replace a Separate Unlabeled Pool (2026-06-10)
+
+§4c moves PCA+whitening onto a *separate* unlabeled pool. But that pool only supplies a **fixed, label-free feature map** — and the **cal+test points themselves, used without labels**, can supply it too. Fitting the PCA+whiten transform symmetrically on cal∪test (Silva-Rodríguez / SCA-T; Fan & Sesia 2025 transductive standardization) depends only on the unordered feature multiset ⇒ fixed under any cal↔test swap ⇒ **exactly exchangeable**, the same guarantee a disjoint pool gives. The test batch replaces the pool for free; only the fit-set *size* (cal+test, ~1–2k) differs from a 10k pool.
+
+**Source comparison** (CIFAR-100, DINOv2-518, 30 trials, test=1000, random split, plain FCP, PCA-128 + cluster-whiten; coverage all **0.896–0.902** ⇒ exact, incl. transductive):
+
+| cal | no-pool | transductive (cal+test) | pool-matched (=size) | pool-10k |
+|-----|---------|-------------------------|----------------------|----------|
+| 200 | 31.22 | 21.10 | 19.71 | 18.76 |
+| 400 | 6.02  | 4.10  | 3.56  | 3.25  |
+| 800 | 2.38  | 1.83  | 1.79  | 1.67  |
+
+Transductive recovers most of the pool's benefit (−32% / −32% / −23% vs no-pool). At **equal fit-set size**, transductive ≈ pool-matched (≤ ~1.6 SE, ~7% avg) — the unlabeled-data *source* is interchangeable; *size* is what matters. The 10k pool's only edge is sample count (a further 5–9%, significant only at cal=800). `src/pool_source_comparison.py`, `output/pool_source_comparison/`.
+
+**Limits — how small can the test batch get?** (cal=400 fixed, sweep test ∈ {50…1000}, 20 trials). Validity holds at *every* test size incl. test=50 (all arms in the same 0.884–0.898 band as the exact no-pool/pool-10k baselines). Degradation is **graceful, no cliff**: shrinking test 1000→50 (fit-set 1400→450) costs transductive only **+16%** (sz 3.84→4.45), still 23% below no-pool. The small-test cost is a *size* gap, not a cal+test pathology (transductive tracks pool-matched throughout); the fully-pool-free cost (transductive vs pool-10k) grows **+20% (test=1000) → +46% (test=50)**.
+
+**MS-CS complement — its cluster matrix M also works from cal+test.** Building M via k-means on the transformed cal+test (instead of the pool) is exactly exchangeable and shaves **11–15%** off each pipeline. The **fully pool-free** transductive+MS-CS (transform AND M from cal+test) **matches plain full-pool FCP** at test ≥ 500 (test=1000: 3.28 vs pool-10k 3.20); pool+MS-CS is best (~2.6–2.8, flat in test). `src/pool_source_limits.py`, `output/pool_source_limits/`. See `[[pool-source-transductive]]`.
+
+**Takeaway.** A separate unlabeled pool is a convenience, not a requirement: the test batch already in hand is an exactly-valid, nearly-as-efficient substitute for *both* the feature transform and the MS-CS penalty. A real 10k pool buys +20% (large test) to +46% (tiny test) of extra efficiency, purely from its larger fit-set.
+
+---
+
 ## 5. Whitened-RBF NCM + AE-128 — Confirmed Win at Medium Cal
 
 After the AE/PCA diagnostics predicted that nonlinear NCMs would let AE features pay off, we built `RBFDensityNCM` (Gaussian kernel density, ratio mode, pooled-within-class whitening). See `[[rbf-ncm-with-ae]]`.
