@@ -8,6 +8,9 @@ Usage:
     python src/ncm_comparison_reduced.py
     python src/ncm_comparison_reduced.py --cal_sizes 400,600,800 --n_trials 5
 """
+# ARCHIVE-CANDIDATE (review 2026-06-24): results recorded 2026-05-14; HOLD for P0.3 (geodesic_topk_asym cluster confirmation).
+# If unused by the review date, move to src/archive/ -- watch list: src/archive/README.md.
+
 
 import sys, os, time, argparse, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

@@ -5,6 +5,31 @@ repo root (`python src/archive/<script>.py`) but no longer maintained — they
 may lag behind API changes in `src/conformal_prediction.py`. Results they
 produced are recorded in `docs/findings.md` and `archive/findings_archive.md`.
 
+## Watch list — archive candidates (review 2026-06-24)
+
+Files still in `src/` that get archived at the next bi-weekly cleanup sweep
+if their review date passes without use. Each carries a matching
+`# ARCHIVE-CANDIDATE (review YYYY-MM-DD)` header note (greppable). Entries
+marked HOLD are tied to a pending item in `docs/findings.md` §10 — archive
+them only when that item completes or is dropped, even past the review date.
+
+| File | Why candidate | Condition |
+|---|---|---|
+| `cs_comparison.py` | superseded by `mscs_vs_macs_experiment.py` (exchangeable engine) | archive if unused |
+| `unlabeled_size_sweep.py` | pool-size question settled (findings §3) | archive if unused |
+| `linearity_diagnostics.py` | AE-vs-PCA linearity question settled (findings §3) | archive if unused |
+| `mscs_exchangeability_experiment.py` | exact-vs-frozen penalty question settled (findings §4b) | archive if unused |
+| `ncm_comparison_reduced.py` | results recorded 2026-05-14 | HOLD: P0.3 (topk_asym cluster confirmation) |
+| `cs_ablation.py` | reduction×MS-CS ablation recorded | HOLD: P0.4 (per-dataset AE retrain) |
+| `compare_backbones.py` | backbone comparison recorded (findings §7) | HOLD: P2.11 (cluster backbone sensitivity) |
+| `rbf_ncm_experiment.py` | RBF result recorded (findings §5) | HOLD: P1.5 (RBF multi-dataset) |
+
+Never candidates: library modules imported by active code
+(`conformal_prediction`, `split_cp_baselines`, `exchangeable_features`,
+`autoencoder_utils`, `mscs_gpu`, `macs_experiment`, `mscs_unlabeled_experiment`,
+`semicp_experiment`), pipeline infra (`extract_features`, `download_datasets`,
+`run_conformal_experiment`), and anything with uncommitted changes.
+
 ## Superseded one-off comparisons (archived 2026-06-10)
 
 | Script | What it was | Superseded by / outcome |

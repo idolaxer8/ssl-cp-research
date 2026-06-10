@@ -8,6 +8,9 @@ Usage:
     python src/cs_comparison.py
     python src/cs_comparison.py --cal_sizes 300 400 600 800 --n_trials 5
 """
+# ARCHIVE-CANDIDATE (review 2026-06-24): superseded by mscs_vs_macs_experiment.py (exchangeable engine).
+# If unused by the review date, move to src/archive/ -- watch list: src/archive/README.md.
+
 import sys, os, time, json, math
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

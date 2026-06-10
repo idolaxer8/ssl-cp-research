@@ -17,6 +17,9 @@ Usage:
     python src/unlabeled_size_sweep.py --cal_size 400 \\
         --unlabeled_sizes 0 100 250 500 1000 2500 5000 10000 --n_trials 5
 """
+# ARCHIVE-CANDIDATE (review 2026-06-24): pool-size question settled (findings sec 3).
+# If unused by the review date, move to src/archive/ -- watch list: src/archive/README.md.
+
 
 import argparse
 import json
