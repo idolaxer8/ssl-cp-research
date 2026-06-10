@@ -17,7 +17,7 @@ fallback sampled from the full labeled set and overlapped cal/test.
 
 Reference: Fargion, Dabah & Tirer (2025), Section 4.
 """
-import sys, os, time, math
+import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
@@ -26,6 +26,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import euclidean_distances
 from conformal_prediction import (
     FullConformalPredictor, create_ncm, warn_nonexchangeable,
+    stratified_pool_split as stratified_split,
 )
 
 
@@ -387,41 +388,6 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
     if return_sets:
         return coverage, avg_size, prediction_sets
     return coverage, avg_size
-
-
-def stratified_split(X, y, cal_size, test_size, all_classes, rng):
-    """Stratified pool -> cal + test split (same as macs_experiment.py)."""
-    n_classes = len(all_classes)
-    num_per_class = math.ceil((test_size + cal_size) / n_classes)
-    min_count = min(np.sum(y == c) for c in all_classes)
-    num_per_class = min(num_per_class, min_count)
-
-    pool_idx = []
-    for c in all_classes:
-        c_idx = np.where(y == c)[0]
-        chosen = rng.choice(c_idx, num_per_class, replace=False)
-        pool_idx.append(chosen)
-    pool_idx = np.concatenate(pool_idx)
-    rng.shuffle(pool_idx)
-
-    X_pool, y_pool = X[pool_idx], y[pool_idx]
-    X_test, y_test = X_pool[-test_size:], y_pool[-test_size:]
-    X_rem, y_rem = X_pool[:-test_size], y_pool[:-test_size]
-
-    # Stratified cal
-    rem_classes = np.unique(y_rem)
-    first = np.array([rng.choice(np.where(y_rem == c)[0], 1, replace=False)[0]
-                      for c in rem_classes])
-    rest = np.setdiff1d(np.arange(len(X_rem)), first)
-    n_extra = cal_size - len(rem_classes)
-    if n_extra > 0:
-        extra = rng.choice(rest, min(n_extra, len(rest)), replace=False)
-        cal_idx = np.concatenate([first, extra])
-    else:
-        cal_idx = first[:cal_size]
-    cal_idx = rng.permutation(cal_idx)
-
-    return X_rem[cal_idx], y_rem[cal_idx], X_test, y_test
 
 
 def stratified_holdout_unlabeled(X, y, all_classes, n_unlabeled, rng):

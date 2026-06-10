@@ -9,6 +9,7 @@ This implementation provides:
 3. Optimizations: caching, vectorization, early stopping
 """
 
+import math
 import time
 import warnings
 from typing import Dict, Optional, Tuple
@@ -2963,3 +2964,49 @@ def stratified_cal_test_split(
           f"Test={len(X_test)}, Classes={n_classes}")
 
     return X_cal, y_cal, X_test, y_test
+
+
+def stratified_pool_split(X, y, cal_size, test_size, all_classes, rng):
+    """Stratified POOL -> cal + test split with a random cal/test boundary.
+
+    Balances only the carved pool (ceil((cal_size+test_size)/K) per class),
+    then takes test as the last test_size of the shuffled pool; cal gets >=1
+    sample per class surviving in the remainder, rest random. Unlike
+    stratified_cal_test_split(balanced=True), cal itself is NOT forced
+    class-balanced: the label-blind cal/test boundary keeps the bag exactly
+    exchangeable (tight ~1-alpha coverage), but at small cal some classes can
+    be missing from cal entirely (relies on the NCM's symmetric missing-class
+    handling). Historically duplicated in macs_experiment.py /
+    mscs_unlabeled_experiment.py as `stratified_split`; hoisted verbatim.
+    """
+    n_classes = len(all_classes)
+    num_per_class = math.ceil((test_size + cal_size) / n_classes)
+    min_count = min(np.sum(y == c) for c in all_classes)
+    num_per_class = min(num_per_class, min_count)
+
+    pool_idx = []
+    for c in all_classes:
+        c_idx = np.where(y == c)[0]
+        chosen = rng.choice(c_idx, num_per_class, replace=False)
+        pool_idx.append(chosen)
+    pool_idx = np.concatenate(pool_idx)
+    rng.shuffle(pool_idx)
+
+    X_pool, y_pool = X[pool_idx], y[pool_idx]
+    X_test, y_test = X_pool[-test_size:], y_pool[-test_size:]
+    X_rem, y_rem = X_pool[:-test_size], y_pool[:-test_size]
+
+    # Stratified cal
+    rem_classes = np.unique(y_rem)
+    first = np.array([rng.choice(np.where(y_rem == c)[0], 1, replace=False)[0]
+                      for c in rem_classes])
+    rest = np.setdiff1d(np.arange(len(X_rem)), first)
+    n_extra = cal_size - len(rem_classes)
+    if n_extra > 0:
+        extra = rng.choice(rest, min(n_extra, len(rest)), replace=False)
+        cal_idx = np.concatenate([first, extra])
+    else:
+        cal_idx = first[:cal_size]
+    cal_idx = rng.permutation(cal_idx)
+
+    return X_rem[cal_idx], y_rem[cal_idx], X_test, y_test
