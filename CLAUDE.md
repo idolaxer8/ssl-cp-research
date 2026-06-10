@@ -115,7 +115,7 @@ numerically unchanged, it just warns.
 
 ### Active experiment scripts
 - `src/exchangeable_fcp_experiment.py` -- main exchangeable FCP runner (pool transform + MS-CS)
-- `src/pool_ablation_hightrial.py` / `src/pool_source_comparison.py` -- unlabeled-pool ablations
+- `src/pool_ablation_hightrial.py` / `src/pool_source_comparison.py` / `src/pool_source_limits.py` -- unlabeled-pool ablations (+ cal+test transduction, findings 4d; plots via `src/plot_pool_source.py`)
 - `src/mscs_unlabeled_experiment.py` -- MS-CS with unlabeled data (also the `run_fcp_with_mscs` library)
 - `src/mscs_exchangeability_experiment.py` -- MS-CS exact vs O(1/n) penalty path
 - `src/macs_experiment.py` -- MA-CS binary superclass penalty (Fargion et al. 2025)
