@@ -55,28 +55,37 @@ python src/run_conformal_experiment.py --embeddings_path output/embeddings.pt --
 4. `src/run_conformal_experiment.py` -- Orchestrates CP experiments and multi-method comparisons
 5. `output/` -- All results: `.pt` files (data), `.png` files (plots)
 
-### `conformal_prediction.py` -- key components
+### `conformal_prediction.py` -- transductive FCP core
 
 **Nonconformity Measures** (all subclass `NonconformityMeasure`):
 - `MahalNNRatio` -- Mahalanobis-whitened NN ratio (baseline)
 - `WhitenedGeodesicNNRatio` -- whitened geodesic NN ratio
 - `GeodesicTopKMeanNCM` -- top-k averaged geodesic ratio (symmetric/asymmetric variants, main NCM)
+- `RBFDensityNCM` -- Gaussian kernel density NCM
 - `SoftmaxNonconformity` -- softmax head for split CP baseline
 
 **Predictors**:
-- `FullConformalPredictor` -- Full (transductive) CP
-- `SoftmaxSplitCP` -- Inductive/split CP with softmax classifier (THR score)
-- `SemiCP` -- Semi-supervised CP with NNM augmentation (THR/APS/RAPS scores; Zhou et al. 2025)
+- `FullConformalPredictor` -- Full (transductive) CP; GPU fast path via
+  `predict(device='cuda')`; `predict(update_calibration_scores=False)` gives
+  the SCP-geodesic variant (same sets, no per-candidate refit)
 - `CrossValidationPlusPredictor` -- CV+/Jackknife+
-
-**Score functions** (used by `SemiCP`):
-- `compute_cp_scores(probs, y_indices, score_fn)` -- batch score computation
-- `compute_cp_sets(probs, q_hat, score_fn)` -- prediction set construction
-- Score types: `THR` (1 - p(y)), `APS` (cumulative sorted probs), `RAPS` (APS + rank penalty)
 
 **Utilities**:
 - `create_ncm(ncm_type, k)` -- factory function
-- `cal_test_split` / `stratified_cal_test_split` -- dataset splitting
+- `cal_test_split` / `stratified_cal_test_split` / `stratified_pool_split` /
+  `train_cal_test_split` -- dataset splitting (`stratified_pool_split` is the
+  pool-balanced, random-boundary variant used by macs/mscs experiments)
+- `warn_nonexchangeable` + `ExchangeabilityWarning` -- exchangeability gate
+
+### `split_cp_baselines.py` -- inductive baselines
+
+Re-exported through `conformal_prediction`, so
+`from conformal_prediction import SemiCP, ...` keeps working.
+- `SoftmaxSplitCP` -- Inductive/split CP with softmax classifier (THR score)
+- `SemiCP` -- Semi-supervised CP with NNM augmentation (THR/APS/RAPS scores; Zhou et al. 2025)
+- `ClusteredSplitCP` -- Clustered CP baseline (Ding et al. 2023)
+- `compute_cp_scores(probs, y_indices, score_fn)` / `compute_cp_sets(probs, q_hat, score_fn)`
+  -- score types: `THR` (1 - p(y)), `APS` (cumulative sorted probs), `RAPS` (APS + rank penalty)
 
 ### NCM choices (`--ncm` argument)
 `mahal_nn_ratio`, `whitened_geodesic`, `geodesic_topk_mean`, `geodesic_topk_asym`, `softmax`
