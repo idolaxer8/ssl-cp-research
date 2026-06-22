@@ -207,6 +207,40 @@ def test_edge_cases():
 
 
 # ----------------------------------------------------------------------
+# 4. Vectorized (GPU) path parity vs the CPU Python loop
+# ----------------------------------------------------------------------
+def test_vectorized_parity():
+    """`_predict_ridge_softmax_gpu` (batched torch; CUDA if available, else
+    vectorised CPU) must match the CPU Python loop bit-for-bit -- prediction sets
+    identical and p-values to ~1e-9. Requires all candidate classes in cal (use a
+    balanced cal draw). Runs everywhere (no CUDA needed)."""
+    K, d = 20, 16
+    X, y = make_gmm(K=K, per_class=120, d=d, seed=2, sep=3.0)
+    rng = np.random.default_rng(0)
+    ci, ti = [], []
+    for c in range(K):
+        idx = rng.permutation(np.where(y == c)[0])
+        ci.append(idx[:10]); ti.append(idx[10:18])
+    ci = np.concatenate(ci); ti = np.concatenate(ti)
+    allc = np.unique(y[ci])
+    max_dp = 0.0
+    for loo in (True, False):
+        for la in (1.0, 8.0):
+            ncm = RidgeSoftmaxNCM(temperature=0.2, lam_anchor=la, loo=loo)
+            cp = FullConformalPredictor(ncm, alpha=0.1)
+            cp.calibrate(X[ci], y[ci], all_classes=allc)
+            rc = cp.predict(X[ti], return_p_values=True, device="cpu", verbose=False)
+            rv = cp._predict_ridge_softmax_gpu(X[ti], return_p_values=True, verbose=False)
+            for a, b in zip(rc["prediction_sets"], rv["prediction_sets"]):
+                assert sorted(a) == sorted(b), f"set mismatch loo={loo} la={la}"
+            pc = np.array([[rc["p_values"][i][int(c)] for c in allc] for i in range(len(ti))])
+            pv = np.array([[rv["p_values"][i][int(c)] for c in allc] for i in range(len(ti))])
+            max_dp = max(max_dp, float(np.abs(pc - pv).max()))
+    assert max_dp < 1e-9, f"vectorized p-value mismatch {max_dp:.2e}"
+    print(f"test_vectorized_parity: PASS (max |cpu - vectorized| = {max_dp:.2e})")
+
+
+# ----------------------------------------------------------------------
 # Informational: set-size vs the exact geodesic control (no assert)
 # ----------------------------------------------------------------------
 def report_setsize_vs_geodesic():
@@ -240,6 +274,7 @@ def report_setsize_vs_geodesic():
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     test_oracle()
+    test_vectorized_parity()
     test_coverage()
     test_edge_cases()
     print("\n--- informational ---")

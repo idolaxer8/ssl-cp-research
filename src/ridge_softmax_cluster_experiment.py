@@ -18,13 +18,16 @@ Pipeline = exchangeable: PCA + cluster-whitening fit on the UNLABELED pool
 (exchangeable_features.UnlabeledTransform); the NCM scores the transformed
 features (no cal-fit whitening).
 
-RUNTIME / DEVICE NOTE (important):
-  * The geodesic NCMs have a GPU fast path -- pass --device cuda on the cluster.
-  * `ridge_softmax` is CPU-only and its per-test cost grows with cal, so it is the
-    runtime bottleneck at large cal (this is exactly what the runtime metric
-    captures). For a FAIR head-to-head runtime comparison, run ALL NCMs on the
-    SAME device: --device cpu. Start with --n_trials 5 to gauge ridge runtime,
-    then scale up.
+RUNTIME / DEVICE NOTE:
+  * ALL NCMs here (ridge_softmax AND the geodesics) have a vectorized GPU path --
+    pass --device cuda on the cluster. ridge_softmax's GPU path (Sherman-Morrison
+    rank-1 + PRESS, batched over test points) matches the CPU loop bit-for-bit and
+    is what makes the extensive sweep feasible. It uses float64 for that exact
+    parity (RTX 6000 Ada has strong fp64). It requires every candidate class
+    present in cal (always true for the balanced split); it silently falls back to
+    CPU otherwise.
+  * The `runtime_s` metric still records per-NCM predict time; for a strictly fair
+    comparison keep all NCMs on the same --device.
 
 KNOWN REGIME CAVEAT (verified on CIFAR-100, K=100):
   * ridge_softmax (a discriminative probe) needs enough samples per class. At
@@ -142,7 +145,9 @@ def run_dataset(ds, args):
             print(f"  [skip cal={cal}] m_cal={m_cal} < 2 (need cal >= 2K = {2 * K})")
             continue
         for ncm_name in args.ncms:
-            dev = "cpu" if ncm_name not in GEO_NCMS else args.device
+            # ridge_softmax now has a vectorized GPU path too (it requires every
+            # candidate class present in cal -> always true for the balanced split).
+            dev = args.device
             cls_to_j = {int(c): j for j, c in enumerate(allc)}
             covs, szs, ts, gaps_pt = [], [], [], []
             pooled_cov = np.zeros(K)   # per-class covered count, accumulated over trials
@@ -161,7 +166,10 @@ def run_dataset(ds, args):
                 cp = FullConformalPredictor(ncm, alpha=args.alpha)
                 cp.calibrate(Xc, yc, all_classes=allc)
                 t0 = time.perf_counter()
-                res = cp.predict(Xt, verbose=False, device=dev)
+                try:
+                    res = cp.predict(Xt, verbose=False, device=dev)
+                except (RuntimeError, ValueError):
+                    res = cp.predict(Xt, verbose=False, device="cpu")  # safety fallback
                 rt = time.perf_counter() - t0
                 psets = res["prediction_sets"]
                 covered = np.array([yt[i] in psets[i] for i in range(len(yt))])

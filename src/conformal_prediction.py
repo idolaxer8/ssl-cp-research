@@ -1543,6 +1543,11 @@ class FullConformalPredictor:
                     "update_calibration_scores=False is CPU-only; use device='cpu' "
                     "for the static-calibration (no cal-update) mode."
                 )
+            if isinstance(self.ncm, RidgeSoftmaxNCM):
+                return self._predict_ridge_softmax_gpu(
+                    X_test, return_p_values=return_p_values,
+                    verbose=verbose, batch_size=gpu_batch_size,
+                )
             return self._predict_geodesic_gpu(
                 X_test, return_p_values=return_p_values,
                 verbose=verbose, batch_size=gpu_batch_size,
@@ -1844,6 +1849,140 @@ class FullConformalPredictor:
             print(f"\nGPU FCP prediction time: {prediction_time:.2f}s "
                   f"({prediction_time / n_test * 1000:.2f}ms per sample)")
 
+        return results
+
+    def _predict_ridge_softmax_gpu(
+        self,
+        X_test: np.ndarray,
+        return_p_values: bool = False,
+        verbose: bool = True,
+        batch_size: int = 128,
+    ) -> Dict:
+        """Vectorised (torch) path for FCP with RidgeSoftmaxNCM.
+
+        Replaces the n_test x K Python loop with batched torch ops. Every per-test
+        quantity is a rank-1 (Sherman-Morrison) correction to a cal-only precompute,
+        followed by the ridge PRESS leave-one-out -- math identical to
+        RidgeSoftmaxNCM.score_x / updated_calibration_scores_for. Runs on CUDA if
+        available, else vectorised CPU (still far faster than the Python loop).
+
+        REQUIRES every candidate class to be present in calibration (true for the
+        balanced protocol). Raises otherwise so predict() can fall back to the CPU
+        loop (the missing-class branch is only needed for class-dropping splits).
+        """
+        ncm = self.ncm
+        if not isinstance(ncm, RidgeSoftmaxNCM):
+            raise ValueError("ridge GPU path requires RidgeSoftmaxNCM; "
+                             f"got {type(ncm).__name__}.")
+        classes_np = np.asarray(self.classes)
+        K = len(classes_np)
+        cls_to_col = ncm._cls_to_col
+        if not all(int(c) in cls_to_col for c in classes_np):
+            raise ValueError(
+                "ridge_softmax GPU path requires every candidate class present in "
+                "cal; use device='cpu' for splits that drop classes.")
+
+        start_time = time.time()
+        dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        f = torch.float64
+        T = float(ncm._T); la = float(ncm.lam_anchor); eps = float(ncm.eps)
+        loo = bool(ncm.loo)
+
+        Z = torch.as_tensor(ncm.Z, dtype=f, device=dev)            # (n, d)
+        A_inv = torch.as_tensor(ncm.A_inv, dtype=f, device=dev)    # (d, d)
+        W = torch.as_tensor(ncm.W, dtype=f, device=dev)            # (d, Kc)
+        M = torch.as_tensor(ncm.M, dtype=f, device=dev)            # (d, Kc)
+        n, Kc = Z.shape[0], W.shape[1]
+        n_c = torch.as_tensor(ncm.n_c, dtype=f, device=dev)        # (Kc,)
+        ycol = torch.as_tensor(ncm.y_col, dtype=torch.long, device=dev)   # (n,)
+        col_of = torch.as_tensor([cls_to_col[int(c)] for c in classes_np],
+                                 dtype=torch.long, device=dev)     # (K,)
+
+        F_base = Z @ W                                             # (n, Kc)
+        G = Z @ (A_inv @ M)                                        # (n, Kc)
+        h0 = (Z @ A_inv * Z).sum(dim=1)                            # (n,)
+
+        Xt = torch.as_tensor(np.asarray(X_test), dtype=f, device=dev)
+        n_test = Xt.shape[0]
+        p_chunks = []
+
+        for s0 in range(0, n_test, batch_size):
+            Xb = Xt[s0:min(s0 + batch_size, n_test)]               # (B, d)
+            B = Xb.shape[0]
+            U = Xb @ A_inv                                         # (B, d)
+            rho = (Xb * U).sum(dim=1)                              # (B,)
+            denom = 1.0 + rho
+            inv_dn = 1.0 / denom                                   # (B,)
+            Q = U @ Z.T                                            # (B, n)
+            SW = Xb @ W                                            # (B, Kc)
+            UM = U @ M                                             # (B, Kc)
+            if loo:
+                h_test = (rho * inv_dn).clamp(max=1.0 - eps)       # (B,)
+                h_cal = (h0.unsqueeze(0) - Q * Q * inv_dn.unsqueeze(1)).clamp(max=1.0 - eps)
+            else:
+                h_test = torch.zeros(B, dtype=f, device=dev)
+                h_cal = torch.zeros((B, n), dtype=f, device=dev)
+
+            Qd = Q * inv_dn.unsqueeze(1)                           # (B, n)
+            # F1[b,i,c] = F_base[i,c] - Q[b,i]*SW[b,c]/denom[b]
+            F1 = F_base.unsqueeze(0) - Q.unsqueeze(2) * (SW * inv_dn.unsqueeze(1)).unsqueeze(1)
+            # Fy[b,i,c] = F1 + Qd + la*(Qd - G[i,c] + Qd*UM[b,c])/(n_c[c]+1)
+            anchor = (Qd.unsqueeze(2) - G.unsqueeze(0)
+                      + Qd.unsqueeze(2) * UM.unsqueeze(1)) / (n_c.view(1, 1, Kc) + 1.0)
+            Fy = F1 + Qd.unsqueeze(2) + la * anchor                # (B, n, Kc)
+
+            f_test_base = SW * inv_dn.unsqueeze(1)                 # (B, Kc)
+            f_y = (SW + (denom.unsqueeze(1) - 1.0)
+                   + la * ((denom.unsqueeze(1) - 1.0) - UM) / (n_c.view(1, Kc) + 1.0)) \
+                * inv_dn.unsqueeze(1)                              # (B, Kc)
+
+            inv1mh_cal = 1.0 / (1.0 - h_cal)                       # (B, n)
+            sub_cal = h_cal * inv1mh_cal                           # (B, n)
+            inv1mh_test = 1.0 / (1.0 - h_test)                     # (B,)
+            sub_test = h_test * inv1mh_test                        # (B,)
+            ycol_b = ycol.view(1, n, 1).expand(B, n, 1)
+
+            p_b = torch.empty((B, K), dtype=f, device=dev)
+            for ci in range(K):
+                c = int(col_of[ci])
+                L = F1.clone()
+                L[:, :, c] = Fy[:, :, c]
+                Lp = L * inv1mh_cal.unsqueeze(2)
+                Lp.scatter_add_(2, ycol_b, (-sub_cal).unsqueeze(2))   # PRESS at true class
+                P = torch.softmax(Lp / T, dim=2)
+                s_cal = 1.0 - P.gather(2, ycol_b).squeeze(2)          # (B, n)
+                Lt = f_test_base.clone()
+                Lt[:, c] = f_y[:, c]
+                Ltp = Lt * inv1mh_test.unsqueeze(1)
+                Ltp[:, c] = Ltp[:, c] - sub_test                      # PRESS at candidate (test's class)
+                Pt = torch.softmax(Ltp / T, dim=1)
+                s_test = 1.0 - Pt[:, c]                               # (B,)
+                ng = (s_cal >= s_test.unsqueeze(1)).sum(dim=1)
+                p_b[:, ci] = (ng.to(f) + 1.0) / (n + 1.0)
+            p_chunks.append(p_b.cpu().numpy())
+            del F1, Fy, Q, SW, UM
+
+        p_values_arr = np.concatenate(p_chunks, axis=0)            # (n_test, K)
+        prediction_sets, set_sizes, empty_count = [], np.zeros(n_test, dtype=int), 0
+        for i in range(n_test):
+            include = p_values_arr[i] > self.alpha
+            pred_set = classes_np[include].astype(int).tolist()
+            if not pred_set:
+                empty_count += 1
+            prediction_sets.append(pred_set)
+            set_sizes[i] = len(pred_set)
+        if empty_count > 0 and verbose:
+            print(f"\nWarning: {empty_count}/{n_test} prediction sets are empty!")
+        prediction_time = time.time() - start_time
+        results = {'prediction_sets': prediction_sets, 'set_sizes': set_sizes,
+                   'prediction_time': prediction_time}
+        if return_p_values:
+            results['p_values'] = [
+                {int(classes_np[c]): float(p_values_arr[i, c]) for c in range(K)}
+                for i in range(n_test)]
+        if verbose:
+            print(f"\nGPU ridge_softmax FCP time: {prediction_time:.2f}s "
+                  f"({prediction_time / n_test * 1000:.2f}ms/sample) on {dev}")
         return results
 
     def evaluate(
