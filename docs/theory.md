@@ -282,6 +282,44 @@ FCP's stays tight.
 So FCP's advantage is not a tighter *theorem* — it is that its guarantee is the
 one that remains **non-trivial** when labels are scarce and `K` is large.
 
+### 4.1 Making a softmax head Full-CP-valid — the FCA family (prototype → ridge)
+
+The split-CP failure above is about a softmax head trained *once on a disjoint
+split*. A softmax head can instead be made **Full-CP-valid** by refitting it in
+closed form per candidate — this is the idea of **FCA** (Full Conformal
+Adaptation; Silva-Rodriguez et al., IPMI 2025, arXiv:2506.06076). FCA's SS-Text
+probe is a class-mean prototype blended with a zero-shot **text** anchor,
+`w_c = a·μ_c + b·t_c`, scored by LAC `s(x,y) = 1 − p(y|x)`. We have no text
+encoder (pure SSL), so we keep the text-free skeleton and obtain two rungs:
+
+- **Rung 3 — `PrototypeSoftmaxNCM` (vanilla).** Drop the text anchor: `w_c = μ_c`
+  (class-mean prototype), `p(y|x) = softmax_c(⟨z, μ_c⟩/T)`, `s = 1 − p(y|x)`.
+  No covariance term. `T` is a **fixed** temperature (FCA's `τ` analog).
+- **Rung 4 — `RidgeSoftmaxNCM`.** Add back the feature covariance SS-Text discards,
+  `w_c = (ZᵀZ + λI)⁻¹(Zᵀy_c + λ_a μ_c)` — a discriminative ridge probe (≈ cal-fit
+  whitening, refit per candidate via Sherman–Morrison + PRESS LOO). Rung 3 is the
+  `λ_a → ∞` limit; rung 4 is the clean ablation's "+covariance" arm.
+
+**Exact exchangeability (rung 3).** This is an *instance* of Theorem 1, not a new
+proof. Apply ONE symmetric score to every point `i` of a bag `B`:
+`s_i = 1 − softmax_{y_i}(⟨z_i, μ_c^{(−i)}(B)⟩ / T)`, where `μ_c^{(−i)}(B)` is the
+class-`c` mean over `B \ {i}` (leave `i` out of its own class only). Because the
+prototype is **linear** in the data, this leave-one-out is the closed-form mean
+update `μ_c^{(−i)} = (n_c μ_c − z_i)/(n_c − 1)` — no PRESS leverage needed (unlike
+rung 4). Each `s_i` is a symmetric function of `B`, so the `n+1` augmented-bag
+scores are exchangeable ⇒ cov ≥ 1−α for ANY fixed `T` (validity is `T`-independent;
+`T` is an efficiency knob). The empty-class convention `μ_{y_i}^{(−i)}` undefined
+⇒ `s_i = 1` fires identically for the held-out test point of an absent candidate
+class and for a singleton cal class — the symmetric form of the missing-class fix.
+
+**Consequence — bloat, not under-coverage.** With a fixed `T`, the same LOO rule,
+and the symmetric empty-class rule, validity holds at every cal size. At small
+**balanced** cal the prototypes are noisy → softmax ≈ uniform → high `(n+1)`
+quantile → large sets. So the small-cal signature is *bloated sets at nominal
+coverage*, never under-coverage. (A cal-fit `T` is the only O(1/n) break — it
+routes through `warn_nonexchangeable`; under a *random* split a truly absent cal
+class is structural under-coverage shared by all methods, a property of the split.)
+
 ---
 
 ## 5. Summary of approximations and their effects
