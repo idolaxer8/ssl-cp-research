@@ -1,46 +1,74 @@
 """
-3-rung ablation: the FCA line translated into our pure-SSL Full-CP setting.
+EXTENSIVE cluster comparison of the FCA family vs our geodesic NCMs, under Full CP.
 
-    rung 3  prototype_softmax   -- VANILLA text-free FCA: class-mean prototype ->
-                                   softmax LAC. NO covariance term. The faithful
-                                   translation + the clean control.
-    rung 4  ridge_softmax       -- FCA + an added ridge covariance term (cal-fit
-                                   whitening, refit per candidate). The "further
-                                   improvement" under scrutiny.
-    ours    unwhitened_topk_asym -- our exchangeable geodesic NN-ratio NCM.
+The full naive -> paper -> vanilla -> improvement ladder in ONE benchmark:
 
-The point of the trio: isolate whether ridge_softmax's edge is "the FCA idea"
-(a refittable softmax head, already captured by prototype_softmax) or just the
-extra discriminative whitening (the covariance term). prototype_softmax is the
-missing rung that answers this.
+    rung 3  prototype_softmax    -- VANILLA text-free FCA: class-mean prototype ->
+                                    softmax LAC. NO covariance term. The faithful
+                                    translation + the clean control.
+    rung 4  ridge_softmax        -- FCA + an added ridge covariance term (cal-fit
+                                    whitening, refit per candidate; Sherman-Morrison
+                                    + PRESS). The "further improvement" under scrutiny.
+    ours    unwhitened_topk_asym -- our exchangeable geodesic NN-ratio NCM (asym).
+            unwhitened_topk_mean -- symmetric geodesic NN-ratio.
+
+The question this run settles: is ridge_softmax's edge "the FCA idea" (a refittable
+softmax head, ALREADY captured by the bare prototype) or just the extra
+discriminative whitening (the covariance term)? prototype_softmax is the rung that
+answers it. Local 3-trial CIFAR-100 (findings [[prototype-softmax-ncm-rung3]]):
+prototype was tightest at every BALANCED cal, beating BOTH ridge and geodesic ->
+ridge's covariance looked neutral-to-harmful on balanced, earning its keep only in
+the starved cal=200-random corner (where prototype degenerates to sz=K). This run
+confirms that at paper-scale (20 trials, full cal sweep, 2 datasets, both splits).
 
 Per (dataset, split, NCM, cal) reports: marginal coverage, avg set size, pooled
-CovGap (Ding et al. 2023), worst-class coverage, predict runtime.
+CovGap (Ding et al. 2023), worst-class coverage, frac under-covered, predict runtime.
 
-Splits (both reported):
+Splits (BOTH reported):
   * balanced_both -- balanced cal (cal//K per class) + balanced test, disjoint,
                      fresh each trial. Lit-comparable few-shot protocol;
-                     conservative (over-covers ~1-3pp). Under this split the
-                     softmax NCMs BLOAT at small cal but do NOT under-cover.
+                     conservative (over-covers ~1-3pp). The softmax NCMs BLOAT at
+                     small cal but do NOT under-cover here.
   * random        -- uniform random cal/test; the exact-validity arm (tight ~0.90).
                      At small cal some classes are absent from cal -> structural
-                     under-coverage shared by ALL methods (a property of the split).
+                     under-coverage shared by ALL methods (a property of the split),
+                     and the ridge GPU path (which needs every candidate class in
+                     cal) falls back to CPU on the dropped-class trials.
 
 Pipeline = exchangeable: PCA + cluster-whitening fit on the UNLABELED pool
 (exchangeable_features.UnlabeledTransform); the NCM scores transformed features.
 
 Temperature: the two softmax NCMs each get ONE pilot-fixed T per dataset, held
-constant across trials -> every trial's CP stays exactly exchangeable (a fixed T
-is a hyperparameter; a per-fit auto-T would be cal-fit O(1/n)). prototype_softmax
+constant across trials -> every trial's CP stays exactly exchangeable (a fixed T is
+a hyperparameter; a per-fit auto-T would be cal-fit O(1/n)). prototype_softmax
 (cosine logits in [-1,1]) and ridge_softmax (unbounded ridge outputs) live on
 different scales, so each is piloted separately.
 
-Local scope: embeddings at output/embeddings_<ds>.pt (+ _unlabeled.pt).
+DEVICE / RUNTIME NOTE:
+  * Geodesic NCMs AND ridge_softmax have vectorized GPU fast paths -- pass
+    --device cuda on the cluster. prototype_softmax is CPU-only for now (pure
+    matmuls; a GPU path is the obvious next step), so its runtime is NOT directly
+    comparable to the GPU NCMs -- for a FAIR runtime head-to-head run --device cpu.
+  * ridge_softmax's GPU path requires every candidate class present in cal; on the
+    random split's dropped-class trials it raises and we fall back to CPU
+    (handled transparently; only the runtime metric is affected).
+
+On the cluster, embeddings live at output/ (default --data_dir). Expects
+output/embeddings_<ds>.pt and output/embeddings_<ds>_unlabeled.pt with keys
+{"embeddings", "labels"}.
 
 Examples
 --------
-python src/prototype_softmax_compare.py --datasets cifar100 \
-    --cal_sizes 200 400 800 --n_trials 10 --pca_dim 128 --whiten cluster --plot
+# Cluster, full sweep, GPU where available, both splits, plots:
+python src/fca_family_cluster_experiment.py --device cuda --plot
+
+# Fair all-CPU runtime comparison, CIFAR-100 only, quick gauge:
+python src/fca_family_cluster_experiment.py --datasets cifar100 --device cpu \
+    --n_trials 5 --cal_sizes 200 400 800
+
+# Local smoke (small):
+python src/fca_family_cluster_experiment.py --datasets cifar100 \
+    --data_dir output/from_cluster --cal_sizes 200 400 800 --n_trials 3 --plot
 """
 import os
 import sys
@@ -57,9 +85,13 @@ from conformal_prediction import (FullConformalPredictor, create_ncm,
                                    RidgeSoftmaxNCM, PrototypeSoftmaxNCM)
 from exchangeable_features import make_transform
 
-GEO_NCMS = {"unwhitened_topk_asym", "unwhitened_topk_mean",
+# NCMs with a vectorized GPU fast path (use --device for these).
+GPU_NCMS = {"unwhitened_topk_asym", "unwhitened_topk_mean",
             "geodesic_topk_asym", "geodesic_topk_mean",
-            "geodesic_topk", "geodesic_1nn"}
+            "geodesic_topk", "geodesic_1nn",
+            "ridge_softmax"}                       # ridge GPU path landed (commit 0444cb8)
+# CPU-only NCMs (no GPU path yet).
+CPU_NCMS = {"prototype_softmax"}
 SOFTMAX_NCMS = {"prototype_softmax", "ridge_softmax"}
 
 
@@ -95,9 +127,13 @@ def load_dataset(data_dir, ds):
 
 def resolve_softmax_T(ncm_name, transform, X, y, allc, args):
     """ONE pilot-fixed T per (softmax NCM, dataset), constant across all trials ->
-    exactly exchangeable. Piloted from a STABLE larger-m balanced draw (fixed
-    seed). prototype_softmax and ridge_softmax are piloted with their own class
-    (different logit scales)."""
+    exactly exchangeable. Piloted from a STABLE larger-m balanced draw (fixed seed).
+    prototype_softmax and ridge_softmax are piloted with their own class (different
+    logit scales). A float --temperature_<x> overrides the pilot."""
+    if ncm_name == "prototype_softmax" and str(args.proto_temperature) != "auto":
+        return float(args.proto_temperature)
+    if ncm_name == "ridge_softmax" and str(args.ridge_temperature) != "auto":
+        return float(args.ridge_temperature)
     K = len(allc)
     m = max(4, min(max(args.cal_sizes), 800) // K)
     rng = np.random.default_rng(args.seed)
@@ -155,8 +191,9 @@ def run_dataset(ds, args):
                 print(f"  [skip {split} cal={cal}] m_cal={m_cal} < 2 (need cal >= 2K={2*K})")
                 continue
             for ncm_name in args.ncms:
-                dev = "cpu" if ncm_name not in GEO_NCMS else args.device
+                want_dev = "cpu" if ncm_name in CPU_NCMS else args.device
                 covs, szs, ts, gaps_pt = [], [], [], []
+                n_fallback = 0
                 pooled_cov = np.zeros(K)
                 pooled_tot = np.zeros(K)
                 for t in range(args.n_trials):
@@ -171,7 +208,13 @@ def run_dataset(ds, args):
                     cp = FullConformalPredictor(ncm, alpha=args.alpha)
                     cp.calibrate(Xc, yc, all_classes=allc)
                     t0 = time.perf_counter()
-                    res = cp.predict(Xt, verbose=False, device=dev)
+                    try:
+                        res = cp.predict(Xt, verbose=False, device=want_dev)
+                    except (RuntimeError, ValueError):
+                        # ridge GPU path needs every candidate class in cal -> on
+                        # random-split dropped-class trials, fall back to CPU.
+                        res = cp.predict(Xt, verbose=False, device="cpu")
+                        n_fallback += 1
                     rt = time.perf_counter() - t0
                     psets = res["prediction_sets"]
                     covered = np.array([yt[i] in psets[i] for i in range(len(yt))])
@@ -191,8 +234,10 @@ def run_dataset(ds, args):
                 valid = pooled_tot > 0
                 pcov = pooled_cov[valid] / pooled_tot[valid]
                 target = 1 - args.alpha
+                used_dev = ("cpu" if want_dev == "cpu"
+                            else (f"cuda(+{n_fallback}cpu)" if n_fallback else "cuda"))
                 row = {"dataset": ds, "split": split, "ncm": ncm_name, "cal": cal,
-                       "device": dev,
+                       "device": used_dev,
                        "cov": float(np.mean(covs)), "cov_sd": float(np.std(covs)),
                        "sz": float(np.mean(szs)), "sz_sd": float(np.std(szs)),
                        "covgap": float(100 * np.mean(np.abs(pcov - target))),
@@ -204,7 +249,7 @@ def run_dataset(ds, args):
                 print(f"  [{split:13s}] cal={cal:4d} {ncm_name:20s} "
                       f"cov={row['cov']:.4f} sz={row['sz']:6.2f} "
                       f"covgap={row['covgap']:5.2f}pp worst={row['worst_cov']:.3f} "
-                      f"rt={row['runtime_s']:6.1f}s [{dev}]")
+                      f"rt={row['runtime_s']:6.1f}s [{used_dev}]")
     return rows
 
 
@@ -234,9 +279,9 @@ def plot_dataset(ds, rows, args):
             if logy:
                 ax.set_yscale("log")
         axes[0, 0].legend(fontsize=8)
-        fig.suptitle(f"{ds} [{split}]: 3-rung FCA ablation "
+        fig.suptitle(f"{ds} [{split}]: FCA-family Full-CP ablation "
                      f"(prototype vs ridge vs geodesic)\n"
-                     f"FCP alpha={args.alpha}, {args.n_trials} trials, "
+                     f"alpha={args.alpha}, {args.n_trials} trials, "
                      f"PCA-{args.pca_dim}+{args.whiten}-whiten, logit={args.logit}")
         fig.tight_layout(rect=[0, 0, 1, 0.95])
         out = os.path.join(args.output_dir, f"compare_{ds}_{split}.png")
@@ -246,27 +291,37 @@ def plot_dataset(ds, rows, args):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="3-rung FCA ablation: prototype_softmax vs ridge_softmax vs geodesic")
-    ap.add_argument("--datasets", nargs="+", default=["cifar100"])
-    ap.add_argument("--data_dir", default="output")
-    ap.add_argument("--cal_sizes", type=int, nargs="+", default=[200, 400, 800])
+        description="Extensive cluster comparison: FCA family (prototype, ridge) "
+                    "vs geodesic NCMs under Full CP.")
+    ap.add_argument("--datasets", nargs="+", default=["cifar100", "miniimagenet"])
+    ap.add_argument("--data_dir", default="output",
+                    help="dir with embeddings_<ds>.pt + _unlabeled.pt (cluster: output)")
+    ap.add_argument("--cal_sizes", type=int, nargs="+",
+                    default=[200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800])
     ap.add_argument("--test_per_class", type=int, default=10)
-    ap.add_argument("--n_trials", type=int, default=10)
+    ap.add_argument("--n_trials", type=int, default=20)
     ap.add_argument("--alpha", type=float, default=0.1)
     ap.add_argument("--pca_dim", type=int, default=128)
     ap.add_argument("--whiten", default="cluster", choices=["cluster", "global", "none"])
     ap.add_argument("--n_clusters_whiten", type=int, default=100)
     ap.add_argument("--ncms", nargs="+",
-                    default=["prototype_softmax", "ridge_softmax", "unwhitened_topk_asym"])
+                    default=["prototype_softmax", "ridge_softmax",
+                             "unwhitened_topk_asym", "unwhitened_topk_mean"])
     ap.add_argument("--splits", nargs="+", default=["balanced_both", "random"],
                     choices=["balanced_both", "random"])
     ap.add_argument("--logit", default="cosine", choices=["cosine", "dot"],
                     help="prototype_softmax logit form.")
+    ap.add_argument("--proto_temperature", default="auto",
+                    help="prototype_softmax T: a float (exact) or 'auto' (pilot-fixed).")
+    ap.add_argument("--ridge_temperature", default="auto",
+                    help="ridge_softmax T: a float (exact) or 'auto' (pilot-fixed).")
     ap.add_argument("--lam_ridge", type=float, default=1.0)
     ap.add_argument("--lam_anchor", type=float, default=1.0)
     ap.add_argument("--device", default="cuda", choices=["cpu", "cuda"],
-                    help="geodesic NCMs use this (GPU fast path); softmax NCMs are cpu.")
-    ap.add_argument("--output_dir", default="output/prototype_softmax_compare")
+                    help="GPU NCMs (geodesics + ridge_softmax) use this; "
+                         "prototype_softmax is always cpu. For a FAIR runtime "
+                         "comparison use --device cpu.")
+    ap.add_argument("--output_dir", default="output/fca_family_cluster")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--plot", action="store_true")
     args = ap.parse_args()
