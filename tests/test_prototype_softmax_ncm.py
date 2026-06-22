@@ -293,6 +293,39 @@ def test_temperature_invariance():
 
 
 # ----------------------------------------------------------------------
+# 6. GPU/torch-path parity vs the (proven-exact) CPU loop
+# ----------------------------------------------------------------------
+def test_gpu_parity():
+    """The vectorized predict(device='cuda') path must match the numpy CPU loop
+    set-for-set and p-value-for-p-value. Routes to torch on CUDA if available,
+    else vectorized CPU torch -- either way a real parity check vs the CPU loop
+    proven exact by test_oracle. Requires all candidate classes present in cal."""
+    import torch
+    for logit in ("cosine", "dot"):
+        X, y = make_gmm(K=10, per_class=80, d=12, seed=11, sep=3.0)
+        classes = np.unique(y)
+        r = np.random.default_rng(11)
+        ci, ti = balanced_split(y, classes, m_cal=20, m_test=12, rng=r)
+        mk = lambda: PrototypeSoftmaxNCM(temperature=0.2, logit=logit)
+        cp_cpu = FullConformalPredictor(mk(), alpha=0.1)
+        cp_cpu.calibrate(X[ci], y[ci], all_classes=classes)
+        r_cpu = cp_cpu.predict(X[ti], return_p_values=True, verbose=False, device="cpu")
+        cp_gpu = FullConformalPredictor(mk(), alpha=0.1)
+        cp_gpu.calibrate(X[ci], y[ci], all_classes=classes)
+        r_gpu = cp_gpu.predict(X[ti], return_p_values=True, verbose=False, device="cuda")
+        sets_cpu = [sorted(s) for s in r_cpu["prediction_sets"]]
+        sets_gpu = [sorted(s) for s in r_gpu["prediction_sets"]]
+        assert sets_cpu == sets_gpu, f"set mismatch (logit={logit})"
+        max_dp = 0.0
+        for pc, pg in zip(r_cpu["p_values"], r_gpu["p_values"]):
+            for k in pc:
+                max_dp = max(max_dp, abs(pc[k] - pg[k]))
+        assert max_dp < 1e-9, f"p-value mismatch (logit={logit}) max={max_dp:.2e}"
+    dev = "cuda" if torch.cuda.is_available() else "cpu(torch)"
+    print(f"test_gpu_parity: PASS (sets identical, max |dp| < 1e-9, ran on {dev})")
+
+
+# ----------------------------------------------------------------------
 # Informational: set-size of the 3 rungs (no assert)
 # ----------------------------------------------------------------------
 def report_setsize_3rungs():
@@ -330,6 +363,7 @@ if __name__ == "__main__":
     test_small_cal_bloat()
     test_edge_cases()
     test_temperature_invariance()
+    test_gpu_parity()
     print("\n--- informational ---")
     report_setsize_3rungs()
     print("\nALL PROTOTYPE-SOFTMAX TESTS PASSED")

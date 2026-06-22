@@ -44,14 +44,19 @@ a hyperparameter; a per-fit auto-T would be cal-fit O(1/n)). prototype_softmax
 (cosine logits in [-1,1]) and ridge_softmax (unbounded ridge outputs) live on
 different scales, so each is piloted separately.
 
+DEFAULT COMPARISON: prototype_softmax (rung 3) vs the exchangeable geodesic NCMs
+(unwhitened_topk_asym/mean), BALANCED split, on cifar100 + miniimagenet, high
+trials. ridge_softmax (rung 4) is excluded by default -- add it via
+`--ncms prototype_softmax ridge_softmax unwhitened_topk_asym ...` to reinstate the
+full FCA-family ablation.
+
 DEVICE / RUNTIME NOTE:
-  * Geodesic NCMs AND ridge_softmax have vectorized GPU fast paths -- pass
-    --device cuda on the cluster. prototype_softmax is CPU-only for now (pure
-    matmuls; a GPU path is the obvious next step), so its runtime is NOT directly
-    comparable to the GPU NCMs -- for a FAIR runtime head-to-head run --device cpu.
-  * ridge_softmax's GPU path requires every candidate class present in cal; on the
-    random split's dropped-class trials it raises and we fall back to CPU
-    (handled transparently; only the runtime metric is affected).
+  * prototype_softmax, ridge_softmax AND the geodesic NCMs all have bit-exact
+    vectorized GPU paths -- pass --device cuda on the cluster for the full sweep.
+    For a fair CPU-vs-CPU runtime head-to-head, use --device cpu.
+  * The softmax GPU paths require every candidate class present in cal (always true
+    for the balanced split). On random-split dropped-class trials they raise and we
+    fall back to CPU transparently (only the runtime metric is affected).
 
 On the cluster, embeddings live at output/ (default --data_dir). Expects
 output/embeddings_<ds>.pt and output/embeddings_<ds>_unlabeled.pt with keys
@@ -85,13 +90,13 @@ from conformal_prediction import (FullConformalPredictor, create_ncm,
                                    RidgeSoftmaxNCM, PrototypeSoftmaxNCM)
 from exchangeable_features import make_transform
 
-# NCMs with a vectorized GPU fast path (use --device for these).
+# NCMs with a vectorized GPU fast path (use --device for these). prototype_softmax,
+# ridge_softmax AND the geodesics all have bit-exact GPU paths now.
 GPU_NCMS = {"unwhitened_topk_asym", "unwhitened_topk_mean",
             "geodesic_topk_asym", "geodesic_topk_mean",
             "geodesic_topk", "geodesic_1nn",
-            "ridge_softmax"}                       # ridge GPU path landed (commit 0444cb8)
-# CPU-only NCMs (no GPU path yet).
-CPU_NCMS = {"prototype_softmax"}
+            "ridge_softmax", "prototype_softmax"}
+CPU_NCMS = set()                                    # none -- all default NCMs are GPU
 SOFTMAX_NCMS = {"prototype_softmax", "ridge_softmax"}
 
 
@@ -299,16 +304,19 @@ def main():
     ap.add_argument("--cal_sizes", type=int, nargs="+",
                     default=[200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800])
     ap.add_argument("--test_per_class", type=int, default=10)
-    ap.add_argument("--n_trials", type=int, default=20)
+    ap.add_argument("--n_trials", type=int, default=50)
     ap.add_argument("--alpha", type=float, default=0.1)
     ap.add_argument("--pca_dim", type=int, default=128)
     ap.add_argument("--whiten", default="cluster", choices=["cluster", "global", "none"])
     ap.add_argument("--n_clusters_whiten", type=int, default=100)
     ap.add_argument("--ncms", nargs="+",
-                    default=["prototype_softmax", "ridge_softmax",
-                             "unwhitened_topk_asym", "unwhitened_topk_mean"])
-    ap.add_argument("--splits", nargs="+", default=["balanced_both", "random"],
-                    choices=["balanced_both", "random"])
+                    default=["prototype_softmax",
+                             "unwhitened_topk_asym", "unwhitened_topk_mean"],
+                    help="default = prototype_softmax vs geodesic NCMs; "
+                         "add 'ridge_softmax' to include rung 4.")
+    ap.add_argument("--splits", nargs="+", default=["balanced_both"],
+                    choices=["balanced_both", "random"],
+                    help="default balanced_both (the lit few-shot protocol).")
     ap.add_argument("--logit", default="cosine", choices=["cosine", "dot"],
                     help="prototype_softmax logit form.")
     ap.add_argument("--proto_temperature", default="auto",

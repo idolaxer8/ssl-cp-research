@@ -1801,6 +1801,11 @@ class FullConformalPredictor:
                     "update_calibration_scores=False is CPU-only; use device='cpu' "
                     "for the static-calibration (no cal-update) mode."
                 )
+            if isinstance(self.ncm, PrototypeSoftmaxNCM):
+                return self._predict_prototype_softmax_gpu(
+                    X_test, return_p_values=return_p_values,
+                    verbose=verbose, batch_size=gpu_batch_size,
+                )
             if isinstance(self.ncm, RidgeSoftmaxNCM):
                 return self._predict_ridge_softmax_gpu(
                     X_test, return_p_values=return_p_values,
@@ -2240,6 +2245,129 @@ class FullConformalPredictor:
                 for i in range(n_test)]
         if verbose:
             print(f"\nGPU ridge_softmax FCP time: {prediction_time:.2f}s "
+                  f"({prediction_time / n_test * 1000:.2f}ms/sample) on {dev}")
+        return results
+
+    def _predict_prototype_softmax_gpu(
+        self,
+        X_test: np.ndarray,
+        return_p_values: bool = False,
+        verbose: bool = True,
+        batch_size: int = 256,
+    ) -> Dict:
+        """Vectorised (torch) path for FCP with PrototypeSoftmaxNCM.
+
+        Replaces the n_test x K Python loop with batched torch ops. Folding (x, y)
+        into the bag changes ONLY the class-y prototype, so each cal point's score
+        is a single-column softmax update of a cal-only precompute -- math identical
+        to PrototypeSoftmaxNCM.score_x / updated_calibration_scores_for. float64 ->
+        bit-exact with the CPU path. Runs on CUDA if available, else vectorised CPU.
+
+        REQUIRES every candidate class present in cal (true for the balanced
+        protocol). Raises otherwise so predict() can fall back to the CPU loop.
+        """
+        ncm = self.ncm
+        if not isinstance(ncm, PrototypeSoftmaxNCM):
+            raise ValueError("prototype GPU path requires PrototypeSoftmaxNCM; "
+                             f"got {type(ncm).__name__}.")
+        classes_np = np.asarray(self.classes)
+        K = len(classes_np)
+        cls_to_col = ncm._cls_to_col
+        if not all(int(c) in cls_to_col for c in classes_np):
+            raise ValueError(
+                "prototype_softmax GPU path requires every candidate class present "
+                "in cal; use device='cpu' for splits that drop classes.")
+
+        start_time = time.time()
+        dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        f = torch.float64
+        T = float(ncm._T); eps = float(ncm.eps); cosine = bool(ncm.cosine)
+
+        Z = torch.as_tensor(ncm.Z, dtype=f, device=dev)               # (n, d) prepped
+        P = torch.as_tensor(ncm.P, dtype=f, device=dev)               # (d, Kc)
+        class_sum = torch.as_tensor(ncm.class_sum, dtype=f, device=dev)  # (d, Kc)
+        n_c = torch.as_tensor(ncm.n_c, dtype=f, device=dev)           # (Kc,)
+        ycol = torch.as_tensor(ncm.y_col, dtype=torch.long, device=dev)  # (n,)
+        F_base = torch.as_tensor(ncm.F_base, dtype=f, device=dev)     # (n, Kc) cal LOO
+        n, Kc = Z.shape[0], P.shape[1]
+        col_of = torch.as_tensor([cls_to_col[int(c)] for c in classes_np],
+                                 dtype=torch.long, device=dev)        # (K,)
+
+        # cal-only precomputes (independent of the test point)
+        ZS = Z @ class_sum                                            # (n, Kc) <z_i, sum_c>
+        znorm2 = (Z * Z).sum(dim=1)                                   # (n,)
+        css_norm2 = (class_sum * class_sum).sum(dim=0)                # (Kc,) ||sum_c||^2
+        eps2 = eps * eps
+        NEG = torch.tensor(float("-inf"), dtype=f, device=dev)
+
+        Xt = torch.as_tensor(np.asarray(X_test), dtype=f, device=dev)
+        n_test = Xt.shape[0]
+        p_chunks = []
+
+        for s0 in range(0, n_test, batch_size):
+            Xb = Xt[s0:min(s0 + batch_size, n_test)]                 # (B, d) raw
+            if cosine:
+                Xb = Xb / torch.clamp(Xb.norm(dim=1, keepdim=True), min=eps)
+            B = Xb.shape[0]
+            Zzx = Xb @ Z.T                                           # (B, n) <z_x, z_i>
+            csTzx = Xb @ class_sum                                   # (B, Kc) <z_x, sum_c>
+            zxnorm2 = (Xb * Xb).sum(dim=1)                           # (B,)
+            f_test = Xb @ P                                          # (B, Kc)
+            Ptest = torch.softmax(f_test / T, dim=1)                 # (B, Kc)
+            norm_aug2 = (css_norm2.view(1, Kc) + 2.0 * csTzx
+                         + zxnorm2.view(B, 1))                       # (B, Kc) ||sum_c+z_x||^2
+            ycol_idx = ycol.view(1, n, 1).expand(B, n, 1)           # gather index
+
+            p_b = torch.empty((B, K), dtype=f, device=dev)
+            for ci in range(K):
+                c = int(col_of[ci])
+                base = ZS[:, c].view(1, n) + Zzx                     # (B, n) <z_i, sum_c+z_x>
+                na2 = norm_aug2[:, c].view(B, 1)                     # (B, 1)
+                if cosine:
+                    nonmem = base / torch.clamp(torch.sqrt(na2), min=eps)
+                    nonmem = torch.where(na2 < eps2, NEG, nonmem)
+                    mem_den2 = na2 - 2.0 * base + znorm2.view(1, n)  # (B, n)
+                    mem = (base - znorm2.view(1, n)) / torch.sqrt(torch.clamp(mem_den2, min=eps2))
+                    mem = torch.where(mem_den2 < eps2, NEG, mem)
+                else:
+                    nonmem = base / (n_c[c] + 1.0)
+                    mem = (base - znorm2.view(1, n)) / n_c[c]
+                is_member = (ycol == c).view(1, n)                   # (1, n)
+                col_c = torch.where(is_member, mem, nonmem)          # (B, n)
+                # Stable softmax over the augmented bag: F_base with column c
+                # replaced by col_c. Build the (B, n, Kc) logit tensor and let
+                # torch.softmax max-subtract -- dot logits are unbounded, so a raw
+                # exp(F/T) would overflow to inf/NaN at small T.
+                L = F_base.unsqueeze(0).expand(B, n, Kc).clone()     # (B, n, Kc)
+                L[:, :, c] = col_c
+                Psm = torch.softmax(L / T, dim=2)
+                s_cal = 1.0 - Psm.gather(2, ycol_idx).squeeze(2)     # (B, n)
+                s_test = 1.0 - Ptest[:, c]                           # (B,)
+                ng = (s_cal >= s_test.view(B, 1)).sum(dim=1)         # (B,)
+                p_b[:, ci] = (ng.to(f) + 1.0) / (n + 1.0)
+            p_chunks.append(p_b.cpu().numpy())
+            del Zzx, csTzx, f_test, Ptest, norm_aug2
+
+        p_values_arr = np.concatenate(p_chunks, axis=0)              # (n_test, K)
+        prediction_sets, set_sizes, empty_count = [], np.zeros(n_test, dtype=int), 0
+        for i in range(n_test):
+            include = p_values_arr[i] > self.alpha
+            pred_set = classes_np[include].astype(int).tolist()
+            if not pred_set:
+                empty_count += 1
+            prediction_sets.append(pred_set)
+            set_sizes[i] = len(pred_set)
+        if empty_count > 0 and verbose:
+            print(f"\nWarning: {empty_count}/{n_test} prediction sets are empty!")
+        prediction_time = time.time() - start_time
+        results = {'prediction_sets': prediction_sets, 'set_sizes': set_sizes,
+                   'prediction_time': prediction_time}
+        if return_p_values:
+            results['p_values'] = [
+                {int(classes_np[c]): float(p_values_arr[i, c]) for c in range(K)}
+                for i in range(n_test)]
+        if verbose:
+            print(f"\nGPU prototype_softmax FCP time: {prediction_time:.2f}s "
                   f"({prediction_time / n_test * 1000:.2f}ms/sample) on {dev}")
         return results
 
