@@ -1442,6 +1442,264 @@ class RidgeSoftmaxNCM(NonconformityMeasure):
         return 1.0 - P[np.arange(n), ycol]
 
 
+class PrototypeSoftmaxNCM(NonconformityMeasure):
+    """Vanilla text-free FCA NCM: class-mean prototype -> softmax LAC, for Full CP.
+
+    The FAITHFUL text-free translation of "Full Conformal Adaptation of Medical
+    VLMs" (Silva-Rodriguez et al., IPMI 2025, arXiv:2506.06076).  FCA's SS-Text
+    probe is a class-mean prototype BLENDED WITH A ZERO-SHOT TEXT ANCHOR,
+        w_c = a * mu_c (visual class mean)  +  b * t_c (text prototype),
+    scored by LAC  s(x, y) = 1 - p(y | x).  We have no text encoder (DINOv2 is
+    pure SSL), so we DROP the text anchor and keep the bare prototype: w_c = mu_c.
+    Unlike RidgeSoftmaxNCM (rung 4) this adds NO ridge covariance term -- it is
+    the minimal discriminative head, and the clean ablation control that isolates
+    what the covariance term actually buys.
+
+    ALGORITHM FLOW (plain text).  z = a feature AFTER the exchangeable pool
+    transform (exchangeable_features.UnlabeledTransform; this NCM adds no further
+    whitening); in ``logit="cosine"`` mode z and the prototypes are L2-normalised
+    (cosine logits on the DINOv2 hypersphere -- the FCA-faithful default);
+    ``logit="dot"`` uses raw inner products with mean prototypes.  T is a FIXED
+    softmax temperature (FCA's tau analog), sourced off-cal; validity is
+    T-independent, T is an efficiency knob.
+
+    ONE symmetric score rule, applied to EVERY point i in a bag B (this is what
+    makes it exactly exchangeable)::
+
+        mu_c^{(-i)}  = class-c prototype over B \\ {i}   (leave i out of its OWN
+                       class only; other classes are unchanged by removing i)
+        f_c          = <z_i, mu_c^{(-i)}>
+        p(y_i|z_i)   = softmax_c( f_c / T )
+        s_i          = 1 - p(y_i | z_i)
+        empty-class convention: if class y_i is EMPTY after leaving i out
+                       (singleton cal class, or a candidate class absent from cal
+                       applied to the test point) set f_{y_i} = -inf -> p = 0 ->
+                       s_i = 1.  The SAME rule fires for the test point and for
+                       singleton cal points -> symmetric -> exchangeable.
+
+    Full CP.  Folding (x, y) into the bag changes ONLY the class-y prototype, so
+    only column y of the cached cal logit matrix moves.  The test point's own
+    class (y) prototype is always the pure cal class-y mean (leave the test point
+    itself out), so ONE matvec z @ Mu gives the test logits for all K candidates.
+    No matrix inverse, no Sherman-Morrison, no PRESS leverage: the prototype is
+    LINEAR in the data, so leave-one-out is the closed-form class-mean update
+        mu_c^{(-i)} = (n_c mu_c - z_i) / (n_c - 1).
+
+    EXCHANGEABILITY.  Exactly exchangeable PROVIDED the upstream feature map and
+    the temperature T are fixed / pool-sourced.  A cal-fit temperature
+    (``temperature=None`` -> auto) breaks it at O(1/n) and routes through
+    ``warn_nonexchangeable`` (same policy as RidgeSoftmaxNCM / RBFDensityNCM).
+    Because LOO is exact and the empty-class rule is symmetric, small (balanced)
+    cal yields BLOATED sets, never under-coverage.
+
+    Args:
+        temperature: softmax temperature T. A fixed float is exact; None auto-fits
+                     from cal (O(1/n), warns).
+        logit:       "cosine" (L2-normalise features + prototypes; FCA-faithful
+                     default) or "dot" (raw inner product, mean prototypes).
+        eps:         numerical floor (norm clamp).
+        allow_nonexchangeable: approve + silence the cal-fit-temperature warning.
+    """
+
+    def __init__(self, temperature: Optional[float] = None, logit: str = "cosine",
+                 eps: float = 1e-9, allow_nonexchangeable: bool = False):
+        if logit not in ("cosine", "dot"):
+            raise ValueError(f"logit must be 'cosine' or 'dot', got {logit!r}")
+        self.temperature = temperature
+        self.logit = logit
+        self.cosine = (logit == "cosine")
+        self.eps = float(eps)
+        self.allow_nonexchangeable = allow_nonexchangeable
+        # fitted state
+        self.classes_ = None
+        self._cls_to_col = None
+        self.Z = None             # (n, d) prepped (normalised iff cosine) features
+        self.y_cal = None
+        self.y_col = None         # (n,) cal labels mapped to 0..K-1
+        self.class_sum = None     # (d, K) per-class sums of prepped features
+        self.n_c = None           # (K,) class counts
+        self.P = None             # (d, K) full-mean prototype directions
+        self._P_ok = None         # (K,) bool: prototype well-defined
+        self.F_base = None        # (n, K) cal-only LOO logits (own-class = LOO)
+        self.alpha0 = None        # (n,) cal-only LOO scores
+        self._T = None
+        # per-test cache, keyed on x.ctypes.data
+        self._cache_key = None
+        self._cache = None
+
+    # -- softmax helpers (float64, stable; tolerate -inf logits) -------------
+    @staticmethod
+    def _softmax_rows(logits: np.ndarray) -> np.ndarray:
+        m = logits.max(axis=1, keepdims=True)
+        e = np.exp(logits - m)
+        return e / e.sum(axis=1, keepdims=True)
+
+    @staticmethod
+    def _softmax_vec(logits: np.ndarray) -> np.ndarray:
+        m = logits.max()
+        e = np.exp(logits - m)
+        return e / e.sum()
+
+    # -- feature / prototype prep -------------------------------------------
+    def _prep(self, X: np.ndarray) -> np.ndarray:
+        Z = np.asarray(X, dtype=np.float64)
+        if Z.ndim == 1:
+            Z = Z[None, :]
+        if self.cosine:
+            nrm = np.linalg.norm(Z, axis=1, keepdims=True)
+            Z = Z / np.maximum(nrm, self.eps)
+        return Z
+
+    def _proto(self, s: np.ndarray, count: float):
+        """Prototype from a class sum vector ``s`` over ``count`` members.
+        Returns the (d,) prototype, or None if the class is empty/degenerate."""
+        if count <= 0:
+            return None
+        if self.cosine:
+            nrm = float(np.linalg.norm(s))
+            if nrm < self.eps:
+                return None
+            return s / nrm
+        return s / count
+
+    def _resolve_T(self) -> float:
+        if self.temperature is not None:
+            return float(self.temperature)
+        warn_nonexchangeable(
+            "PrototypeSoftmaxNCM cal-fit temperature (temperature=None)",
+            "Pass a fixed temperature for an exact guarantee (sweep it for "
+            "efficiency); validity holds for ANY fixed T.",
+            order="O(1/n)", allow=self.allow_nonexchangeable)
+        F = self.F_base
+        n, K = F.shape
+        if K < 2:
+            return 1.0
+        Ftrue = F[np.arange(n), self.y_col]
+        Fm = F.copy()
+        Fm[np.arange(n), self.y_col] = -np.inf
+        Fother = Fm.max(axis=1)
+        diff = Ftrue - Fother
+        diff = diff[np.isfinite(diff)]
+        gap = float(np.median(diff)) if diff.size else 1.0
+        # map the median true-vs-best-other gap to a softmax logit ~4 (p~0.98)
+        return max(abs(gap), self.eps) / 4.0
+
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        Z = self._prep(X_cal)
+        self.Z = Z
+        self.y_cal = np.asarray(y_cal)
+        self.classes_ = np.unique(self.y_cal)
+        self._cls_to_col = {int(c): j for j, c in enumerate(self.classes_)}
+        n, d = Z.shape
+        K = len(self.classes_)
+        self.y_col = np.array([self._cls_to_col[int(c)] for c in self.y_cal])
+        # per-class sums + counts
+        self.class_sum = np.zeros((d, K))
+        self.n_c = np.zeros(K)
+        for j in range(K):
+            m = self.y_col == j
+            self.n_c[j] = int(m.sum())
+            self.class_sum[:, j] = Z[m].sum(axis=0)
+        # full-mean prototype directions
+        self.P = np.zeros((d, K))
+        self._P_ok = np.zeros(K, dtype=bool)
+        for j in range(K):
+            p = self._proto(self.class_sum[:, j], self.n_c[j])
+            if p is not None:
+                self.P[:, j] = p
+                self._P_ok[j] = True
+        # cross logits with full class means; undefined cols -> -inf
+        F = Z @ self.P
+        if not self._P_ok.all():
+            F[:, ~self._P_ok] = -np.inf
+        # own-class logit replaced by the exact leave-one-out prototype
+        f_own = np.empty(n)
+        for i in range(n):
+            j = self.y_col[i]
+            p = self._proto(self.class_sum[:, j] - Z[i], self.n_c[j] - 1.0)
+            f_own[i] = -np.inf if p is None else float(Z[i] @ p)
+        F[np.arange(n), self.y_col] = f_own
+        self.F_base = F
+        self._T = self._resolve_T()
+        P0 = self._softmax_rows(self.F_base / self._T)
+        self.alpha0 = 1.0 - P0[np.arange(n), self.y_col]
+        self._cache_key = None
+        self._cache = None
+        return self
+
+    def get_calibration_scores(self) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+
+    # -- per-test shared work (candidate-label independent) -----------------
+    def _ensure_cache(self, x: np.ndarray) -> Dict:
+        key = x.ctypes.data
+        if self._cache_key == key and self._cache is not None:
+            return self._cache
+        z = self._prep(x).ravel()
+        f_test = self.P.T @ z                       # (K,) = z @ P
+        if not self._P_ok.all():
+            f_test = f_test.copy()
+            f_test[~self._P_ok] = -np.inf
+        cache = {"z": z, "f_test": f_test}
+        self._cache_key = key
+        self._cache = cache
+        return cache
+
+    def score_x(self, x: np.ndarray, y: int) -> float:
+        cache = self._ensure_cache(x)
+        yc = int(y)
+        if yc not in self._cls_to_col:
+            # candidate class absent from cal: the test point is its sole member,
+            # so leaving it out empties class y -> p(y)=0 -> score 1.0. This is
+            # the SAME empty-class rule a singleton cal point gets (exchangeable).
+            return 1.0
+        col = self._cls_to_col[yc]
+        p = self._softmax_vec(cache["f_test"] / self._T)
+        return float(1.0 - p[col])
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        cache = self._ensure_cache(x)
+        z = cache["z"]
+        n = len(self.Z)
+        yc = int(y)
+        F = self.F_base.copy()
+        if yc in self._cls_to_col:
+            col = self._cls_to_col[yc]
+            cs = self.class_sum[:, col]
+            ny = self.n_c[col]
+            # non-members: full augmented class-y mean (one matvec)
+            p_full = self._proto(cs + z, ny + 1.0)
+            colvec = (self.Z @ p_full) if p_full is not None else np.full(n, -np.inf)
+            colvec = np.asarray(colvec, dtype=np.float64)
+            # members (y_i == col): leave i out of the augmented class y, count ny
+            members = np.where(self.y_col == col)[0]
+            if members.size:
+                S = (cs + z)[None, :] - self.Z[members]      # (m, d) leave-out sums
+                if self.cosine:
+                    nrm = np.linalg.norm(S, axis=1)
+                    protos = S / np.maximum(nrm, self.eps)[:, None]
+                    vals = np.einsum('md,md->m', self.Z[members], protos)
+                    vals[nrm < self.eps] = -np.inf
+                else:
+                    protos = S / ny
+                    vals = np.einsum('md,md->m', self.Z[members], protos)
+                colvec[members] = vals
+            F[:, col] = colvec
+        else:
+            # absent candidate class: append a new column whose sole member is the
+            # hypothesised test point (count 1).
+            p_new = self._proto(z, 1.0)
+            newcol = (self.Z @ p_new) if p_new is not None else np.full(n, -np.inf)
+            F = np.concatenate([F, np.asarray(newcol, dtype=np.float64)[:, None]],
+                               axis=1)
+        P = self._softmax_rows(F / self._T)
+        return 1.0 - P[np.arange(n), self.y_col]
+
+
 class FullConformalPredictor:
 
     def __init__(
@@ -2196,7 +2454,7 @@ def create_ncm(ncm_type: str, k: int = 5,
                allow_nonexchangeable: bool = False,
                *, temperature: Optional[float] = None,
                lam_ridge: float = 1.0, lam_anchor: float = 1.0,
-               loo: bool = True) -> NonconformityMeasure:
+               loo: bool = True, logit: str = "cosine") -> NonconformityMeasure:
     """
     Factory function to create NCM instances.
 
@@ -2204,13 +2462,19 @@ def create_ncm(ncm_type: str, k: int = 5,
         ncm_type: One of 'softmax', 'mahal_nn_ratio', 'whitened_geodesic',
                   'geodesic_topk_mean', 'geodesic_topk_asym',
                   'unwhitened_topk_mean', 'unwhitened_topk_asym',
-                  'geodesic_topk', 'geodesic_1nn', 'rbf_density', 'ridge_softmax'
+                  'geodesic_topk', 'geodesic_1nn', 'rbf_density', 'ridge_softmax',
+                  'prototype_softmax'
         k: Number of neighbors for top-k NCMs
         reg: Variance regularisation for Mahalanobis NCMs
         temperature, lam_ridge, lam_anchor, loo: 'ridge_softmax' only (keyword-
             only; all other NCM types ignore them). See RidgeSoftmaxNCM.
             temperature=None auto-fits T on cal (O(1/n), warns); pass a fixed
             float for the exact guarantee.
+        temperature, logit: 'prototype_softmax' only (keyword-only). The vanilla
+            text-free FCA NCM (class-mean prototype -> softmax LAC, no covariance
+            term). logit='cosine' (default) or 'dot'. temperature=None warns
+            (O(1/n)); pass a fixed float for the exact guarantee. See
+            PrototypeSoftmaxNCM.
         allow_nonexchangeable: Approve (and silence the validity warning for) the
             NCM types that fit a data-dependent transform on the CALIBRATION set
             and therefore break FCP exchangeability at O(1/n): every whitened
@@ -2270,6 +2534,12 @@ def create_ncm(ncm_type: str, k: int = 5,
         return RidgeSoftmaxNCM(lam=lam_ridge, lam_anchor=lam_anchor,
                                temperature=temperature, loo=loo,
                                allow_nonexchangeable=nx)
+    elif ncm_type == "prototype_softmax":
+        # Vanilla text-free FCA: class-mean prototype -> softmax LAC. NO ridge
+        # covariance term (cf. ridge_softmax) -- the clean ablation control.
+        # Exact for fixed temperature; temperature=None warns.
+        return PrototypeSoftmaxNCM(temperature=temperature, logit=logit,
+                                   allow_nonexchangeable=nx)
     else:
         raise ValueError(f"Unknown NCM type: {ncm_type}")
 
