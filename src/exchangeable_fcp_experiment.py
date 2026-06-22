@@ -63,7 +63,24 @@ def balanced_cal_split(X, y, cal, test, allc, rng):
     return ci, ti
 
 
-SPLITS = {"random": random_split, "balanced_cal": balanced_cal_split}
+def balanced_both_split(X, y, cal, test, allc, rng):
+    """Balanced cal + balanced test, EQUAL shots/class (m = cal//K each),
+    disjoint, fresh per-class permutation each trial. The DEFAULT split for new
+    experiments (2026-06-21): lit-comparable few-shot protocol, every class
+    present in cal AND test, smaller sets. NOT exactly exchangeable
+    (label-dependent) -> empirically conservative (over-covers ~+1-3pp). Report
+    the `random` arm alongside for the exact-validity claim. `test` is ignored
+    (set to m*K); `cal` should be a multiple of K. Keep cal >= 2K (m >= 2)."""
+    m = cal // len(allc)
+    ci, ti = [], []
+    for c in allc:
+        perm = rng.permutation(np.where(y == c)[0])
+        ci.append(perm[:m]); ti.append(perm[m:2 * m])
+    return np.concatenate(ci), np.concatenate(ti)
+
+
+SPLITS = {"random": random_split, "balanced_cal": balanced_cal_split,
+          "balanced_both": balanced_both_split}
 
 
 def main():
@@ -75,7 +92,20 @@ def main():
                          "degrades to plain unwhitened FCP (still exchangeable).")
     ap.add_argument("--ncm", type=str, default="unwhitened_topk_mean",
                     help="Must be a whiten=False NCM for exchangeability "
-                         "(unwhitened_topk_mean / unwhitened_topk_asym).")
+                         "(unwhitened_topk_mean / unwhitened_topk_asym), or "
+                         "'ridge_softmax' (FCA-inspired; plain FCP only).")
+    # ridge_softmax knobs (ignored by other NCMs)
+    ap.add_argument("--temperature", type=str, default="auto",
+                    help="ridge_softmax softmax T: a float (exact) or 'auto' "
+                         "(cal-fit, O(1/n), warns). Validity holds for any fixed T.")
+    ap.add_argument("--lam_ridge", type=float, default=1.0,
+                    help="ridge_softmax ridge stabiliser.")
+    ap.add_argument("--lam_anchor", type=float, default=1.0,
+                    help="ridge_softmax class-mean anchor strength "
+                         "(large -> prototype, 0 -> discriminative LDA fit).")
+    ap.add_argument("--no_loo", action="store_true",
+                    help="ridge_softmax: use full-bag (self-inclusive) scores "
+                         "instead of PRESS leave-one-out.")
     ap.add_argument("--pca_dim", type=int, default=128, help="PCA dim (0/negative = off).")
     ap.add_argument("--whiten", type=str, default="cluster", choices=["cluster", "global", "none"])
     ap.add_argument("--n_clusters_whiten", type=int, default=100,
@@ -94,7 +124,10 @@ def main():
     ap.add_argument("--test_size", type=int, default=300)
     ap.add_argument("--n_trials", type=int, default=10)
     ap.add_argument("--alpha", type=float, default=0.1)
-    ap.add_argument("--split", type=str, default="random", choices=list(SPLITS))
+    ap.add_argument("--split", type=str, default="balanced_both", choices=list(SPLITS),
+                    help="DEFAULT 'balanced_both' (balanced cal+test, equal shots/class, "
+                         "lit-comparable, conservative). Use 'random' for the exact-validity "
+                         "(tight ~0.90) reference arm.")
     ap.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"],
                     help="MS-CS penalty backend: 'cuda' uses the GPU fast path "
                          "(set-parity, ~7-30x); centroid-M falls back to CPU.")
@@ -126,11 +159,34 @@ def main():
             print("  (MS-CS requested but needs an unlabeled pool -> skipped)")
 
     print(f"NCM={args.ncm} | split={args.split} | alpha={args.alpha} | trials={args.n_trials}")
-    exch_note = "exact" if args.split == "random" else "broken by balanced-cal (conservative)"
+    exch_note = "exact" if args.split == "random" else "conservative (label-dependent balanced split, over-covers ~+1-3pp)"
     print(f"EXCHANGEABLE: {exch_note}  (whitening/PCA/MS-CS sourced from the unlabeled pool)")
     split_fn = SPLITS[args.split]
     tau_arg = -args.tau  # negative => normalize by median_d^2 (see build_cluster_similarity_matrix)
+    if args.ncm == "ridge_softmax" and mscs_ok:
+        print("  (ridge_softmax: MS-CS not wired -> plain FCP only)")
+        mscs_ok = False
     lambdas = args.lambdas if mscs_ok else [0.0]
+
+    # ridge_softmax: resolve ONE fixed softmax temperature, held constant across
+    # ALL trials -> each trial's CP stays exactly exchangeable (a fixed T from a
+    # pilot draw is a hyperparameter chosen on separate data). A per-fit auto-T
+    # would be cal-fit O(1/n) and, with a small sharp T, under-covers.
+    ridge_T = None
+    if args.ncm == "ridge_softmax":
+        if args.temperature == "auto":
+            from conformal_prediction import RidgeSoftmaxNCM
+            rng0 = np.random.default_rng(args.seed)
+            pilot = min(max(args.cal_sizes), 800)
+            pci, _ = balanced_cal_split(X, y, pilot, max(args.test_size, 200), allc, rng0)
+            pncm = RidgeSoftmaxNCM(
+                lam=args.lam_ridge, lam_anchor=args.lam_anchor,
+                temperature=None, loo=not args.no_loo, allow_nonexchangeable=True
+            ).fit(transform.transform(X[pci]), y[pci])
+            ridge_T = float(pncm._T)
+            print(f"  ridge_softmax: fixed T={ridge_T:.4f} (pilot; constant across trials -> exact)")
+        else:
+            ridge_T = float(args.temperature)
 
     tag = args.tag or ("full" if args.unlabeled_path else "degraded")
     results = {"tag": tag,
@@ -153,7 +209,13 @@ def main():
                 Xt, yt = transform.transform(X[ti]), y[ti]
 
                 if lam == 0.0:
-                    ncm = create_ncm(args.ncm, k=5)
+                    if args.ncm == "ridge_softmax":
+                        ncm = create_ncm(args.ncm, temperature=ridge_T,
+                                         lam_ridge=args.lam_ridge,
+                                         lam_anchor=args.lam_anchor,
+                                         loo=not args.no_loo)
+                    else:
+                        ncm = create_ncm(args.ncm, k=5)
                     cp = FullConformalPredictor(ncm, alpha=args.alpha)
                     cp.calibrate(Xc, yc, all_classes=allc)
                     m = cp.evaluate(Xt, yt, verbose=False)

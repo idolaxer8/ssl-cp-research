@@ -1197,6 +1197,251 @@ class SoftmaxNonconformity(NonconformityMeasure):
         )
 
 
+class RidgeSoftmaxNCM(NonconformityMeasure):
+    """FCA-inspired softmax NCM (text-free SS-Text) for Full CP.
+
+    A class-mean-ANCHORED ridge (least-squares) linear probe whose softmax gives
+    the LAC/THR score  s(x, y) = 1 - p(y | x).  This is the pure-SSL translation
+    of "Full Conformal Adaptation of Medical VLMs" (Silva-Rodriguez et al., IPMI
+    2025, arXiv:2506.06076): we keep their closed-form, per-candidate-refittable
+    probe but, lacking a zero-shot TEXT encoder (we use DINOv2), replace the text
+    anchor by the class MEAN and recover discriminativeness via the ridge
+    covariance term ``A^{-1} = (Z^T Z + lam I)^{-1}`` that their first-order
+    SS-Text linearisation discards.
+
+    Per class c the probe weight solves the anchored ridge
+        w_c = A^{-1} ( Z^T y_c  +  lam_a mu_c ),   A = Z^T Z + (lam + lam_a) I,
+    with mu_c the class mean (anchor), y_c the {0,1} one-hot column.  Then
+        f_c(x) = z^T w_c ,   p(y|x) = softmax_c( f_c(x) / T ) ,   s = 1 - p(y|x).
+        lam_a -> inf  =>  w_c -> mu_c (pure nearest-class-mean prototype; the
+                          scarce-data-safe limit, mirroring FCA's text anchor),
+        lam_a -> 0    =>  discriminative ridge/LDA fit.
+
+    Full CP.  For each test point x and candidate y, (z, y) is folded into the
+    bag.  ``A`` gets ONE rank-1 Sherman-Morrison update (independent of the
+    candidate LABEL, so it is shared across all K candidates of a test point);
+    only the class-y column of ``Z^T Y + lam_a M`` moves.  Calibration points are
+    re-scored with leave-one-out predictions via the ridge PRESS identity
+        f_c^{LOO}(z_i) = ( f_c(z_i) - h_ii y_ic ) / (1 - h_ii),
+        h_ii = z_i^T A^{-1} z_i      (leverage),
+    which removes each point's self-fit.  The class-mean anchor is held at its
+    full-bag value (an O(1/n_c) self-inclusion kept for the clean closed form);
+    every point -- cal AND the hypothesised test point -- is treated by the SAME
+    formula, so the n+1 scores stay exchangeable.
+
+    EXCHANGEABILITY.  The probe is refit per candidate on the augmented bag (a
+    symmetric function of it), NOT trained once on cal -- so unlike
+    ``SoftmaxNonconformity`` (cal-trained logistic, Full-CP-invalid) this is
+    exactly exchangeable, PROVIDED the upstream feature map, ``lam``, ``lam_a``
+    and the temperature ``T`` are fixed / pool-sourced.  A cal-fit temperature
+    (``temperature=None`` -> auto) breaks it at O(1/n) and routes through
+    ``warn_nonexchangeable`` (same policy as RBFDensityNCM's cal-fit bandwidth).
+    Validity is independent of ``T`` for any FIXED value; ``T`` is an
+    efficiency knob (sharper softmax -> tighter sets).
+
+    Input features are assumed ALREADY projected by the exchangeable pool
+    transform (exchangeable_features.UnlabeledTransform); this NCM adds no
+    further whitening.
+
+    Args:
+        lam:        ridge stabiliser (added to the diagonal alongside lam_anchor).
+        lam_anchor: class-mean anchor strength (large -> prototype, 0 -> LDA fit).
+        temperature: softmax temperature T. A fixed float is exact; None means
+                     auto from cal (O(1/n), warns).
+        loo:        if True (default) use ridge PRESS leave-one-out predictions;
+                    if False use full-bag (self-inclusive) predictions (also exact,
+                    simpler, slightly more optimistic).
+        eps:        numerical floor (leverage clamp / norm floor).
+        allow_nonexchangeable: approve + silence the cal-fit-temperature warning.
+    """
+
+    def __init__(self, lam: float = 1.0, lam_anchor: float = 1.0,
+                 temperature: Optional[float] = None, loo: bool = True,
+                 eps: float = 1e-9, allow_nonexchangeable: bool = False):
+        self.lam = float(lam)
+        self.lam_anchor = float(lam_anchor)
+        self.temperature = temperature
+        self.loo = bool(loo)
+        self.eps = float(eps)
+        self.allow_nonexchangeable = allow_nonexchangeable
+        # fitted state
+        self.classes_ = None
+        self._cls_to_col = None
+        self.Z = None
+        self.y_col = None        # (n,) cal labels mapped to 0..K-1
+        self.Y = None            # (n, K) one-hot
+        self.M = None            # (d, K) class-mean anchors
+        self.n_c = None          # (K,) class counts
+        self.A_inv = None        # (d, d) (Z^T Z + (lam+lam_a) I)^{-1}
+        self.B = None            # (d, K) Z^T Y + lam_a M
+        self.W = None            # (d, K) A_inv @ B
+        self.alpha0 = None
+        self._T = None
+        # per-test cache, keyed on x.ctypes.data
+        self._cache_key = None
+        self._cache = None
+
+    # -- softmax helpers (float64, stable) ----------------------------------
+    @staticmethod
+    def _softmax_rows(logits: np.ndarray) -> np.ndarray:
+        m = logits.max(axis=1, keepdims=True)
+        e = np.exp(logits - m)
+        return e / e.sum(axis=1, keepdims=True)
+
+    @staticmethod
+    def _softmax_vec(logits: np.ndarray) -> np.ndarray:
+        m = logits.max()
+        e = np.exp(logits - m)
+        return e / e.sum()
+
+    def _resolve_T(self, Z: np.ndarray) -> float:
+        if self.temperature is not None:
+            return float(self.temperature)
+        # auto temperature from cal -> data-dependent, O(1/n) non-exchangeable
+        warn_nonexchangeable(
+            "RidgeSoftmaxNCM cal-fit temperature (temperature=None)",
+            "Pass a fixed temperature for an exact guarantee (sweep it for "
+            "efficiency); validity holds for ANY fixed T.",
+            order="O(1/n)", allow=self.allow_nonexchangeable)
+        F = Z @ self.W
+        n, K = F.shape
+        if K < 2:
+            return 1.0
+        Ftrue = F[np.arange(n), self.y_col]
+        Fm = F.copy()
+        Fm[np.arange(n), self.y_col] = -np.inf
+        Fother = Fm.max(axis=1)
+        gap = float(np.median(Ftrue - Fother))
+        # map the median true-vs-best-other gap to a softmax logit ~4 (p~0.98)
+        return max(abs(gap), self.eps) / 4.0
+
+    def fit(self, X_cal: np.ndarray, y_cal: np.ndarray):
+        Z = np.asarray(X_cal, dtype=np.float64)
+        self.y_cal = np.asarray(y_cal)
+        self.classes_ = np.unique(self.y_cal)
+        self._cls_to_col = {int(c): j for j, c in enumerate(self.classes_)}
+        n, d = Z.shape
+        K = len(self.classes_)
+        self.Z = Z
+        self.y_col = np.array([self._cls_to_col[int(c)] for c in self.y_cal])
+        Y = np.zeros((n, K))
+        Y[np.arange(n), self.y_col] = 1.0
+        self.Y = Y
+        # class-mean anchors + counts
+        M = np.zeros((d, K))
+        n_c = np.zeros(K)
+        for j in range(K):
+            m = self.y_col == j
+            n_c[j] = int(m.sum())
+            if n_c[j] > 0:
+                M[:, j] = Z[m].mean(axis=0)
+        self.M = M
+        self.n_c = n_c
+        # anchored ridge
+        lam_eff = self.lam + self.lam_anchor
+        A = Z.T @ Z
+        A[np.diag_indices_from(A)] += lam_eff
+        self.A_inv = np.linalg.inv(A)
+        self.B = Z.T @ Y + self.lam_anchor * M
+        self.W = self.A_inv @ self.B
+        self._T = self._resolve_T(Z)
+        # baseline (cal-only bag) calibration scores, LOO if requested
+        F = Z @ self.W
+        if self.loo:
+            ZA = Z @ self.A_inv
+            h = np.einsum('ij,ij->i', ZA, Z)
+            h = np.clip(h, None, 1.0 - self.eps)
+            F = (F - h[:, None] * Y) / (1.0 - h)[:, None]
+        P = self._softmax_rows(F / self._T)
+        self.alpha0 = 1.0 - P[np.arange(n), self.y_col]
+        self._cache_key = None
+        self._cache = None
+        return self
+
+    def get_calibration_scores(self) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        return self.alpha0.copy()
+
+    # -- per-test shared work (candidate-label independent) -----------------
+    def _ensure_cache(self, x: np.ndarray) -> Dict:
+        key = x.ctypes.data
+        if self._cache_key == key and self._cache is not None:
+            return self._cache
+        z = np.asarray(x, dtype=np.float64).ravel()
+        u = self.A_inv @ z
+        denom = 1.0 + float(z @ u)                 # Sherman-Morrison denom (>0)
+        A1_inv = self.A_inv - np.outer(u, u) / denom
+        h_test = float(z @ (A1_inv @ z))           # test-point leverage in aug. A1
+        W1_base = A1_inv @ self.B                  # candidate-independent columns
+        f_test_base = z @ W1_base                  # (K,)
+        cache = {"z": z, "A1_inv": A1_inv, "h_test": min(h_test, 1.0 - self.eps),
+                 "W1_base": W1_base, "f_test_base": f_test_base, "F1_base": None}
+        if self.loo:
+            ZA1 = self.Z @ A1_inv
+            h = np.einsum('ij,ij->i', ZA1, self.Z)
+            cache["h"] = np.clip(h, None, 1.0 - self.eps)
+        self._cache_key = key
+        self._cache = cache
+        return cache
+
+    def _w1_y(self, cache: Dict, y: int):
+        """Augmented class-y weight column after folding (z, y) into the bag.
+        Returns (col_or_None, w1_y); col is None when y is absent from cal."""
+        z = cache["z"]
+        yc = int(y)
+        if yc in self._cls_to_col:
+            col = self._cls_to_col[yc]
+            n_y = self.n_c[col]
+            mu_y = self.M[:, col]
+            mu_y_new = (n_y * mu_y + z) / (n_y + 1.0)
+            b1y = self.B[:, col] + z + self.lam_anchor * (mu_y_new - mu_y)
+            return col, cache["A1_inv"] @ b1y
+        # new class: z is its sole member, mu_y = z -> B1[:,y] = z + lam_a z
+        return None, cache["A1_inv"] @ ((1.0 + self.lam_anchor) * z)
+
+    def score_x(self, x: np.ndarray, y: int) -> float:
+        cache = self._ensure_cache(x)
+        col, w1y = self._w1_y(cache, y)
+        f = cache["f_test_base"]
+        f_y = float(cache["z"] @ w1y)
+        if col is not None:
+            logits = f.copy(); logits[col] = f_y; yi = col
+        else:
+            logits = np.append(f, f_y); yi = len(logits) - 1
+        if self.loo:
+            h = cache["h_test"]
+            logits = logits / (1.0 - h)
+            logits[yi] = (f_y - h) / (1.0 - h)     # PRESS at the hypothesised class
+        p = self._softmax_vec(logits / self._T)
+        return float(1.0 - p[yi])
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        cache = self._ensure_cache(x)
+        col, w1y = self._w1_y(cache, y)
+        Z = self.Z
+        n = len(Z)
+        if cache["F1_base"] is None:
+            cache["F1_base"] = Z @ cache["W1_base"]    # (n, K), once per test pt
+        Fy = Z @ w1y                                   # updated class-y column
+        if col is not None:
+            F = cache["F1_base"].copy(); F[:, col] = Fy
+        else:
+            F = np.concatenate([cache["F1_base"], Fy[:, None]], axis=1)
+        ycol = self.y_col                              # cal true-class columns
+        if self.loo:
+            h = cache["h"]
+            # PRESS: subtract the leverage h_i only at each point's OWN true-class
+            # column (target 1), divide every column by (1 - h_i).
+            true_raw = F[np.arange(n), ycol].copy()    # raw true-class prediction
+            F = F / (1.0 - h)[:, None]
+            F[np.arange(n), ycol] = (true_raw - h) / (1.0 - h)
+        P = self._softmax_rows(F / self._T)
+        return 1.0 - P[np.arange(n), ycol]
+
+
 class FullConformalPredictor:
 
     def __init__(
@@ -1948,7 +2193,10 @@ class CrossValidationPlusPredictor:
 
 def create_ncm(ncm_type: str, k: int = 5,
                reg: float = 1e-4,
-               allow_nonexchangeable: bool = False) -> NonconformityMeasure:
+               allow_nonexchangeable: bool = False,
+               *, temperature: Optional[float] = None,
+               lam_ridge: float = 1.0, lam_anchor: float = 1.0,
+               loo: bool = True) -> NonconformityMeasure:
     """
     Factory function to create NCM instances.
 
@@ -1956,9 +2204,13 @@ def create_ncm(ncm_type: str, k: int = 5,
         ncm_type: One of 'softmax', 'mahal_nn_ratio', 'whitened_geodesic',
                   'geodesic_topk_mean', 'geodesic_topk_asym',
                   'unwhitened_topk_mean', 'unwhitened_topk_asym',
-                  'geodesic_topk', 'geodesic_1nn', 'rbf_density'
+                  'geodesic_topk', 'geodesic_1nn', 'rbf_density', 'ridge_softmax'
         k: Number of neighbors for top-k NCMs
         reg: Variance regularisation for Mahalanobis NCMs
+        temperature, lam_ridge, lam_anchor, loo: 'ridge_softmax' only (keyword-
+            only; all other NCM types ignore them). See RidgeSoftmaxNCM.
+            temperature=None auto-fits T on cal (O(1/n), warns); pass a fixed
+            float for the exact guarantee.
         allow_nonexchangeable: Approve (and silence the validity warning for) the
             NCM types that fit a data-dependent transform on the CALIBRATION set
             and therefore break FCP exchangeability at O(1/n): every whitened
@@ -2012,6 +2264,12 @@ def create_ncm(ncm_type: str, k: int = 5,
     elif ncm_type == "rbf_density":
         # Gaussian-kernel density NCM. Bandwidth auto from cal median heuristic.
         return RBFDensityNCM(allow_nonexchangeable=nx)
+    elif ncm_type == "ridge_softmax":
+        # FCA-inspired (text-free SS-Text): class-mean-anchored ridge probe ->
+        # softmax LAC. Exact for fixed temperature; temperature=None warns.
+        return RidgeSoftmaxNCM(lam=lam_ridge, lam_anchor=lam_anchor,
+                               temperature=temperature, loo=loo,
+                               allow_nonexchangeable=nx)
     else:
         raise ValueError(f"Unknown NCM type: {ncm_type}")
 
