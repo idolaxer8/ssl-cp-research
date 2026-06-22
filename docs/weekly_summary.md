@@ -94,45 +94,69 @@ trials, post-missing-class-fix pipeline:
 coverage-vs-band / log set size / CovGap), `split_ablation_3arm.png`,
 `split_ablation_results.json`, `balanced_both_results.json`.
 
-### 3. FCA paper adaptation (in progress — extend as cluster results land)
+### 3. FCA paper adaptation — cluster results landed: the VANILLA prototype is the win
 
-**What FCA is / our adaptation.** FCA (Silva-Rodriguez / jusiro,
-arXiv:2506.06076 — conformal for medical VLMs) uses a closed-form "SS-Text"
-linear probe `w_c = scaled_class_mean + text_anchor`. We have no text encoder,
-so we **drop the text anchor and anchor on the class mean**, restoring
-discriminativeness via a ridge covariance term:
-`w_c = (Z^T Z + (lam+lam_a) I)^{-1} (Z^T y_c + lam_a * mu_c)` -> softmax ->
-NCM = 1 - p(y|x) (LAC/THR). New class `RidgeSoftmaxNCM`,
-`create_ncm("ridge_softmax", ...)`.
+**The thinking arc.** FCA (Silva-Rodriguez / jusiro, arXiv:2506.06076 —
+conformal for medical VLMs) makes a softmax-head NCM Full-CP-valid by refitting
+it in closed form per candidate ("SS-Text" probe `w_c = scaled_class_mean +
+text_anchor`, scored by LAC = 1 - p(y|x)). We have no text encoder, so we drop
+the text anchor. That leaves two text-free rungs:
+- **rung 3 (vanilla)** `PrototypeSoftmaxNCM`: keep the bare **class-mean
+  prototype** `w_c = mu_c` -> softmax LAC. **No covariance term.** The faithful
+  FCA translation. `create_ncm("prototype_softmax", ...)`.
+- **rung 4** `RidgeSoftmaxNCM`: add back a ridge covariance term
+  `w_c = (Z^T Z + (lam+lam_a)I)^{-1}(Z^T y_c + lam_a mu_c)` — the elaboration we
+  built first. `create_ncm("ridge_softmax", ...)`.
+
+Both are **exactly exchangeable**. The prototype's leave-one-out is the
+closed-form class-mean update `mu_c^(-i) = (n_c mu_c - z_i)/(n_c - 1)` — no
+Sherman-Morrison, no PRESS (oracle fast-path vs brute-force = 3.55e-15). A
+bit-exact **GPU path** was added for the prototype so the high-trial sweep runs
+on the cluster GPU. T must be fixed (pilot/pool); auto-T is O(1/n).
+
+**Cluster run DONE** (50 trials, balanced cal+test, CIFAR-100 + miniImageNet,
+cal 200-1800, PCA-128 + cluster-whiten). CIFAR-100 set size (coverage):
+
+| cal | prototype_softmax | geodesic asym | geodesic mean | proto vs best geo |
+|-----|-------------------|---------------|---------------|-------------------|
+| 200 | **4.58** (.949) | 8.63 (.954) | 5.65 (.921) | **-19%** |
+| 400 | **1.64** (.913) | 2.29 (.923) | 2.12 (.905) | **-22%** |
+| 800 | **1.31** (.904) | 1.63 (.909) | 1.63 (.915) | **-19%** |
+| 1800| **1.20** (.903) | 1.38 (.903) | 1.27 (.906) | **-6%** |
 
 **Key points:**
-- **Exactly exchangeable (confirmed).** Per-candidate Full-CP refit = one
-  Sherman-Morrison rank-1 update; exact LOO via ridge PRESS leverage. Oracle
-  (fast vs brute-force LOO) matches to 1.9e-15; 20-trial random cal=400
-  coverage 0.897. Caveat: temperature **T must be fixed** (pilot value); an
-  auto-fit T is cal-dependent O(1/n) and under-covers.
-- **Tightest at cal=800 on both splits** (fixed T=0.10, 5 trials): balanced
-  1.45 vs 1.65 (geodesic asym) / 1.67 (mean) = -12/-13%; random 1.42 vs
-  1.61/1.66 = -12/-14%. Competitive-to-best at cal=400.
-- **Trade-off (not a clean dominate):** tighter sets but slightly worse CovGap
-  than geodesic (cal=800: 7.5pp vs 6.3pp); under-covers @ cal=200 (m=2, LOO
-  breakdown); CPU-only, ~6-7x slower than the GPU geodesic.
-- **Status / "update later":** NCM + unit tests committed & pushed (branch
-  `worktree-ridge-softmax-ncm`, commit `cef76b4`). Cluster benchmark script
-  ready (`src/ridge_softmax_cluster_experiment.py`: cal 200-1800,
-  CIFAR-100 + miniImageNet, metrics cov/sz/CovGap/runtime). NOT yet done: full
-  cluster run (to launch), GPU/vectorized ridge path, MS-CS hooks, paper
-  write-up.
+- **Prototype is the TIGHTEST method at every cal on CIFAR-100** (-6% to -22%
+  vs the best geodesic; up to -47% vs asym at cal=200), valid throughout
+  (cov 0.90-0.95), and **CovGap best-or-tied** with asym (~5.8-6.3pp) — tighter
+  *without* worse class-conditional coverage.
+- **miniImageNet saturates** (DINOv2 separates it ~perfectly, sets ~1): prototype
+  wins at small cal (cal=200: 1.39 vs 1.44 mean / 1.81 asym) and ties within
+  ~1-4% at cal>=400. Prototype best/tied on CovGap (geo_mean worst, ~8pp).
+- **Validity as designed:** small balanced cal **over-covers with bloated sets,
+  never under-covers** (CIFAR-100 cal=200: sz 4.58 at cov 0.949) — the 50-trial
+  confirmation of the bloat-not-undercoverage property.
+- **The covariance elaboration (rung 4 ridge) was unnecessary.** On the balanced
+  protocol the bare prototype matches/beats ridge AND avoids ridge's small-cal
+  under-coverage (ridge ~0.85 at cal=200, m=2). The win attributed to the ridge
+  covariance is really the softmax-prototype structure. **Rung 3 is the keeper.**
+  (The ridge "GPU commit" is a bit-exact speedup, NOT an under-coverage fix —
+  ridge still under-covers at m=2.) ridge is excluded from the default cluster
+  comparison; re-add via `--ncms` for the full ablation.
+- **Shipped:** merged + pushed to **origin/main** (commit `d95b167`); NCM, GPU
+  path, unit tests (incl. CUDA parity), and the cluster script all on main.
 
-**Output:** `output/ridge_softmax_compare/ridge_vs_geodesic.png` (3-NCM x
-2-split) + `results_ridge_{bal,rand}.json` (currently in worktree
-`.claude/worktrees/ridge-softmax-ncm/`); tests in
-`tests/test_ridge_softmax_ncm.py`.
+**Output:** `output/from_cluster/fca_family_cluster/{results_cifar100,
+results_miniimagenet,results_all}.json` + `compare_*_balanced_both.png`.
+Script `src/fca_family_cluster_experiment.py` (default = prototype vs geodesic,
+balanced, 2 datasets, 50 trials, GPU). NCM in `src/conformal_prediction.py`,
+tests `tests/test_prototype_softmax_ncm.py`, theory `docs/theory.md` §4.1.
 
 ### Cross-cutting note
 
 Topics 1-3 now all run on the **same balanced cal+test default** (topic 2's
 decision), which is exactly the few-shot protocol FCA uses (topic 3) — so the
-centroid/cluster and ridge results are directly lit-comparable. Standing rule:
-pair every balanced headline with the random arm for the exact-validity
-statement.
+centroid/cluster MS-CS and the prototype-softmax results are directly
+lit-comparable. The week's headline: the **vanilla prototype-softmax (FCA rung
+3)** is the tightest valid NCM on CIFAR-100 across the whole cal range, beating
+both the geodesic NCMs and the ridge elaboration. Standing rule: pair every
+balanced headline with the random arm for the exact-validity statement.
