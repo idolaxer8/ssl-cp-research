@@ -226,7 +226,8 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                       class_to_cluster=None, cluster_centroids=None,
                       cluster_dists=None, effective_tau=None,
                       return_sets=False, update_M_fn=None, yhat_mode="ncm",
-                      allow_nonexchangeable=False, device="cpu", gpu_batch_size=128):
+                      allow_nonexchangeable=False, device="cpu", gpu_batch_size=128,
+                      temperature=None, logit="cosine"):
     """Run FCP with MS-CS continuous penalty.
 
     Args:
@@ -262,7 +263,8 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
             "Pass exchangeable=True (bag-symmetric ŷ/M update) for an exact "
             "guarantee.",
             order="O(1/n)", allow=allow_nonexchangeable)
-    ncm = create_ncm(ncm_name, k=5, allow_nonexchangeable=allow_nonexchangeable)
+    ncm = create_ncm(ncm_name, k=5, allow_nonexchangeable=allow_nonexchangeable,
+                     temperature=temperature, logit=logit)  # softmax NCMs: fixed T
     cp = FullConformalPredictor(ncm, alpha=alpha)
     cp.calibrate(X_cal, y_cal, all_classes=all_classes)
 
