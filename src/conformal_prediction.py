@@ -2299,6 +2299,15 @@ class FullConformalPredictor:
         css_norm2 = (class_sum * class_sum).sum(dim=0)                # (Kc,) ||sum_c||^2
         eps2 = eps * eps
         NEG = torch.tensor(float("-inf"), dtype=f, device=dev)
+        # cosine fast path: cache the softmax denominator. Cosine logits are in
+        # [-1,1] so exp(./T) is bounded (no overflow); folding (x,y) swaps ONE
+        # class-y exp term per cal point -> D' = D_base - e_old + e_new, O(n) per
+        # candidate (O(n*K) total) instead of recomputing a K-way softmax per
+        # candidate (O(n*K^2)). dot logits are unbounded -> keep the stable path.
+        if cosine:
+            E_base = torch.exp(F_base / T)                           # (n, Kc) bounded
+            D_base = E_base.sum(dim=1)                               # (n,) denominator
+            E_true = E_base.gather(1, ycol.view(n, 1)).squeeze(1)    # (n,) own-class exp
 
         Xt = torch.as_tensor(np.asarray(X_test), dtype=f, device=dev)
         n_test = Xt.shape[0]
@@ -2334,14 +2343,18 @@ class FullConformalPredictor:
                     mem = (base - znorm2.view(1, n)) / n_c[c]
                 is_member = (ycol == c).view(1, n)                   # (1, n)
                 col_c = torch.where(is_member, mem, nonmem)          # (B, n)
-                # Stable softmax over the augmented bag: F_base with column c
-                # replaced by col_c. Build the (B, n, Kc) logit tensor and let
-                # torch.softmax max-subtract -- dot logits are unbounded, so a raw
-                # exp(F/T) would overflow to inf/NaN at small T.
-                L = F_base.unsqueeze(0).expand(B, n, Kc).clone()     # (B, n, Kc)
-                L[:, :, c] = col_c
-                Psm = torch.softmax(L / T, dim=2)
-                s_cal = 1.0 - Psm.gather(2, ycol_idx).squeeze(2)     # (B, n)
+                if cosine:
+                    # denominator swap: only class c's exp term moves per cal point
+                    e_new = torch.exp(col_c / T)                     # (B, n) bounded
+                    D = D_base.view(1, n) - E_base[:, c].view(1, n) + e_new
+                    num = torch.where(is_member, e_new, E_true.view(1, n))
+                    s_cal = 1.0 - num / D                            # (B, n)
+                else:
+                    # dot logits unbounded -> stable full softmax over (B, n, Kc)
+                    L = F_base.unsqueeze(0).expand(B, n, Kc).clone()
+                    L[:, :, c] = col_c
+                    s_cal = 1.0 - torch.softmax(L / T, dim=2).gather(
+                        2, ycol_idx).squeeze(2)                      # (B, n)
                 s_test = 1.0 - Ptest[:, c]                           # (B,)
                 ng = (s_cal >= s_test.view(B, 1)).sum(dim=1)         # (B,)
                 p_b[:, ci] = (ng.to(f) + 1.0) / (n + 1.0)
