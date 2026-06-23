@@ -94,28 +94,56 @@ trials, post-missing-class-fix pipeline:
 coverage-vs-band / log set size / CovGap), `split_ablation_3arm.png`,
 `split_ablation_results.json`, `balanced_both_results.json`.
 
-### 3. FCA paper adaptation — cluster results landed: the VANILLA prototype is the win
+### 3. FCA-inspired prototype-softmax NCM — the new best method
 
-**The thinking arc.** FCA (Silva-Rodriguez / jusiro, arXiv:2506.06076 —
-conformal for medical VLMs) makes a softmax-head NCM Full-CP-valid by refitting
-it in closed form per candidate ("SS-Text" probe `w_c = scaled_class_mean +
-text_anchor`, scored by LAC = 1 - p(y|x)). We have no text encoder, so we drop
-the text anchor. That leaves two text-free rungs:
-- **rung 3 (vanilla)** `PrototypeSoftmaxNCM`: keep the bare **class-mean
-  prototype** `w_c = mu_c` -> softmax LAC. **No covariance term.** The faithful
-  FCA translation. `create_ncm("prototype_softmax", ...)`.
-- **rung 4** `RidgeSoftmaxNCM`: add back a ridge covariance term
-  `w_c = (Z^T Z + (lam+lam_a)I)^{-1}(Z^T y_c + lam_a mu_c)` — the elaboration we
-  built first. `create_ncm("ridge_softmax", ...)`.
+**Idea.** FCA (Silva-Rodriguez / jusiro, arXiv:2506.06076 — conformal for medical
+VLMs) makes a softmax classifier head valid for Full CP by **re-fitting it in
+closed form for each candidate label**. Their probe is a class-mean prototype
+blended with a zero-shot text anchor, scored by LAC = 1 - p(y|x). We have no text
+encoder (pure SSL, DINOv2), so we keep just the **class-mean prototype**: score
+each label by a softmax over cosine similarities to the per-class means. New NCM
+`PrototypeSoftmaxNCM`, `create_ncm("prototype_softmax", ...)`.
 
-Both are **exactly exchangeable**. The prototype's leave-one-out is the
-closed-form class-mean update `mu_c^(-i) = (n_c mu_c - z_i)/(n_c - 1)` — no
-Sherman-Morrison, no PRESS (oracle fast-path vs brute-force = 3.55e-15). A
-bit-exact **GPU path** was added for the prototype so the high-trial sweep runs
-on the cluster GPU. T must be fixed (pilot/pool); auto-T is O(1/n).
+**Algorithm — prototype-softmax NCM inside Full CP** (plain text; `<.,.>` = inner
+product; `n_c` = #cal points in class c; `n` = #cal points; `K` = #classes):
 
-**Cluster run DONE** (50 trials, balanced cal+test, CIFAR-100 + miniImageNet,
-cal 200-1800, PCA-128 + cluster-whiten). CIFAR-100 set size (coverage):
+```
+Setup (once)
+  z(x)  = embedding of x after the exchangeable transform (PCA-128 +
+          cluster-whiten, fit on the unlabeled pool), L2-normalised.
+  mu_c  = mean of the calibration embeddings in class c   (class "prototype").
+  T     = softmax temperature, fixed once on a pilot draw (never re-fit on cal).
+
+NCM score  s(x, y)  -- "how nonconforming is label y for input x"
+  f_c(x)  = < z(x), mu_c >              for every class c     (cosine similarity)
+  p(y|x)  = softmax_c( f_c(x) / T )                           (class posterior)
+  s(x,y)  = 1 - p(y | x)            (LAC/THR: small = typical, large = atypical)
+
+Prediction set for a test point x   (transductive Full CP, exact)
+  for each candidate label y in {1..K}:
+    1. add (x,y) to the calibration bag; update ONLY class y's prototype:
+         mu_y'         = (n_y * mu_y + z(x)) / (n_y + 1)
+    2. leave-one-out re-score every bag point i on its OWN class y_i, using the
+       bag-minus-i prototype (closed form, no matrix inverse):
+         mu_{y_i}^(-i) = (n_{y_i} * mu_{y_i} - z(x_i)) / (n_{y_i} - 1)
+         s_i           = 1 - softmax( < z(x_i), mu^(-i) > / T )[y_i]
+    3. p_value(y)    = ( #{ i : s_i >= s(x, y) } + 1 ) / (n + 1)
+    4. keep y  iff  p_value(y) > alpha
+  output  { y : p_value(y) > alpha }
+```
+
+**Why it is exactly valid.** Every point in the augmented bag — the test point
+AND each calibration point — is scored by the *same* leave-one-out rule, so the
+n+1 scores are exchangeable and marginal coverage >= 1 - alpha holds for any fixed
+T. No model is trained on the calibration labels (the "probe" is just class
+means), and the leave-one-out update is closed form, so the per-candidate re-fit
+is cheap; a bit-exact GPU path runs the whole sweep on the cluster. Verified: fast
+path vs brute-force leave-one-out = 3.55e-15; small balanced cal **over-covers
+with bloated sets, never under-covers**.
+
+**Cluster results** (50 trials, balanced cal+test, CIFAR-100 + miniImageNet,
+cal 200-1800, PCA-128 + cluster-whiten). CIFAR-100 set size (coverage), vs our
+geodesic NCMs:
 
 | cal | prototype_softmax | geodesic asym | geodesic mean | proto vs best geo |
 |-----|-------------------|---------------|---------------|-------------------|
@@ -135,15 +163,8 @@ cal 200-1800, PCA-128 + cluster-whiten). CIFAR-100 set size (coverage):
 - **Validity as designed:** small balanced cal **over-covers with bloated sets,
   never under-covers** (CIFAR-100 cal=200: sz 4.58 at cov 0.949) — the 50-trial
   confirmation of the bloat-not-undercoverage property.
-- **The covariance elaboration (rung 4 ridge) was unnecessary.** On the balanced
-  protocol the bare prototype matches/beats ridge AND avoids ridge's small-cal
-  under-coverage (ridge ~0.85 at cal=200, m=2). The win attributed to the ridge
-  covariance is really the softmax-prototype structure. **Rung 3 is the keeper.**
-  (The ridge "GPU commit" is a bit-exact speedup, NOT an under-coverage fix —
-  ridge still under-covers at m=2.) ridge is excluded from the default cluster
-  comparison; re-add via `--ncms` for the full ablation.
-- **Shipped:** merged + pushed to **origin/main** (commit `d95b167`); NCM, GPU
-  path, unit tests (incl. CUDA parity), and the cluster script all on main.
+- **Shipped to main:** NCM, GPU path, unit tests (incl. CUDA parity), and the
+  cluster script.
 
 **Output:** `output/from_cluster/fca_family_cluster/{results_cifar100,
 results_miniimagenet,results_all}.json` + `compare_*_balanced_both.png`.
@@ -156,7 +177,7 @@ tests `tests/test_prototype_softmax_ncm.py`, theory `docs/theory.md` §4.1.
 Topics 1-3 now all run on the **same balanced cal+test default** (topic 2's
 decision), which is exactly the few-shot protocol FCA uses (topic 3) — so the
 centroid/cluster MS-CS and the prototype-softmax results are directly
-lit-comparable. The week's headline: the **vanilla prototype-softmax (FCA rung
-3)** is the tightest valid NCM on CIFAR-100 across the whole cal range, beating
-both the geodesic NCMs and the ridge elaboration. Standing rule: pair every
-balanced headline with the random arm for the exact-validity statement.
+lit-comparable. The week's headline: the **prototype-softmax NCM** is the tightest
+valid NCM on CIFAR-100 across the whole cal range, beating our geodesic NCMs.
+Standing rule: pair every balanced headline with the random arm for the
+exact-validity statement.
