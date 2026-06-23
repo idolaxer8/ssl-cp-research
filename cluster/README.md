@@ -9,6 +9,39 @@ Two flavors are provided:
 
 Run from the **repo root** in both cases.
 
+## Environment — activate each session
+
+The cluster uses a **Python venv** (the local conda `ssl-cp` env is Windows-only —
+there is no conda on the pod). Canonical location: `/storage/ido/venvs/ssl-cp`.
+Activate it once per shell / `tmux` session:
+
+```bash
+source /storage/ido/venvs/ssl-cp/bin/activate
+python -c "import torch; print(torch.__version__, 'CUDA', torch.cuda.is_available())"
+```
+
+The `cluster/run_*.sh` scripts **auto-source** this venv via the `SSL_CP_VENV`
+variable (default `/storage/ido/venvs/ssl-cp`). Point them at a different venv with:
+
+```bash
+SSL_CP_VENV=/path/to/venv bash cluster/run_ablation.sh
+```
+
+**First-time only** — create the venv. The driver caps CUDA at 12.2, so install the
+**cu118** torch wheels (matches the local pin), then the rest of requirements:
+
+```bash
+python -m venv /storage/ido/venvs/ssl-cp
+source /storage/ido/venvs/ssl-cp/bin/activate
+pip install --upgrade pip
+pip install --no-cache-dir torch==2.7.1+cu118 torchvision==0.22.1+cu118 \
+    --index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements.txt
+```
+
+(Conda alternative, if conda is available: `bash cluster/setup_env.sh`, then
+`conda activate ssl-cp`.)
+
 ## Direct SSH machine (no scheduler) — fastest path
 
 ```bash
