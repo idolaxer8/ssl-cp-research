@@ -274,8 +274,12 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
     # loop for anything else.
     if device == "cuda":
         try:
-            from mscs_gpu import run_mscs_torch, MSCSGpuUnsupported
-            return run_mscs_torch(
+            from mscs_gpu import (run_mscs_torch, run_prototype_mscs_torch,
+                                  MSCSGpuUnsupported)
+            from conformal_prediction import PrototypeSoftmaxNCM
+            gpu_fn = (run_prototype_mscs_torch
+                      if isinstance(cp.ncm, PrototypeSoftmaxNCM) else run_mscs_torch)
+            return gpu_fn(
                 cp, X_cal, y_cal, X_test, y_test, all_classes, alpha, lam, M,
                 exchangeable=exchangeable, yhat_mode=yhat_mode, update_M_fn=update_M_fn,
                 class_centroids=class_centroids, class_counts=class_counts,

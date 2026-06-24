@@ -1625,6 +1625,7 @@ class PrototypeSoftmaxNCM(NonconformityMeasure):
         self.alpha0 = 1.0 - P0[np.arange(n), self.y_col]
         self._cache_key = None
         self._cache = None
+        self.cal_y_hat = None        # reset MS-CS y_hat cache on (re)fit
         return self
 
     def get_calibration_scores(self) -> np.ndarray:
@@ -1698,6 +1699,44 @@ class PrototypeSoftmaxNCM(NonconformityMeasure):
                                axis=1)
         P = self._softmax_rows(F / self._T)
         return 1.0 - P[np.arange(n), self.y_col]
+
+    # -- suspected-class y_hat for the MS-CS penalty (argmax prototype sim) ----
+    # Enables yhat_mode="ncm" with this NCM (run_fcp_with_mscs) and the prototype
+    # GPU MS-CS path (mscs_gpu.run_prototype_mscs_torch). y_hat(z) = argmax_c
+    # <z, mu_c>; non-LOO, a symmetric function of the (augmented) bag.
+    def _ensure_cal_yhat(self):
+        if getattr(self, "cal_y_hat", None) is not None:
+            return
+        F = self.Z @ self.P                              # (n, K) similarities
+        if not self._P_ok.all():
+            F = F.copy(); F[:, ~self._P_ok] = -np.inf
+        col = F.argmax(axis=1)
+        self._cal_best = F[np.arange(len(F)), col]       # (n,) best similarity
+        self.cal_y_hat = self.classes_[col]              # (n,) class labels
+
+    def predict_class(self, x: np.ndarray) -> int:
+        z = self._prep(x).ravel()
+        f = self.P.T @ z
+        if not self._P_ok.all():
+            f = f.copy(); f[~self._P_ok] = -np.inf
+        return int(self.classes_[int(np.argmax(f))])
+
+    def predict_class_augmented_cal(self, x: np.ndarray, y: int) -> np.ndarray:
+        """Each cal point's predicted class in the bag {cal u (x, y)}: flips to y
+        iff its similarity to the augmented class-y prototype reaches its current
+        best similarity."""
+        self._ensure_cal_yhat()
+        z = self._prep(x).ravel()
+        yc = int(y)
+        if yc in self._cls_to_col:
+            col = self._cls_to_col[yc]
+            p = self._proto(self.class_sum[:, col] + z, self.n_c[col] + 1.0)
+        else:
+            p = self._proto(z, 1.0)                       # absent class: x alone
+        sim_y = (self.Z @ p) if p is not None else np.full(len(self.Z), -np.inf)
+        out = np.array(self.cal_y_hat, copy=True)
+        out[sim_y >= self._cal_best] = yc
+        return out
 
 
 class FullConformalPredictor:

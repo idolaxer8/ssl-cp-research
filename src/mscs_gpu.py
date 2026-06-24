@@ -241,3 +241,149 @@ def run_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alpha, lam, M,
     if return_sets:
         return coverage, avg_size, pred_sets
     return coverage, avg_size
+
+
+def run_prototype_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alpha, lam, M,
+                             *, exchangeable, yhat_mode, update_M_fn,
+                             class_centroids, class_counts, class_to_cluster,
+                             cluster_centroids, cluster_dists, effective_tau,
+                             device="cuda", batch_size=128, return_sets=False):
+    """GPU MS-CS for PrototypeSoftmaxNCM (cosine), exchangeable cluster-M.
+
+    Reuses run_mscs_torch's NCM-independent M_aug + penalty + p-value blocks; only
+    the conformal scores (the denominator-swap prototype path) and the suspected
+    class y_hat (argmax prototype similarity) are prototype-specific. float64 ->
+    bit-parity with the CPU run_fcp_with_mscs(prototype, yhat_mode='ncm'). Raises
+    MSCSGpuUnsupported for anything else (dot logits, frozen, centroid-M, missing
+    classes) so the caller falls back to the CPU loop."""
+    from conformal_prediction import PrototypeSoftmaxNCM
+    ncm = cp.ncm
+    if not isinstance(ncm, PrototypeSoftmaxNCM):
+        raise MSCSGpuUnsupported("needs PrototypeSoftmaxNCM")
+    if not ncm.cosine:
+        raise MSCSGpuUnsupported("prototype GPU MS-CS is cosine-only (dot exp overflows)")
+    if yhat_mode != "ncm":
+        raise MSCSGpuUnsupported("prototype GPU MS-CS uses yhat_mode='ncm' (argmax sim)")
+    if not exchangeable or update_M_fn is not None:
+        raise MSCSGpuUnsupported("only exchangeable cluster-M (update_M_fn=None)")
+    if device == "cuda" and not torch.cuda.is_available():
+        raise MSCSGpuUnsupported("cuda requested but unavailable")
+    classes = np.asarray(all_classes)
+    if not (len(ncm.classes_) == len(classes) and np.array_equal(np.asarray(ncm.classes_), classes)):
+        raise MSCSGpuUnsupported("GPU path needs every candidate class present in cal")
+
+    dev = torch.device(device)
+    f64 = torch.float64
+
+    def f(a, dt=f64):
+        return torch.as_tensor(np.ascontiguousarray(a), device=dev, dtype=dt)
+
+    K = len(classes); n_cal = len(X_cal); n_test = len(X_test)
+    T = float(ncm._T); eps = float(ncm.eps)
+
+    Z = f(ncm.Z)                                         # (n_cal, d) prepped (L2) cal
+    P = f(ncm.P)                                         # (d, K) prototype directions
+    class_sum = f(ncm.class_sum)                         # (d, K)
+    F_base = f(ncm.F_base)                               # (n_cal, K) cal LOO logits
+    ycol = f(ncm.y_col, torch.long)                      # (n_cal,) true-class col (== M col)
+    Mt = f(M)                                            # (K, K)
+    arangeK = torch.arange(K, device=dev)
+
+    # prototype precomputes (cal-only)
+    znorm2 = (Z * Z).sum(1)                              # (n_cal,)
+    css_norm2 = (class_sum * class_sum).sum(0)           # (K,)
+    E_base = torch.exp(F_base / T)                       # (n_cal, K) bounded (cosine)
+    D_base = E_base.sum(1)                               # (n_cal,)
+    E_true = E_base.gather(1, ycol.view(n_cal, 1)).squeeze(1)   # (n_cal,)
+    ZS = (Z @ class_sum)                                 # (n_cal, K) <z_j, sum_k>
+    ZSt = ZS.t().contiguous()                            # (K, n_cal)
+    Ebt = E_base.t().contiguous()                        # (K, n_cal)
+    Fsim = Z @ P                                         # (n_cal, K) cal similarities
+    cal_best = Fsim.max(1).values                        # (n_cal,)
+    cal_yhat_col = Fsim.argmax(1)                        # (n_cal,) M col
+    cal_row = ycol                                       # (n_cal,) M row (true class)
+
+    # exchangeable cluster-M artifacts (transformed space, NOT L2-normalised)
+    cc = f(class_centroids); cn = f(class_counts)
+    clcen = f(cluster_centroids); cld = f(cluster_dists)
+    c2c = f(class_to_cluster, torch.long); tau = float(effective_tau)
+    Xtr_all = f(X_test)                                  # transformed test (M-update space)
+    Xt_norm = f(X_test)                                  # L2 test (prototype space)
+    Xt_norm = Xt_norm / Xt_norm.norm(dim=1, keepdim=True).clamp_min(eps)
+
+    set_sizes = np.empty(n_test, dtype=np.int64)
+    covered = np.empty(n_test, dtype=bool)
+    pred_sets = [] if return_sets else None
+    yt = np.asarray(y_test)
+
+    for s in range(0, n_test, batch_size):
+        e = min(s + batch_size, n_test)
+        Xb = Xt_norm[s:e]; B = Xb.shape[0]
+        # ---- prototype base scores ----
+        f_test = Xb @ P                                  # (B, K) test logits
+        test_base = 1.0 - torch.softmax(f_test / T, dim=1)          # (B, K)
+        yhat_test = f_test.argmax(dim=1)                 # (B,) test y_hat M-col
+        Zzx = Xb @ Z.t()                                 # (B, n_cal) <z_b, z_j>
+        num_ic = ZSt.unsqueeze(0) + Zzx.unsqueeze(1)     # (B, K, n_cal) <z_j, sum_k+z_b>
+        csTzx = Xb @ class_sum                           # (B, K) <z_b, sum_k>
+        zxn2 = (Xb * Xb).sum(1)                          # (B,)
+        norm_aug2 = css_norm2.view(1, K) + 2.0 * csTzx + zxn2.view(B, 1)   # (B, K)
+        simY = num_ic / torch.sqrt(norm_aug2).clamp_min(eps).unsqueeze(2)  # (B,K,n_cal) non-LOO
+        # member (y_j==k) LOO logit for the conformal score
+        memnum = num_ic - znorm2.view(1, 1, n_cal)
+        memden2 = norm_aug2.unsqueeze(2) - 2.0 * num_ic + znorm2.view(1, 1, n_cal)
+        simLOO = memnum / torch.sqrt(memden2.clamp_min(eps * eps))
+        is_mem = (ycol.view(1, 1, n_cal) == arangeK.view(1, K, 1))         # (1,K,n_cal)
+        col_logit = torch.where(is_mem, simLOO, simY)    # augmented class-k logit for j
+        e_new = torch.exp(col_logit / T)                 # (B,K,n_cal)
+        D = D_base.view(1, 1, n_cal) - Ebt.unsqueeze(0) + e_new           # (B,K,n_cal)
+        num = torch.where(is_mem, e_new, E_true.view(1, 1, n_cal))
+        upd_base = 1.0 - num / D                          # (B,K,n_cal) prototype cal scores
+        # ---- augmented cal y_hat (argmax sim; non-LOO simY) ----
+        flip = simY >= cal_best.view(1, 1, n_cal)
+        yhat_aug = torch.where(flip, arangeK.view(1, K, 1).expand(B, K, n_cal),
+                               cal_yhat_col.view(1, 1, n_cal).expand(B, K, n_cal))  # M-col
+
+        # ---- M_aug row yc (B,K,K): update_M_for_candidate (NCM-independent) ----
+        new_cen = (cn.view(1, K, 1) * cc.view(1, K, -1) + Xtr_all[s:e].view(B, 1, -1)) \
+                  / (cn.view(1, K, 1) + 1.0)
+        d2 = ((new_cen.unsqueeze(2) - clcen.view(1, 1, -1, clcen.shape[1])) ** 2).sum(-1)
+        new_clu = d2.argmin(dim=-1)                       # (B,K)
+        changed = new_clu != c2c.view(1, K)
+        same_clu = c2c.view(1, 1, K) == new_clu.unsqueeze(-1)
+        dd = cld[new_clu.unsqueeze(-1).expand(B, K, K), c2c.view(1, 1, K).expand(B, K, K)]
+        changed_val = torch.where(same_clu, torch.ones_like(dd), torch.exp(-dd ** 2 / tau))
+        base_row = Mt.unsqueeze(0).expand(B, K, K)
+        M_aug_row = torch.where(changed.unsqueeze(-1), changed_val, base_row)
+        diagK = torch.eye(K, device=dev, dtype=torch.bool).unsqueeze(0)
+        M_aug_row = torch.where(diagK, torch.ones_like(M_aug_row), M_aug_row)
+
+        # ---- cal penalty (B,K,n_cal): M_aug[cal_row, yhat_aug] ----
+        base_pen = Mt[cal_row.view(1, 1, -1).expand(B, K, n_cal), yhat_aug]
+        val_row = torch.gather(M_aug_row, 2, yhat_aug)
+        val_col = torch.gather(M_aug_row, 2, cal_row.view(1, 1, -1).expand(B, K, n_cal))
+        mask_row = cal_row.view(1, 1, -1) == arangeK.view(1, K, 1)
+        mask_col = yhat_aug == arangeK.view(1, K, 1)
+        M_eff = torch.where(mask_row, val_row, torch.where(mask_col, val_col, base_pen))
+        cal_pen = lam * (1.0 - M_eff)                     # (B,K,n_cal)
+        pen_test = lam * (1.0 - torch.gather(
+            M_aug_row, 2, yhat_test.view(B, 1, 1).expand(B, K, 1)).squeeze(-1))   # (B,K)
+
+        final_test = test_base + pen_test                 # (B,K)
+        final_upd = upd_base + cal_pen                     # (B,K,n_cal)
+        n_greater = (final_upd >= final_test.unsqueeze(-1)).sum(dim=-1)            # (B,K)
+        pvals = (n_greater.double() + 1.0) / (n_cal + 1.0)
+        include = (pvals > alpha).cpu().numpy()
+        for bi in range(B):
+            idx = np.nonzero(include[bi])[0]
+            set_sizes[s + bi] = len(idx)
+            yi = int(yt[s + bi])
+            covered[s + bi] = yi in set(int(classes[c]) for c in idx)
+            if return_sets:
+                pred_sets.append([int(classes[c]) for c in idx])
+
+    coverage = float(covered.mean())
+    avg_size = float(set_sizes.mean())
+    if return_sets:
+        return coverage, avg_size, pred_sets
+    return coverage, avg_size

@@ -326,6 +326,43 @@ def test_gpu_parity():
 
 
 # ----------------------------------------------------------------------
+# 7. GPU MS-CS path parity (prototype): run_prototype_mscs_torch vs CPU loop
+# ----------------------------------------------------------------------
+def test_mscs_gpu_parity():
+    """The prototype GPU MS-CS kernel (exchangeable cluster-M, argmax yhat) must
+    match the CPU run_fcp_with_mscs(prototype, yhat_mode='ncm') set-for-set."""
+    import torch
+    from mscs_unlabeled_experiment import (build_cluster_similarity_matrix,
+                                           run_fcp_with_mscs)
+    from mscs_gpu import run_prototype_mscs_torch
+    X, y = make_gmm(K=20, per_class=60, d=16, seed=7, sep=3.0)
+    classes = np.unique(y)
+    r = np.random.default_rng(7)
+    ci, ti = balanced_split(y, classes, m_cal=20, m_test=12, rng=r)
+    pool = np.setdiff1d(np.arange(len(X)), np.concatenate([ci, ti]))
+    Xc, yc, Xt, yt, Xu = X[ci], y[ci], X[ti], y[ti], X[pool]
+    Tf = PrototypeSoftmaxNCM(temperature=None, allow_nonexchangeable=True,
+                             logit="cosine").fit(Xc, yc)._T
+    M, c2c, eff_tau, _m, ccen, ccnt, clcen, cld = build_cluster_similarity_matrix(
+        Xu, Xc, yc, classes, 10, tau=-0.5)
+    common = dict(exchangeable=True, yhat_mode="ncm", update_M_fn=None,
+                  class_centroids=ccen, class_counts=ccnt, class_to_cluster=c2c,
+                  cluster_centroids=clcen, cluster_dists=cld, effective_tau=eff_tau,
+                  return_sets=True, temperature=Tf, logit="cosine")
+    _, _, sets_cpu = run_fcp_with_mscs(Xc, yc, Xt, yt, classes, "prototype_softmax",
+                                       0.1, 0.05, M, device="cpu", **common)
+    ncm = create_ncm("prototype_softmax", temperature=Tf, logit="cosine")
+    cp = FullConformalPredictor(ncm, alpha=0.1); cp.calibrate(Xc, yc, all_classes=classes)
+    common.pop("temperature"); common.pop("logit")
+    _, _, sets_gpu = run_prototype_mscs_torch(cp, Xc, yc, Xt, yt, classes, 0.1, 0.05, M,
+                                              device="cuda", **common)
+    assert all(sorted(a) == sorted(b) for a, b in zip(sets_cpu, sets_gpu)), \
+        "prototype GPU MS-CS sets differ from CPU"
+    dev = "cuda" if torch.cuda.is_available() else "cpu(torch)"
+    print(f"test_mscs_gpu_parity: PASS (sets identical, ran on {dev})")
+
+
+# ----------------------------------------------------------------------
 # Informational: set-size of the 3 rungs (no assert)
 # ----------------------------------------------------------------------
 def report_setsize_3rungs():
@@ -364,6 +401,7 @@ if __name__ == "__main__":
     test_edge_cases()
     test_temperature_invariance()
     test_gpu_parity()
+    test_mscs_gpu_parity()
     print("\n--- informational ---")
     report_setsize_3rungs()
     print("\nALL PROTOTYPE-SOFTMAX TESTS PASSED")

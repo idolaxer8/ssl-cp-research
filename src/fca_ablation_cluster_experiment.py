@@ -17,12 +17,11 @@ exact. prototype_softmax uses a pilot-FIXED temperature (re-resolved per PCA arm
 since the feature scale changes); the geodesic NCM has no temperature.
 
 DEVICE / RUNTIME:
-  * No-MS-CS arms: FullConformalPredictor.predict on GPU for both NCMs (fast).
-  * MS-CS arms: the geodesic NCM uses the GPU MS-CS path (fast); prototype_softmax
-    has no GPU MS-CS kernel yet, so its MS-CS arm runs the CPU loop and is the
-    runtime BOTTLENECK (minutes/trial at large cal). Start with modest
-    --cal_sizes / --n_trials, scale up once you see the cost. (No-MS-CS prototype
-    is fast on GPU via the denominator-swap path.)
+  * All arms run on the GPU. No-MS-CS uses FullConformalPredictor.predict; MS-CS
+    uses the GPU kernels (geodesic: mscs_gpu.run_mscs_torch; prototype:
+    run_prototype_mscs_torch, cosine, exchangeable cluster-M, argmax yhat). The
+    prototype MS-CS GPU path is bit-exact with the CPU loop (parity-tested) and no
+    longer the CPU bottleneck.
 
 Embeddings: output/embeddings_cifar100.pt (+ _unlabeled.pt). On the cluster the
 default --data_dir is output/.
@@ -152,9 +151,10 @@ def run(ds, args):
                              ) = build_cluster_similarity_matrix(
                                 transform.Xu_transformed_, Xc, yc, allc,
                                 args.n_clusters_mscs, tau=tau_arg)
-                            # prototype: no GPU MS-CS kernel -> CPU loop, 1-NN yhat
-                            dev = "cpu" if is_proto else args.device
-                            yhm = "1nn" if is_proto else "ncm"
+                            # both NCMs now have a GPU MS-CS path (geodesic +
+                            # prototype); yhat_mode="ncm" (argmax similarity).
+                            dev = args.device
+                            yhm = "ncm"
                             t0 = time.perf_counter()
                             _c, _s, sets = run_fcp_with_mscs(
                                 Xc, yc, Xt, yt, allc, ncm, args.alpha, args.lam, M,
