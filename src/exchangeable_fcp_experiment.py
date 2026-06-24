@@ -154,9 +154,16 @@ def main():
     else:
         transform = make_transform(None)
         print(f"No unlabeled pool -> {transform} (degraded, fully exchangeable)")
-        mscs_ok = False
-        if args.mscs:
-            print("  (MS-CS requested but needs an unlabeled pool -> skipped)")
+        # Centroid MS-CS needs only the cal set (class-centroid M, updated
+        # transductively per test point) -> still exactly exchangeable without
+        # any pool. Cluster MS-CS needs the pool's k-means, so it stays pool-gated.
+        mscs_ok = args.mscs and args.similarity == "centroid"
+        if args.mscs and not mscs_ok:
+            print("  (cluster MS-CS needs an unlabeled pool -> skipped; "
+                  "pass --similarity centroid for the pool-free penalty)")
+        elif mscs_ok:
+            print("  (centroid MS-CS: cal-only class-centroid penalty, "
+                  "exchangeable via per-test centroid update)")
 
     print(f"NCM={args.ncm} | split={args.split} | alpha={args.alpha} | trials={args.n_trials}")
     exch_note = "exact" if args.split == "random" else "conservative (label-dependent balanced split, over-covers ~+1-3pp)"

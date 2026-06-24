@@ -8,6 +8,10 @@ Supported datasets:
   eurosat       -- 10 classes, 64x64
   flowers102    -- 102 classes, variable size (~80 images/class after merging all splits)
   cub200        -- 200 classes, variable size (~59 images/class, train+test merged)
+  aircraft      -- 100 classes (FGVC-Aircraft variants), ~1-2MP. Fine-grained CLIP/CoOp-suite
+                   benchmark. 'train'->trainval (~67/class, labeled), 'test'->test (~33/class,
+                   disjoint unlabeled pool). Aircraft variants are NOT ImageNet labels -> no
+                   DINOv2 pretraining-label overlap (unlike CUB birds / miniImageNet).
   miniimagenet  -- 100 classes, 84x84 (600/class, all splits merged). Requires: pip install learn2learn
   tiny_imagenet -- 200 classes, 64x64 (500/class train only). Living-17 substitute. No extra deps.
 
@@ -23,6 +27,8 @@ Usage:
     python src/download_datasets.py --dataset eurosat        --output_dir data/eurosat        --num_per_class 200
     python src/download_datasets.py --dataset flowers102     --output_dir data/flowers102     --num_per_class 60
     python src/download_datasets.py --dataset cub200         --output_dir data/cub200         --num_per_class 50
+    python src/download_datasets.py --dataset aircraft       --output_dir data/aircraft           --split train   # labeled (trainval)
+    python src/download_datasets.py --dataset aircraft       --output_dir data/aircraft_unlabeled --split test    # unlabeled pool
     python src/download_datasets.py --dataset miniimagenet   --output_dir data/miniimagenet   --num_per_class 500
     python src/download_datasets.py --dataset tiny_imagenet  --output_dir data/tiny_imagenet  --num_per_class 500
 """
@@ -73,6 +79,13 @@ DATASET_INFO = {
         "num_classes": 200,
         "size": "variable (~400-600px)",
         "note": "Train+test merged: ~59 images/class total",
+    },
+    "aircraft": {
+        "num_classes": 100,
+        "size": "variable (~1-2MP)",
+        "note": "FGVC-Aircraft variants (annotation_level='variant'). "
+                "'train'->trainval (~67/class, labeled pool), "
+                "'test'->test (~33/class, disjoint unlabeled pool).",
     },
     "miniimagenet": {
         "num_classes": 100,
@@ -227,13 +240,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Download dataset and save as images")
     parser.add_argument("--dataset", type=str, default="cifar10",
                        choices=["cifar10", "cifar100", "stl10", "eurosat", "flowers102",
-                                "cub200", "miniimagenet", "tiny_imagenet"],
+                                "cub200", "aircraft", "miniimagenet", "tiny_imagenet"],
                        help="Dataset to download")
     parser.add_argument("--output_dir", type=str, default=None,
                        help="Output directory (default: data/<dataset>)")
     parser.add_argument("--split", type=str, default="train",
                        choices=["train", "test", "both"],
-                       help="Which split to download (cifar10/cifar100/stl10 only; ignored for eurosat/flowers102/cub200)")
+                       help="Which split to download. cifar10/cifar100/stl10: train|test|both. "
+                            "miniimagenet/aircraft: 'train'->labeled pool, 'test'->disjoint "
+                            "unlabeled pool. Ignored for eurosat/flowers102/cub200.")
     parser.add_argument("--num_per_class", type=int, default=None,
                        help="Limit number of images per class (None = all)")
     parser.add_argument("--download_dir", type=str, default="./dataset_download",
@@ -429,6 +444,53 @@ def download_cub200(args, output_dir):
     save_dataset_as_images(ds, output_dir, class_names, args.num_per_class)
 
 
+def download_aircraft(args, output_dir):
+    """Download FGVC-Aircraft (100 variant classes) and save in ImageFolder format.
+
+    Source: torchvision FGVCAircraft, which auto-downloads the official VGG
+    release (~2.6 GB) on first call. We use annotation_level='variant' -> the
+    standard fine-grained 100-class benchmark that appears in the CLIP/CoOp
+    transfer suite (and Conf-OT, Silva-Rodriguez CVPR'25). All splits share the
+    same 100-class label space, so (mirroring mini-ImageNet's labeled/unlabeled
+    convention):
+        --split train  -> torchvision 'trainval' (~6667, ~67/class)  = labeled pool
+        --split test   -> torchvision 'test'     (~3333, ~33/class)  = disjoint unlabeled pool
+        --split both   -> both, merged into one dir
+
+    Notes:
+      * FGVC-Aircraft images carry a 20px copyright banner along the bottom edge;
+        we leave it in (DINOv2 @518 is robust to it and the ablation is relative).
+      * Some variant names contain '/' (e.g. 'F/A-18') -> sanitised for the
+        filesystem via _sanitize_name.
+    """
+    split_map = {"train": ["trainval"], "test": ["test"], "both": ["trainval", "test"]}
+    split = getattr(args, "split", "train") or "train"
+    tv_splits = split_map.get(split, split_map["train"])
+    print(f"\nDownloading FGVC-Aircraft (annotation_level=variant) via torchvision")
+    print(f"  torchvision splits to materialize: {tv_splits}")
+
+    if len(tv_splits) == 1:
+        # Single split -> stream straight to disk (memory-friendly).
+        ds = datasets.FGVCAircraft(root=args.download_dir, split=tv_splits[0],
+                                   annotation_level="variant", download=True, transform=None)
+        class_names = [_sanitize_name(c) for c in ds.classes]
+        print(f"  {len(class_names)} classes, {len(ds)} images ({tv_splits[0]})")
+        save_dataset_as_images(ds, output_dir, class_names, args.num_per_class)
+        return
+
+    # 'both' -> merge the two splits into a single (PIL, label) list.
+    class_names, merged = None, []
+    for tv in tv_splits:
+        ds = datasets.FGVCAircraft(root=args.download_dir, split=tv,
+                                   annotation_level="variant", download=True, transform=None)
+        if class_names is None:
+            class_names = [_sanitize_name(c) for c in ds.classes]
+        print(f"  Loading split {tv}: {len(ds)} images")
+        merged.extend(ds)
+    print(f"  Total images materialized: {len(merged)}")
+    save_dataset_as_images(merged, output_dir, class_names, args.num_per_class)
+
+
 def main():
     args = parse_args()
 
@@ -462,6 +524,8 @@ def main():
         download_flowers102(args, output_dir)
     elif args.dataset == "cub200":
         download_cub200(args, output_dir)
+    elif args.dataset == "aircraft":
+        download_aircraft(args, output_dir)
     elif args.dataset == "miniimagenet":
         download_miniimagenet(args, output_dir)
     elif args.dataset == "tiny_imagenet":
