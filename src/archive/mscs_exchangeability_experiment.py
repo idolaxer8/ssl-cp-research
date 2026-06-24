@@ -47,8 +47,6 @@ Laptop smoke test (synthetic data, no .pt files needed, ~30 s):
 Run from a different checkout (point at an existing output/ dir):
     python src/mscs_exchangeability_experiment.py --embeddings_root /path/to/repo
 """
-# ARCHIVE-CANDIDATE (review 2026-06-24): question settled (findings sec 4b: exact vs frozen penalty ~identical).
-# If unused by the review date, move to src/archive/ -- watch list: src/archive/README.md.
 
 
 import argparse
@@ -68,7 +66,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from conformal_prediction import FullConformalPredictor, create_ncm
 from mscs_unlabeled_experiment import (
     build_cluster_similarity_matrix,

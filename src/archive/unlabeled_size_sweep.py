@@ -17,8 +17,6 @@ Usage:
     python src/unlabeled_size_sweep.py --cal_size 400 \\
         --unlabeled_sizes 0 100 250 500 1000 2500 5000 10000 --n_trials 5
 """
-# ARCHIVE-CANDIDATE (review 2026-06-24): pool-size question settled (findings sec 3).
-# If unused by the review date, move to src/archive/ -- watch list: src/archive/README.md.
 
 
 import argparse
@@ -36,7 +34,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from conformal_prediction import FullConformalPredictor, GeodesicTopKMeanNCM, create_ncm
 from mscs_unlabeled_experiment import build_cluster_similarity_matrix, run_fcp_with_mscs
 

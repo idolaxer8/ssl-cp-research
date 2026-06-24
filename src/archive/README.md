@@ -15,10 +15,6 @@ them only when that item completes or is dropped, even past the review date.
 
 | File | Why candidate | Condition |
 |---|---|---|
-| `cs_comparison.py` | superseded by `mscs_vs_macs_experiment.py` (exchangeable engine) | archive if unused |
-| `unlabeled_size_sweep.py` | pool-size question settled (findings §3) | archive if unused |
-| `linearity_diagnostics.py` | AE-vs-PCA linearity question settled (findings §3) | archive if unused |
-| `mscs_exchangeability_experiment.py` | exact-vs-frozen penalty question settled (findings §4b) | archive if unused |
 | `ncm_comparison_reduced.py` | results recorded 2026-05-14 | HOLD: P0.3 (topk_asym cluster confirmation) |
 | `cs_ablation.py` | reduction×MS-CS ablation recorded | HOLD: P0.4 (per-dataset AE retrain) |
 | `compare_backbones.py` | backbone comparison recorded (findings §7) | HOLD: P2.11 (cluster backbone sensitivity) |
@@ -29,6 +25,18 @@ Never candidates: library modules imported by active code
 `autoencoder_utils`, `mscs_gpu`, `macs_experiment`, `mscs_unlabeled_experiment`,
 `semicp_experiment`), pipeline infra (`extract_features`, `download_datasets`,
 `run_conformal_experiment`), and anything with uncommitted changes.
+
+## Watch-list candidates archived 2026-06-24
+
+Review date (2026-06-24) reached with no intervening use or new finding;
+moved here from the watch list above.
+
+| Script | What it was | Superseded by / outcome |
+|---|---|---|
+| `cs_comparison.py` | MA-CS vs MS-CS on CIFAR-100 (legacy non-exchangeable engine) | `mscs_vs_macs_experiment.py` on the exchangeable engine (findings sec 4) |
+| `unlabeled_size_sweep.py` | FCP / +PCA / +MS-CS vs unlabeled-pool size N | pool-size question settled (findings sec 3; plateau N=2500-5000) |
+| `linearity_diagnostics.py` | SVD spectrum + AE-vs-PCA reconstruction diagnostics | AE-vs-PCA linearity question settled (findings sec 3) |
+| `mscs_exchangeability_experiment.py` | MS-CS exact vs O(1/n) frozen penalty path | exact ~= frozen settled (findings sec 4b) |
 
 ## Superseded one-off comparisons (archived 2026-06-10)
 

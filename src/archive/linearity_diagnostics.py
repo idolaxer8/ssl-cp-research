@@ -10,8 +10,6 @@ Tests three hypotheses raised in the AE-vs-PCA discussion:
 Run from repo root:
     python src/linearity_diagnostics.py
 """
-# ARCHIVE-CANDIDATE (review 2026-06-24): AE-vs-PCA linearity question settled (findings sec 3).
-# If unused by the review date, move to src/archive/ -- watch list: src/archive/README.md.
 
 
 import sys
