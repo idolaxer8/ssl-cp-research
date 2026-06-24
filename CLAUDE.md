@@ -126,6 +126,9 @@ numerically unchanged, it just warns.
 - `src/ncm_comparison_reduced.py` -- NCM comparison across reductions
 - `src/rbf_ncm_experiment.py` -- RBF density NCM iteration
 - `src/compare_backbones.py` -- SSL backbone comparison
+- `src/ridge_softmax_cluster_experiment.py` -- RidgeSoftmaxNCM (FCA-inspired) cluster benchmark vs geodesic NCMs
+- `src/fca_family_cluster_experiment.py` -- FCA-family vs geodesic NCM cluster comparison (prototype_softmax / ridge_softmax / geodesic, balanced, high-trial)
+- `src/fca_ablation_cluster_experiment.py` -- CIFAR-100 PCA x MS-CS ablation (prototype_softmax vs geodesic mean)
 
 ### Archived (in `src/archive/`, see its README.md)
 Completed/failed/superseded investigations: pool augmentation, LATA score
