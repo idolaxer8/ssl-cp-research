@@ -326,7 +326,6 @@ DINOv2 dominates — 77% smaller than BEiTv2, 11× smaller than CLIP. FCP advant
 5. **RBF NCM multi-dataset confirmation**: re-run AE-128 + wSymRBF on CUB-200, miniImageNet, and at matched-518 (current §5 result is local 336 only). Tests whether the alignment hypothesis generalizes.
 6. **MA-CS / MS-CS multi-dataset extension**: MS-CS is label-free, runs on anything; MA-CS needs taxonomy (have CIFAR-100 fine→coarse; check CUB-200 family/genus, miniImageNet WordNet).
 7. **Stratified-vs-random split ablation** at cal=600 to settle the over-coverage mechanism. ~5 min with GPU.
-8. ~~**Per-class coverage diagnostics**~~ — **DONE 2026-05-25** (§2b). FCP+PCA+MS-CS wins CovGap on CIFAR-100 + miniImageNet; ClusterCP degenerates to SplitCP in our regime.
 
 ### P2 — Robustness / breadth
 
