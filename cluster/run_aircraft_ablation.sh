@@ -33,6 +33,8 @@
 #   STAGE=ablation bash cluster/run_aircraft_ablation.sh        # ablation only (embeddings already on disk)
 #   PCA_DIMS="128 256" N_TRIALS=10 CAL_SIZES="200 400 800" bash cluster/run_aircraft_ablation.sh
 #   SPLIT=random   bash cluster/run_aircraft_ablation.sh        # exact-validity reference arm
+#   # RESUME: just relaunch -- rungs whose results_<tag>.json already exist are skipped.
+#   #         FORCE=1 bash cluster/run_aircraft_ablation.sh      # ignore existing JSONs, redo all
 #
 # SLURM: submit with a GPU node, e.g.
 #   sbatch --gres=gpu:1 --cpus-per-task=4 --mem=16G --time=06:00:00 \
@@ -130,6 +132,14 @@ UNL_PATH="output/$EMB_UNLABELED"
 
 run_rung () {         # $1 = tag   (rest = extra flags appended verbatim)
     local tag="$1"; shift
+    local out="$OUT_DIR/results_${tag}.json"
+    # Resume: a rung's results_<tag>.json is written only on full completion, so
+    # its presence means that rung is done -> skip it. Re-running the script thus
+    # picks up where it left off. FORCE=1 re-runs everything.
+    if [ -z "${FORCE:-}" ] && [ -f "$out" ]; then
+        echo ">>> rung: $tag -- already done ($out) -- SKIP (FORCE=1 to redo)"
+        return 0
+    fi
     echo ""
     echo ">>> rung: $tag"
     python src/exchangeable_fcp_experiment.py \
