@@ -298,10 +298,19 @@ def run_prototype_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alph
     ZS = (Z @ class_sum)                                 # (n_cal, K) <z_j, sum_k>
     ZSt = ZS.t().contiguous()                            # (K, n_cal)
     Ebt = E_base.t().contiguous()                        # (K, n_cal)
-    Fsim = Z @ P                                         # (n_cal, K) cal similarities
-    cal_best = Fsim.max(1).values                        # (n_cal,)
-    cal_yhat_col = Fsim.argmax(1)                        # (n_cal,) M col
+    # base-consistent LOO y_hat = argmax of the NCM's OWN logits (F_base). Read the
+    # numpy-precomputed top-2 of F_base so GPU and CPU use identical values/ties.
+    ncm._ensure_cal_yhat()
+    t1c = f(ncm._yh_top1_col, torch.long)                # (n_cal,) F_base argmax col
+    t1v = f(ncm._yh_top1_val)                            # (n_cal,)
+    t2c = f(ncm._yh_top2_col, torch.long)                # (n_cal,) F_base 2nd-best col
+    t2v = f(ncm._yh_top2_val)                            # (n_cal,)
     cal_row = ycol                                       # (n_cal,) M row (true class)
+    # only column k changes per candidate -> augmented argmax is k when its augmented
+    # logit beats the best of the OTHER columns (top-1, or top-2 if k WAS the top-1).
+    is_top1_yh = (t1c.view(1, n_cal) == arangeK.view(K, 1))           # (K, n_cal)
+    yh_thresh = torch.where(is_top1_yh, t2v.view(1, n_cal), t1v.view(1, n_cal))     # (K, n_cal)
+    yh_fallback = torch.where(is_top1_yh, t2c.view(1, n_cal), t1c.view(1, n_cal))   # (K, n_cal)
 
     # exchangeable cluster-M artifacts (transformed space, NOT L2-normalised)
     cc = f(class_centroids); cn = f(class_counts)
@@ -339,10 +348,11 @@ def run_prototype_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alph
         D = D_base.view(1, 1, n_cal) - Ebt.unsqueeze(0) + e_new           # (B,K,n_cal)
         num = torch.where(is_mem, e_new, E_true.view(1, 1, n_cal))
         upd_base = 1.0 - num / D                          # (B,K,n_cal) prototype cal scores
-        # ---- augmented cal y_hat (argmax sim; non-LOO simY) ----
-        flip = simY >= cal_best.view(1, 1, n_cal)
+        # ---- augmented cal y_hat = argmax of base logits with column k -> col_logit
+        # (consistent with the prototype score's own softmax, leave-one-out) ----
+        flip = col_logit >= yh_thresh.view(1, K, n_cal)
         yhat_aug = torch.where(flip, arangeK.view(1, K, 1).expand(B, K, n_cal),
-                               cal_yhat_col.view(1, 1, n_cal).expand(B, K, n_cal))  # M-col
+                               yh_fallback.view(1, K, n_cal).expand(B, K, n_cal))  # M-col
 
         # ---- M_aug row yc (B,K,K): update_M_for_candidate (NCM-independent) ----
         new_cen = (cn.view(1, K, 1) * cc.view(1, K, -1) + Xtr_all[s:e].view(B, 1, -1)) \

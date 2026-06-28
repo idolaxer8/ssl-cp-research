@@ -1660,59 +1660,82 @@ class PrototypeSoftmaxNCM(NonconformityMeasure):
         p = self._softmax_vec(cache["f_test"] / self._T)
         return float(1.0 - p[col])
 
-    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
-        if self.alpha0 is None:
-            raise ValueError("Must call fit() first")
+    def _augmented_col_logit(self, x: np.ndarray, y: int) -> np.ndarray:
+        """Augmented class-y logit for EVERY cal point j in the bag {cal u (x, y)}:
+          non-members          -> <z_j, proto(class_sum[y] + z, n_y + 1)>
+          members (y_j == y)   -> leave j out: <z_j, proto(class_sum[y] + z - z_j, n_y)>
+          y absent from cal    -> x is the sole class-y exemplar: <z_j, proto(z, 1)>
+        This is exactly column y of the augmented logit matrix the cal SCORES use,
+        so the MS-CS y_hat (argmax over this column together with F_base) is
+        consistent with the score (and leave-one-out the same way)."""
         cache = self._ensure_cache(x)
         z = cache["z"]
         n = len(self.Z)
         yc = int(y)
+        if yc not in self._cls_to_col:
+            p_new = self._proto(z, 1.0)
+            return (self.Z @ p_new) if p_new is not None else np.full(n, -np.inf)
+        col = self._cls_to_col[yc]
+        cs = self.class_sum[:, col]
+        ny = self.n_c[col]
+        # non-members: full augmented class-y mean (one matvec)
+        p_full = self._proto(cs + z, ny + 1.0)
+        colvec = (self.Z @ p_full) if p_full is not None else np.full(n, -np.inf)
+        colvec = np.asarray(colvec, dtype=np.float64)
+        # members (y_i == col): leave i out of the augmented class y, count ny
+        members = np.where(self.y_col == col)[0]
+        if members.size:
+            S = (cs + z)[None, :] - self.Z[members]      # (m, d) leave-out sums
+            if self.cosine:
+                nrm = np.linalg.norm(S, axis=1)
+                protos = S / np.maximum(nrm, self.eps)[:, None]
+                vals = np.einsum('md,md->m', self.Z[members], protos)
+                vals[nrm < self.eps] = -np.inf
+            else:
+                protos = S / ny
+                vals = np.einsum('md,md->m', self.Z[members], protos)
+            colvec[members] = vals
+        return colvec
+
+    def updated_calibration_scores_for(self, x: np.ndarray, y: int) -> np.ndarray:
+        if self.alpha0 is None:
+            raise ValueError("Must call fit() first")
+        n = len(self.Z)
+        yc = int(y)
+        colvec = np.asarray(self._augmented_col_logit(x, yc), dtype=np.float64)
         F = self.F_base.copy()
         if yc in self._cls_to_col:
-            col = self._cls_to_col[yc]
-            cs = self.class_sum[:, col]
-            ny = self.n_c[col]
-            # non-members: full augmented class-y mean (one matvec)
-            p_full = self._proto(cs + z, ny + 1.0)
-            colvec = (self.Z @ p_full) if p_full is not None else np.full(n, -np.inf)
-            colvec = np.asarray(colvec, dtype=np.float64)
-            # members (y_i == col): leave i out of the augmented class y, count ny
-            members = np.where(self.y_col == col)[0]
-            if members.size:
-                S = (cs + z)[None, :] - self.Z[members]      # (m, d) leave-out sums
-                if self.cosine:
-                    nrm = np.linalg.norm(S, axis=1)
-                    protos = S / np.maximum(nrm, self.eps)[:, None]
-                    vals = np.einsum('md,md->m', self.Z[members], protos)
-                    vals[nrm < self.eps] = -np.inf
-                else:
-                    protos = S / ny
-                    vals = np.einsum('md,md->m', self.Z[members], protos)
-                colvec[members] = vals
-            F[:, col] = colvec
+            F[:, self._cls_to_col[yc]] = colvec
         else:
-            # absent candidate class: append a new column whose sole member is the
-            # hypothesised test point (count 1).
-            p_new = self._proto(z, 1.0)
-            newcol = (self.Z @ p_new) if p_new is not None else np.full(n, -np.inf)
-            F = np.concatenate([F, np.asarray(newcol, dtype=np.float64)[:, None]],
-                               axis=1)
+            # absent candidate class: append a new column (sole member = test point)
+            F = np.concatenate([F, colvec[:, None]], axis=1)
         P = self._softmax_rows(F / self._T)
         return 1.0 - P[np.arange(n), self.y_col]
 
-    # -- suspected-class y_hat for the MS-CS penalty (argmax prototype sim) ----
+    # -- suspected-class y_hat for the MS-CS penalty ------------------------------
     # Enables yhat_mode="ncm" with this NCM (run_fcp_with_mscs) and the prototype
-    # GPU MS-CS path (mscs_gpu.run_prototype_mscs_torch). y_hat(z) = argmax_c
-    # <z, mu_c>; non-LOO, a symmetric function of the (augmented) bag.
+    # GPU MS-CS path (mscs_gpu.run_prototype_mscs_torch). y_hat(z) = argmax of the
+    # NCM's OWN softmax logits (F_base; own-class leave-one-out), so y_hat is
+    # consistent with the cal scores and leave-one-out the same way they are. Every
+    # bag member then excludes only itself -> the penalty is a symmetric
+    # (exchangeable) function of the bag. (The earlier full-prototype argmax,
+    # F = Z @ P, was NON-LOO: a cal point "saw itself" in its own class while the
+    # test point did not, which broke the prototype MS-CS penalty's exchangeability.)
     def _ensure_cal_yhat(self):
         if getattr(self, "cal_y_hat", None) is not None:
             return
-        F = self.Z @ self.P                              # (n, K) similarities
-        if not self._P_ok.all():
-            F = F.copy(); F[:, ~self._P_ok] = -np.inf
-        col = F.argmax(axis=1)
-        self._cal_best = F[np.arange(len(F)), col]       # (n,) best similarity
-        self.cal_y_hat = self.classes_[col]              # (n,) class labels
+        F = self.F_base                                  # (n, K) own-class-LOO logits
+        n = len(F)
+        rows = np.arange(n)
+        top1 = F.argmax(axis=1)
+        self._yh_top1_col = top1
+        self._yh_top1_val = F[rows, top1]
+        F2 = F.copy(); F2[rows, top1] = -np.inf          # exact 2nd-best per row
+        top2 = F2.argmax(axis=1)
+        self._yh_top2_col = top2
+        self._yh_top2_val = F2[rows, top2]
+        self.cal_y_hat = self.classes_[top1]             # (n,) non-augmented y_hat labels
+        self._cal_best = self._yh_top1_val               # legacy alias (LOO top-1 logit)
 
     def predict_class(self, x: np.ndarray) -> int:
         z = self._prep(x).ravel()
@@ -1722,21 +1745,26 @@ class PrototypeSoftmaxNCM(NonconformityMeasure):
         return int(self.classes_[int(np.argmax(f))])
 
     def predict_class_augmented_cal(self, x: np.ndarray, y: int) -> np.ndarray:
-        """Each cal point's predicted class in the bag {cal u (x, y)}: flips to y
-        iff its similarity to the augmented class-y prototype reaches its current
-        best similarity."""
+        """Each cal point's y_hat in the bag {cal u (x, y)} = argmax of its AUGMENTED
+        softmax logits = F_base with column y replaced by the augmented class-y
+        logit (`_augmented_col_logit`; same column the cal scores use). Only column
+        y changes, so the exact new argmax is y when its augmented logit beats the
+        best of the OTHER columns, else that best -- read off the precomputed top-2
+        of F_base. Leave-one-out + score-consistent -> exchangeable."""
         self._ensure_cal_yhat()
-        z = self._prep(x).ravel()
         yc = int(y)
-        if yc in self._cls_to_col:
-            col = self._cls_to_col[yc]
-            p = self._proto(self.class_sum[:, col] + z, self.n_c[col] + 1.0)
-        else:
-            p = self._proto(z, 1.0)                       # absent class: x alone
-        sim_y = (self.Z @ p) if p is not None else np.full(len(self.Z), -np.inf)
-        out = np.array(self.cal_y_hat, copy=True)
-        out[sim_y >= self._cal_best] = yc
-        return out
+        colvec = np.asarray(self._augmented_col_logit(x, yc), dtype=np.float64)
+        if yc not in self._cls_to_col:
+            # absent candidate class -> a brand-new column vs F_base's existing best
+            return np.where(colvec >= self._yh_top1_val, yc,
+                            self.classes_[self._yh_top1_col])
+        col = self._cls_to_col[yc]
+        # best of the OTHER columns: top-1 unless the changed column WAS the top-1
+        is_top1 = (self._yh_top1_col == col)
+        thresh = np.where(is_top1, self._yh_top2_val, self._yh_top1_val)
+        fb_col = np.where(is_top1, self._yh_top2_col, self._yh_top1_col)
+        out_col = np.where(colvec >= thresh, col, fb_col)
+        return self.classes_[out_col]
 
 
 class FullConformalPredictor:

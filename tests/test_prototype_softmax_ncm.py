@@ -363,6 +363,48 @@ def test_mscs_gpu_parity():
 
 
 # ----------------------------------------------------------------------
+# 8. Prototype MS-CS coverage is valid at ANY lambda (exchangeable penalty)
+# ----------------------------------------------------------------------
+def test_mscs_coverage_under_domination():
+    """Regression for the suspected-class (y_hat) exchangeability bug. The MS-CS
+    penalty is exchangeable, so coverage must hold for ANY lambda -- even when the
+    penalty dominates the base score. The old NON-LOO y_hat (argmax over full
+    Z @ P prototypes) made the penalty non-symmetric: a cal point 'saw itself' in
+    its own class while the test point did not, so cranking lambda drove coverage
+    below target. With the LOO, score-consistent y_hat (argmax of F_base) coverage
+    holds. Uses sep=2.0 (confusable classes -> non-trivial y_hat that exercises the
+    penalty)."""
+    from mscs_unlabeled_experiment import (build_cluster_similarity_matrix,
+                                           run_fcp_with_mscs)
+    K, d = 10, 16
+    X, y = make_gmm(K=K, per_class=120, d=d, seed=21, sep=2.0)
+    classes = np.unique(y)
+    Tf = PrototypeSoftmaxNCM(temperature=None, allow_nonexchangeable=True,
+                             logit="cosine").fit(X[:800], y[:800])._T
+    for lam in (0.5, 5.0):                          # well into penalty-domination
+        covs = []
+        for t in range(15):
+            r = np.random.default_rng(9000 + t)
+            ci, ti = balanced_split(y, classes, m_cal=10, m_test=8, rng=r)
+            pool = np.setdiff1d(np.arange(len(X)), np.concatenate([ci, ti]))
+            M, c2c, et, _m, cc, cn, clc, cld = build_cluster_similarity_matrix(
+                X[pool], X[ci], y[ci], classes, 5, tau=-0.5)
+            cov, _sz = run_fcp_with_mscs(
+                X[ci], y[ci], X[ti], y[ti], classes, "prototype_softmax", 0.1, lam, M,
+                exchangeable=True, yhat_mode="ncm",
+                class_centroids=cc, class_counts=cn, class_to_cluster=c2c,
+                cluster_centroids=clc, cluster_dists=cld, effective_tau=et,
+                device="cpu", temperature=Tf, logit="cosine")
+            covs.append(cov)
+        cov = float(np.mean(covs))
+        print(f"  lam={lam:4.1f}: cov={cov:.4f}")
+        assert cov >= 0.875, (
+            f"prototype MS-CS under-covers at lam={lam}: cov={cov:.4f} "
+            f"(y_hat exchangeability regressed)")
+    print("test_mscs_coverage_under_domination: PASS (coverage valid at any lambda)")
+
+
+# ----------------------------------------------------------------------
 # Informational: set-size of the 3 rungs (no assert)
 # ----------------------------------------------------------------------
 def report_setsize_3rungs():
@@ -402,6 +444,7 @@ if __name__ == "__main__":
     test_temperature_invariance()
     test_gpu_parity()
     test_mscs_gpu_parity()
+    test_mscs_coverage_under_domination()
     print("\n--- informational ---")
     report_setsize_3rungs()
     print("\nALL PROTOTYPE-SOFTMAX TESTS PASSED")
