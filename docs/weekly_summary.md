@@ -9,6 +9,96 @@ All experiments: CIFAR-100, DINOv2 embeddings, exchangeable pipeline
 
 ---
 
+## Week ending 2026-06-29 (work on 06-28 to 06-29)
+
+**Context / motivation.** A novelty review concluded our headline objective —
+minimize prediction-SET SIZE at 90% MARGINAL coverage — is saturating: the
+prototype-softmax NCM (FCA-inspired; Silva-Rodriguez et al., IPMI 2025) already
+dominates and PCA / whitening / MS-CS give diminishing returns (CIFAR-100 sz ~1.3
+@ cal=800; miniImageNet near-singleton). We proposed two reframings; this week
+delivered the **geometric-conditional coverage** direction end-to-end (topics 1-2,
+the primary) plus a calibration-conditional reliability pilot (topic 3).
+
+### 1. Diagnosis — marginal coverage HIDES a large geometric under-coverage gap
+
+**Question.** Marginal coverage is an *average* over the test distribution. Is the
+90% guarantee uniform across the embedding, or does it hide badly under-covered
+regions? We stratify test points by a LABEL-FREE geometric covariate — local
+density (k-th NN radius) or local intrinsic dimension (Levina-Bickel MLE, NeurIPS
+2004) — computed on the disjoint unlabeled pool (a fixed pool-function => exactly
+exchangeable, theory.md Prop 2), and measure per-stratum coverage + CovGap_geo (the
+geometry-axis analogue of the class-conditional CovGap of Ding, Tibshirani &
+Ramdas 2023, arXiv 2306.09335).
+
+**Result (CIFAR-100 + miniImageNet, G=5 density strata, 10 trials).** Per-stratum
+coverage is MONOTONE in local geometry (Spearman = -1.0 at every config): the dense
+20% over-cover (~0.98-0.99), the sparse / high-LID 20% UNDER-cover to **0.60-0.75**
+at a 0.90 marginal — a 15-40 pp conditional gap. It is NOT a split artifact
+(identical on the exact RANDOM split), NCM- and MS-CS-INVARIANT (prototype,
+geodesic, +-penalty overlap), GROWS with cal, and per-POINT not per-class. In
+miniImageNet the sparsest stratum has mean set SIZE 0.74 (<1): the method hands
+EMPTY sets to the hardest points. Mechanism: a STRONG predictor with locally
+varying difficulty + a single GLOBAL threshold that cannot localize — over-spends
+coverage on the easy majority, abstains/under-covers the sparse minority. Output:
+output/geometric_coverage/, output/novelty_selling/geometry_{sell,comprehensive}.png.
+
+### 2. The fix — geometry-conditional Full CP (Mondrian over geometric strata)
+
+**Method.** Mondrian CP (Vovk): partition the input by a fixed taxonomy, use a
+SEPARATE conformal threshold per group => group-conditional coverage
+P(Y in C | g) >= 1-alpha. Our groups are the label-free geometric strata. Design C:
+one global NCM (full neighbour pool) gives the test-score matrix + static LOO cal
+scores; the THRESHOLD is per-stratum (q_g = the (1-alpha)(n_g+1) quantile of that
+stratum's cal scores). Empty sets always allowed, NEVER replaced by all-K (the old
+fallback over-covered above the valid bound). Exact up to O(1/n_g); per-STRATUM not
+per-sample (exact feature-conditional coverage is impossible: Foygel-Barber et al.
+2021). New src/geometric_conditional_cp.py + runner; one surgical engine add
+return_test_scores (verified no-op).
+
+**Result — closes the gap on BOTH datasets, BOTH splits:**
+- CovGap_geo cut **87-95%** (mini 11.49 -> 0.58 pp; cifar 7.12 -> 0.89 pp);
+- worst-stratum coverage 0.60/0.75 -> **~0.90** (empty-set holes filled the VALID
+  way, via a higher LOCAL threshold, not by denying empties);
+- marginal stays VALID on the exact random arm (0.902-0.907);
+- size TAX +22-59%, all in the sparse stratum (where bigger sets are warranted) —
+  the distribution-free conditional-coverage cost.
+
+**Geometry is NECESSARY.** A confidence-conditioning control (Mondrian on the
+model's own max-posterior) does NOT flatten the geometric gap (CovGap_geo 5.8-7.5
+pp, ~10x worse) and over-covers to 0.96-0.98 — softmax confidence is miscalibrated
+exactly on the atypical points. Density/LID is the right axis.
+
+**Robust** across alpha {0.05,0.1,0.2} x G {3,5,10} x covariate {density,LID}:
+CovGap_geo always -> 0.3-1.7 pp, worst -> 1-alpha. Gap GROWS with looser alpha
+(miniImageNet alpha=0.2 sparse stratum 0.30 -> 0.80). Fig
+output/novelty_selling/geometric_robustness.png.
+
+**Scope boundary — FGVC-Aircraft.** Where DINOv2 cannot separate the classes (sets
+uniformly 16-30 of K=100), the geometric gap barely exists (global CovGap_geo 1-2.5
+pp) and Mondrian is a no-op — the gap is a property of a STRONG backbone with LOCAL
+holes; apply geometry-conditioning only there.
+
+**Secondary — RLCP** (Randomized Localized CP; Hore & Barber 2024, arXiv 2310.07850):
+continuous Gaussian-kernel localization + a randomization that restores exact
+marginal validity; interpolates global<->Mondrian via bandwidth (c0=0.25 ~ Mondrian,
+c0=1.0 ~ global). Smooth (no hard-bin / small-n_g cliff) but mildly conservative;
+Mondrian is the cleaner primary.
+
+**Validity gated.** Unit tests 5/5 (design-C soundness, Mondrian + RLCP validity on
+the exact split, empty-set invariant); GPU-parity suite 7/7. Output:
+output/geometric_conditional{,_conf,_sweep,_rlcp}/, docs/novelty_pilots_findings.md.
+
+### 3. (Secondary) PAC / calibration-conditional reliability pilot
+
+At few-shot the calibration DRAW dominates variance. Over 100 draws at fixed budget
+B, full CP rides the Beta(n=B) coverage-SD floor (split-CP coverage law, Vovk 2012)
+while matched-budget Split-CP-THR degenerates to size-K sets at B<=400 ("turns on"
+at B=800) and rides Beta(n=B/2); the set-size cost of a 95%-reliable 0.90 guarantee
+(SSBC small-sample Beta correction) is ~12x cheaper for full CP. Figs
+output/novelty_selling/reliability_{sell,convergence_cifar100}.png.
+
+---
+
 ## Week ending 2026-06-22 (work on 06-21 to 06-22)
 
 ### 1. Centroid (cal-only) vs Cluster (unlabeled pool) MS-CS — does the cluster M update correctly per test point?

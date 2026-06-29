@@ -93,6 +93,49 @@ Five plots per (dataset, cal_size) in the results dir: `covgap_bar`, `perclass_h
 
 ---
 
+## 2c. Geometry-Conditional Coverage — Closing the Conditional Gap (2026-06-29)
+
+> Detail, all sweeps, and figures: `docs/novelty_pilots_findings.md`. Code:
+> `src/geometric_conditional_cp.py`, `src/geometric_conditional_cp_experiment.py`;
+> engine add `FullConformalPredictor.predict(return_test_scores=True)`.
+
+**Marginal coverage hides a large GEOMETRIC under-coverage gap.** Stratifying test
+points by a *label-free* geometric covariate — local kNN density (k-th NN radius) or
+Levina-Bickel local intrinsic dimension — computed on the unlabeled pool (a fixed
+pool-function => exactly exchangeable, theory.md Prop 2), per-stratum coverage is
+**monotone** (Spearman -1.0): dense regions over-cover (~0.99), sparse/high-LID
+regions **under-cover to 0.60-0.75** at a 0.90 marginal — a 15-40 pp conditional gap.
+NOT a split artifact (identical on the exact random arm), **NCM- and MS-CS-invariant**,
+grows with cal, and per-POINT not per-class. miniImageNet's sparsest stratum has mean
+set size 0.74 (<1): the global threshold hands *empty* sets to the hardest points.
+The geometry-axis CovGap_geo is the analogue of the class-axis CovGap (Ding,
+Tibshirani & Ramdas 2023, §2b).
+
+**Fix — Mondrian Full CP over the geometric strata** (Vovk Mondrian taxonomy; design
+C = one global NCM + a per-stratum quantile of the static LOO cal scores; empty sets
+always allowed, no all-classes fallback; per-stratum guarantee P(Y in C | g) >= 1-alpha
+exact up to O(1/n_g); per-STRATUM not per-sample — exact feature-conditional coverage
+is impossible, Foygel-Barber et al. 2021):
+
+- **CovGap_geo cut 87-95%** (mini 11.49->0.58 pp, cifar 7.12->0.89 pp); worst-stratum
+  0.60/0.75 -> **~0.90**; marginal VALID on the exact random arm (0.902-0.907); size
+  tax **+22-59%**, confined to the sparse stratum (the conditional-coverage cost).
+- **Geometry is NECESSARY**: a confidence-conditioning control (Mondrian on the
+  model's own max-posterior) leaves CovGap_geo at 5.8-7.5 pp (~10x worse) and
+  over-covers to 0.96-0.98 — softmax confidence is miscalibrated on atypical points.
+- **Robust** across alpha in {0.05,0.1,0.2} x G in {3,5,10} x {density,LID} (gap grows
+  with looser alpha: miniImageNet alpha=0.2 sparse stratum 0.30->0.80).
+- **Scope boundary**: FGVC-Aircraft has essentially no gap (DINOv2 can't separate
+  variants => uniformly weak, sets 16-30 of K=100, CovGap_geo 1-2.5 pp, Mondrian a
+  no-op) => the gap requires a *strong* backbone with *local* holes.
+- **Secondary — RLCP** (Hore & Barber 2024, arXiv:2310.07850): continuous randomized
+  localized CP, interpolates global<->Mondrian via bandwidth; exact marginal validity.
+
+Validity gated: unit tests 5/5 (`tests/test_geometric_conditional_cp.py`), GPU-parity
+7/7. Figures: `output/novelty_selling/{geometry_sell,geometry_comprehensive,geometric_robustness}.png`.
+
+---
+
 ## 3. Dimensionality Reduction
 
 PCA fit on the **unlabeled pool** (n >> d) preserves FCP exchangeability — unsupervised wrt cal/test. Cal-based PCA under-covers at high dims (overfitting); always use a disjoint unlabeled pool.
@@ -375,4 +418,4 @@ DINOv2 dominates — 77% smaller than BEiTv2, 11× smaller than CLIP. FCP advant
 
 ---
 
-*Last updated: 2026-06-07.*
+*Last updated: 2026-06-29.*
