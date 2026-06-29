@@ -1802,6 +1802,7 @@ class FullConformalPredictor:
         verbose: bool = True,
         device: str = "cpu",
         gpu_batch_size: int = 256,
+        return_test_scores: bool = False,
     ) -> Dict:
         """
         Compute prediction sets for test examples using Full CP.
@@ -1844,6 +1845,7 @@ class FullConformalPredictor:
                 return self._predict_prototype_softmax_gpu(
                     X_test, return_p_values=return_p_values,
                     verbose=verbose, batch_size=gpu_batch_size,
+                    return_test_scores=return_test_scores,
                 )
             if isinstance(self.ncm, RidgeSoftmaxNCM):
                 return self._predict_ridge_softmax_gpu(
@@ -1853,6 +1855,7 @@ class FullConformalPredictor:
             return self._predict_geodesic_gpu(
                 X_test, return_p_values=return_p_values,
                 verbose=verbose, batch_size=gpu_batch_size,
+                return_test_scores=return_test_scores,
             )
 
         start_time = time.time()
@@ -1862,6 +1865,8 @@ class FullConformalPredictor:
         prediction_sets = []
         set_sizes = []
         all_p_values = [] if return_p_values else None
+        test_scores_arr = (np.empty((n_test, len(self.classes)), dtype=float)
+                           if return_test_scores else None)
         empty_count = 0
 
         iterator = tqdm(range(n_test), desc="Full CP") if verbose else range(n_test)
@@ -1872,10 +1877,12 @@ class FullConformalPredictor:
             p_vals = {} if return_p_values else None
 
             # For each candidate label, compute p-value
-            for y_candidate in self.classes:
+            for j, y_candidate in enumerate(self.classes):
                 yc = int(y_candidate)
 
                 test_score = self.ncm.score_x(x_test, yc)
+                if return_test_scores:
+                    test_scores_arr[i, j] = test_score
                 # Standard Full CP recomputes the calibration scores for the
                 # augmented bag {cal ∪ (x_test, yc)} (the transductive step).
                 # update_calibration_scores=False reuses the static LOO cal scores
@@ -1923,6 +1930,10 @@ class FullConformalPredictor:
 
         if return_p_values:
             results['p_values'] = all_p_values
+        if return_test_scores:
+            results['test_scores'] = test_scores_arr           # (n_test, K), col j -> self.classes[j]
+            results['cal_scores'] = self.cal_scores
+            results['classes'] = np.asarray(self.classes)
 
         if verbose:
             print(f"\nPrediction time: {prediction_time:.2f}s "
@@ -1936,6 +1947,7 @@ class FullConformalPredictor:
         return_p_values: bool = False,
         verbose: bool = True,
         batch_size: int = 256,
+        return_test_scores: bool = False,
     ) -> Dict:
         """Vectorised GPU path for FCP with GeodesicTopKMeanNCM.
 
@@ -1995,6 +2007,7 @@ class FullConformalPredictor:
         X_test_wn = X_test_w / X_test_w.norm(dim=1, keepdim=True).clamp_min(1e-10)
 
         p_values_chunks = []
+        test_scores_chunks = [] if return_test_scores else None
 
         def _topk_mean_along(values: torch.Tensor, k_max: int,
                               count_per_row: torch.Tensor) -> torch.Tensor:
@@ -2110,6 +2123,8 @@ class FullConformalPredictor:
             n_greater = (updated_scores >= test_scores.unsqueeze(-1)).sum(dim=-1)
             p_values = (n_greater.float() + 1.0) / (n_cal + 1.0)
             p_values_chunks.append(p_values.cpu().numpy())
+            if return_test_scores:
+                test_scores_chunks.append(test_scores.detach().cpu().numpy())
 
             # Free batch tensors before next iter (helps under memory pressure)
             del S, S_b, mask_c, updated_scores, d_same_upd, test_scores
@@ -2146,6 +2161,10 @@ class FullConformalPredictor:
                 {int(classes_np[c]): float(p_values_arr[i, c]) for c in range(K)}
                 for i in range(n_test)
             ]
+        if return_test_scores:
+            results['test_scores'] = np.concatenate(test_scores_chunks, axis=0)  # (n_test, K)
+            results['cal_scores'] = self.cal_scores
+            results['classes'] = classes_np.astype(int)
 
         if verbose:
             print(f"\nGPU FCP prediction time: {prediction_time:.2f}s "
@@ -2293,6 +2312,7 @@ class FullConformalPredictor:
         return_p_values: bool = False,
         verbose: bool = True,
         batch_size: int = 256,
+        return_test_scores: bool = False,
     ) -> Dict:
         """Vectorised (torch) path for FCP with PrototypeSoftmaxNCM.
 
@@ -2351,6 +2371,7 @@ class FullConformalPredictor:
         Xt = torch.as_tensor(np.asarray(X_test), dtype=f, device=dev)
         n_test = Xt.shape[0]
         p_chunks = []
+        test_scores_chunks = [] if return_test_scores else None
 
         for s0 in range(0, n_test, batch_size):
             Xb = Xt[s0:min(s0 + batch_size, n_test)]                 # (B, d) raw
@@ -2362,6 +2383,9 @@ class FullConformalPredictor:
             zxnorm2 = (Xb * Xb).sum(dim=1)                           # (B,)
             f_test = Xb @ P                                          # (B, Kc)
             Ptest = torch.softmax(f_test / T, dim=1)                 # (B, Kc)
+            if return_test_scores:
+                # s_test(x, candidate ci) = 1 - Ptest[:, col_of[ci]]  (LAC score)
+                test_scores_chunks.append((1.0 - Ptest[:, col_of]).detach().cpu().numpy())
             norm_aug2 = (css_norm2.view(1, Kc) + 2.0 * csTzx
                          + zxnorm2.view(B, 1))                       # (B, Kc) ||sum_c+z_x||^2
             ycol_idx = ycol.view(1, n, 1).expand(B, n, 1)           # gather index
@@ -2418,6 +2442,10 @@ class FullConformalPredictor:
             results['p_values'] = [
                 {int(classes_np[c]): float(p_values_arr[i, c]) for c in range(K)}
                 for i in range(n_test)]
+        if return_test_scores:
+            results['test_scores'] = np.concatenate(test_scores_chunks, axis=0)  # (n_test, K)
+            results['cal_scores'] = self.cal_scores
+            results['classes'] = classes_np.astype(int)
         if verbose:
             print(f"\nGPU prototype_softmax FCP time: {prediction_time:.2f}s "
                   f"({prediction_time / n_test * 1000:.2f}ms/sample) on {dev}")
