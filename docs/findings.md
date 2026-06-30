@@ -230,6 +230,42 @@ Transductive recovers most of the pool's benefit (−32% / −32% / −23% vs no
 
 ---
 
+## 4e. Unlabeled-Pool Ablation — High-Trial Validity + Efficiency (with vs without pool, all four arms) (2026-06-10)
+
+Isolates *the effect and use of the unlabeled pool* in the best exchangeable combo, and re-settles the cal=800 coverage at high trial count. Four exchangeable arms (uniform-random split, NCM `unwhitened_topk_mean`, λ=0.05), run on the cluster: the two plain-FCP arms at **100 trials via the GPU fast-path**, the two MS-CS penalty arms at **50 trials**, test=1000. `src/pool_ablation_hightrial.py`, `output/from_cluster/pool_ablation_hightrial/`.
+
+- **no-pool FCP** — identity features, no pool at all
+- **no-pool centroid-MSCS** — identity features + cal class-centroid M (pool-free penalty, exchangeable via per-test centroid update)
+- **pool FCP** — PCA-128 + cluster-whiten features (pool-fit), no penalty
+- **pool cluster-MSCS** — pool features + unlabeled-cluster M (the full combo)
+
+**Validity — all four valid at every cal incl. 800 (settles the apparent 10-trial dip).** Coverage (±1 SE) sits on the 0.900 exact-exchangeable target everywhere; crucially the two MS-CS *penalty* arms — not just plain FCP (cf. §4c) — are dead-on at cal=800:
+
+| arm | cal=200 | cal=400 | cal=800 |
+|-----|---------|---------|---------|
+| no-pool FCP           | .904 | .901 | .898 |
+| no-pool centroid-MSCS | .903 | .900 | **.900** |
+| pool FCP              | .902 | .899 | .897 |
+| pool cluster-MSCS     | .900 | .897 | **.899** |
+
+SE ≈ 0.002–0.004; the worst deviation (pool FCP @800, −1.9 SE) is expected scatter over 12 points. **The exchangeable MS-CS penalty preserves exact validity** — the 10-trial "0.88 @ cal=800" was Monte-Carlo noise (per-trial coverage std 0.034→0.016 as cal grows; a 100-trial plain-FCP diagnostic gave 0.902/0.899/0.901/0.900 at cal=200/400/600/800).
+
+**Efficiency — set size (±1 SE); the pool's payoff, corrected.**
+
+| cal | no-pool FCP | no-pool centroid-MSCS | pool FCP | pool cluster-MSCS |
+|-----|-------------|------------------------|----------|--------------------|
+| 200 | 33.85 ±0.62 | 34.22 ±0.88 | 19.84 ±0.44 | 17.63 ±0.59 |
+| 400 | 6.14 ±0.19  | 5.46 ±0.21  | 3.22 ±0.10  | 2.80 ±0.11  |
+| 800 | 2.24 ±0.04  | 2.09 ±0.04  | 1.63 ±0.02  | 1.60 ±0.03  |
+
+- **Pool (full combo) cuts sets 48% / 54% / 29%** at cal 200/400/800 — *larger* than the 10-trial estimate (43/51/22%), because that run drew a low no-pool@800 (2.00 vs true 2.24).
+- **PCA+whiten features are the lever**: 41% / 48% / 27% from features alone (no-pool FCP → pool FCP).
+- **MS-CS adds at small/mid cal only**: on pool features it shaves 11% (cal200, 3 SE) / 13% (cal400, 2.8 SE) but just ~2% at cal800 (1.63→1.60, ~1.2 SE — not significant). Pool-free centroid-MSCS shaves 7% (cal800) / 11% (cal400) / ~0 (cal200).
+
+**Takeaway.** Every exchangeable variant — including both MS-CS penalties — is exactly valid at every cal incl. 800; the dip was noise. The pool's benefit is real and a touch larger than first measured (29% @ cal=800, up to 54% @ cal=400), driven by the pool-fit PCA+whiten features, with the MS-CS penalty contributing only at small/mid cal. Figure: `output/from_cluster/pool_ablation_hightrial/pool_ablation_hightrial.png`. See `[[unlabeled-pool-ablation]]`.
+
+---
+
 ## 5. Whitened-RBF NCM + AE-128 — Confirmed Win at Medium Cal
 
 After the AE/PCA diagnostics predicted that nonlinear NCMs would let AE features pay off, we built `RBFDensityNCM` (Gaussian kernel density, ratio mode, pooled-within-class whitening). See `[[rbf-ncm-with-ae]]`.
@@ -326,6 +362,7 @@ DINOv2 dominates — 77% smaller than BEiTv2, 11× smaller than CLIP. FCP advant
 5. **RBF NCM multi-dataset confirmation**: re-run AE-128 + wSymRBF on CUB-200, miniImageNet, and at matched-518 (current §5 result is local 336 only). Tests whether the alignment hypothesis generalizes.
 6. **MA-CS / MS-CS multi-dataset extension**: MS-CS is label-free, runs on anything; MA-CS needs taxonomy (have CIFAR-100 fine→coarse; check CUB-200 family/genus, miniImageNet WordNet).
 7. **Stratified-vs-random split ablation** at cal=600 to settle the over-coverage mechanism. ~5 min with GPU.
+8. ~~**Per-class coverage diagnostics**~~ — **DONE 2026-05-25** (§2b). FCP+PCA+MS-CS wins CovGap on CIFAR-100 + miniImageNet; ClusterCP degenerates to SplitCP in our regime.
 
 ### P2 — Robustness / breadth
 
