@@ -400,6 +400,49 @@ the head is undertrained.
 
 ---
 
+## 7. Related work, by family
+
+> Map of the landscape this theory positions against, grouped by the *kind of
+> guarantee* each line targets. For each family we note its role for us
+> (**foundation** we build on / **baseline** we run head-to-head / **contrast**
+> we cite but cannot run on a frozen backbone / **reference**) and how it relates
+> to Theorem 1. This is the theory-relevant grouping only — full status and
+> bibliographic detail live in `literature.md`. Entries added this session
+> (2026-06-28) are marked **[new]**; only the three Tier-1 competitors from that
+> search were promoted here.
+
+**A. Full-CP foundations & validity theory** — *the guarantees we build on (foundation).*
+- Shafer & Vovk 2008 (arXiv:0706.3188) — full/transductive CP; source of Theorem 1 (§1).
+- Barber, Candès, Tibshirani & Wager 2021 (arXiv:1905.02928) — CV+/Jackknife+; the 1−2α competitor that goes vacuous at small n (§4).
+- Fan & Sesia 2025 (arXiv:2512.15383) — O(1/n) validity for data-dependent standardization; licenses the diagonal-whitening concession (§1).
+
+**B. Marginal set-size efficiency scores** — *softmax-based split-CP baselines on our primary (marginal) efficiency axis.* Each needs a probability vector + a cal split, so they live in `split_cp_baselines.py` and run on the frozen-DINOv2 linear-probe softmax (baseline).
+- APS — Romano, Sesia & Candès, NeurIPS 2020 (arXiv:2006.02544) — cumulative sorted-prob score; bloats at large K.
+- RAPS — Angelopoulos, Bates, Jordan & Malik, ICLR 2021 (arXiv:2009.14193) — APS + rank penalty.
+- **[new]** SAPS — Huang, Xi, Zhang, Yao, Qiu & Wei, **ICML 2024** (arXiv:2310.06430) — drops every probability except the max and scores by label *rank* + one parameter λ; current "smaller-than-RAPS" reference (ImageNet avg size 2.98 vs RAPS 3.29 vs APS 20.95). Positioning: SAPS *patches* softmax miscalibration by deleting magnitudes; our geodesic NCM *sidesteps* it by using no probabilities at all.
+
+**C. Class-conditional coverage & length-optimal sets** — *our CovGap axis (§6 Q3); competitors/references, not our marginal guarantee.*
+- ClusterCP — Ding, Tibshirani & Ramdas, **NeurIPS 2023** (arXiv:2306.09335) — class clustering for class-conditional coverage; degenerates to Split CP at our cal/K (§4, findings §2b). (baseline)
+- **[new]** RC3P — Shi, Ghosh, Belkhouja, Doppa & Yan, **NeurIPS 2024** (arXiv:2406.06818) — post-hoc augmented label-rank calibration over APS/RAPS; guarantees class-wise coverage, −26% set size vs CCP/ClusterCP (CIFAR-10/100, mini-ImageNet, Food-101). Runnable on frozen embeddings — the direct ClusterCP competitor on our class-conditional comparison. Caveat: it targets class *imbalance*; we use balanced splits. (baseline)
+- **[new]** CPL — Kiyani, Pappas & Hassani, **NeurIPS 2024** (arXiv:2406.18814) — strong-duality framework for near-minimum set *length* under a conditional-validity constraint, via covariate-dependent thresholds. The SOTA "length-optimal CP" reference; demonstrated mostly on regression + a CIFAR-10 shift appendix, so a conditional-coverage reference for us, not a drop-in many-class baseline. (reference)
+
+**D. Neighborhood / distance-geometry NCM** — *closest in spirit to our geodesic NN-ratio NCM (§0).*
+- Neighborhood CP — Ghosh et al., **AAAI 2023** (arXiv:2303.10694) — k-NN distance NCM + distance-weighted adaptive sets; prior art our NN-ratio cites and competes with. (baseline)
+
+**E. Class-similarity penalty** — *our MS-CS add-on (§3).*
+- MA-CS — Fargion, Dabah & Tirer 2025 (arXiv:2511.19359) — binary superclass penalty; MS-CS (§3.2) generalizes its d(y, y') to a continuous, label-free, cluster-derived 1 − M. (reference / the thing we extend)
+
+**F. VLM / zero-shot transductive CP — the Silva-Rodriguez line** — *nearest setting, but text-based; we are pure SSL with no text encoder.* The FCA skeleton inspires the text-free prototype/ridge rungs in §4.1.
+- FCA — Silva-Rodriguez et al., **IPMI 2025** (arXiv:2506.06076) — full-CP adaptation with an SS-Text linear probe.
+- Conf-OT — Silva-Rodriguez, Ben Ayed & Dolz, **CVPR 2025** (arXiv:2505.24693) — transductive split-free CP on CLIP via optimal transport.
+- SCA-T — Silva-Rodriguez, Ben Ayed & Dolz, **MICCAI 2025** (arXiv:2506.17503) — split-CP variant of the same idea.
+
+**G. Semi-supervised CP** — *unlabeled-pool baseline (§4).*
+- SemiCP — Zhou et al., **CVPR 2026** (arXiv:2505.21147) — NNM pseudo-label augmentation for Split CP; null on THR in our regime (findings §2), the baseline FCP beats. (baseline)
+
+---
+
 *Sources: Vovk/Shafer full-CP guarantee (Shafer & Vovk 2008, arXiv:0706.3188);
 Barber et al. 2021 (CV+); Fargion et al. 2025 (MA-CS, arXiv:2511.19359);
-Fan & Sesia 2025 (O(1/n) standardization, arXiv:2512.15383). See `literature.md`.*
+Fan & Sesia 2025 (O(1/n) standardization, arXiv:2512.15383). Competitor families
+and per-paper status in §7 and `literature.md`.*
