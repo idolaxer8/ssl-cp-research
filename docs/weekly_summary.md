@@ -9,168 +9,253 @@ All experiments: CIFAR-100, DINOv2 embeddings, exchangeable pipeline
 
 ---
 
-## Week ending 2026-06-27 (work on 06-23 to 06-27)
+## Goals — upcoming week (planned, 06-30 to 07-04)
 
-This week we (1) stress-tested the new prototype-softmax method on a hard
-fine-grained dataset — **the first regime where the tight-set story fails**;
-(2) ran the controlled CIFAR-100 PCA x MS-CS ablation as its well-behaved
-counterpart; (3) concluded the LATA posterior-smoothing investigation
-(negative for Full CP); and (4) shipped GPU fast paths for prototype-softmax.
-One thread is still open — SAPS/APS adaptivity scores (topic 5).
+Forward-looking plan, not results. Each item converts into the dated entry above
+as it lands. Four threads, building directly on last week's findings.
 
-### 1. FGVC-Aircraft stress test — the tight-set story does NOT transfer to fine-grained data
+### 1. Class-similarity (MS-CS) on the softmax NCM — investigate, rethink M
 
-**What we did.** Added FGVC-Aircraft (100 aircraft variants, fine-grained) as a
-new dataset and ran the full CIFAR-100 recipe on it: the FCA-family NCM
-comparison (50 trials, balanced cal+test, PCA-128 + cluster-whiten), a
-PCA x NCM-geometry ablation, and the MS-CS penalty sweep on prototype-softmax.
+**Why.** MS-CS is now a **no-op for prototype-softmax** (last week, topic 1): the
+k-means cluster-M penalty neither shrinks nor helps once the y_hat bug is fixed,
+while it stays a real lever for the geodesic NCM. Working hypothesis: the penalty's
+class-similarity matrix M (k-means on the pool) is mismatched to the softmax score's
+geometry — the softmax head already softly down-weights dissimilar classes via the
+prototype cosines, so an external cluster-M adds nothing.
+- Diagnose precisely why the penalty doesn't bite for the softmax head (interaction
+  of the suspected-class y_hat with the LAC score).
+- **Try a softmax-native M:** build class similarity from the **prototype cosines
+  themselves** (M_ij = cos(mu_i, mu_j)) instead of pool k-means — a label-free,
+  score-aligned similarity — and re-test on CIFAR-100. Keep exchangeability (fit on
+  the unlabeled pool / per-candidate update).
 
-FCA-family set size (coverage), 50 trials, balanced_both:
+### 2. Aircraft — class-similarity, Split-CP comparison, a second fine-grained set
 
-| cal | prototype_softmax | geodesic asym | geodesic mean |
-|-----|-------------------|---------------|---------------|
-| 200 | 74.6 (.974) | 52.3 (.950) | 47.0 (.917) |
-| 400 | 21.4 (.920) | 30.6 (.932) | 38.2 (.909) |
-| 800 | 17.2 (.909) | 21.2 (.918) | 29.3 (.923) |
-| 1800| 13.2 (.904) | 15.4 (.907) | 18.6 (.909) |
+**Why.** FGVC-Aircraft is our scope-limit dataset (DINOv2 can't separate the 100
+variants; topic 2). We want to know if class-similarity helps where features can't,
+and to confirm the limit is general, not Aircraft-specific.
+- Run the **class-similarity penalty on Aircraft** (the new M from goal 1, post-fix
+  y_hat) — does coarse structure help when the backbone can't?
+- Add a **Split-CP baseline on Aircraft** (SCP-THR / SemiCP) for a full
+  FCP-vs-Split head-to-head in the hard-backbone regime (so far we have only
+  FCP-family numbers there).
+- Find a **second fine-grained dataset** to replicate the scope limit (candidates:
+  Stanford Cars, CUB-200, Oxford-Flowers-102 — we already have cub/flowers
+  embeddings).
 
-**Key points:**
-- **Sets stay HUGE (13-75 of K=100) at every cal** — DINOv2 does not linearly
-  separate the 100 aircraft variants. This is the **first dataset where the
-  saturating tight-set story fails**; on CIFAR-100 the same pipeline gives
-  sz ~1.3 at cal=800, here it is ~17.
-- **Prototype is tightest-on-average from cal>=400** (21.4 vs 30.6 asym @ 400)
-  **but at a class-conditional cost**: it bloats and over-covers at cal=200
-  (sz 74.6, cov .974) and has the **worst CovGap** (~10.5 pp vs asym ~7.0;
-  ~36% of classes under-covered vs ~33% for asym). On hard data the prototype's
-  tight-marginal edge is bought with worse per-class coverage — **geodesic asym
-  is the more honest choice** here.
-- **PCA's payoff nearly vanishes** (PCA x NCM ablation, geodesic NCMs, cal<=1000):
-  plain asym @ cal=1000 sz 23.7 ~= PCA-128 asym 24.0. Whitening still helps the
-  symmetric mean (33.1 -> 23.5 with PCA-256 + cluster-whiten), but the ~60%
-  small-cal cut PCA buys on CIFAR-100 is ~0% here. **Features are the lever only
-  when the backbone already separates the classes.**
-- **MS-CS penalty BREAKS validity** (penalty sweep): any lambda > 0 under-covers
-  (cal=400: .921 -> .79; cal=800: .911 -> .87) and at cal>=800 sets actually
-  GROW (the headline "-24% @ cal=400" is illusory — coverage collapsed to 0.78).
-  The CIFAR-100 recipe (tau = 0.5 * median_d^2, lambda = 0.05, 20 clusters) does
-  not transfer: k-means clusters on an unseparated manifold carry no useful
-  coarse structure. **The penalty must be off on this dataset.**
+### 3. Geometric-conditional coverage — audit the "worst" metric + per-class effect
 
-**Takeaway (paper honesty / scope limit).** The method's headline — tight valid
-sets, MS-CS gains — is **contingent on the backbone separating the classes**. On
-genuinely fine-grained data it degrades gracefully on coverage but not on set
-size, and the penalty is harmful. A clean robustness caveat to state, not hide.
+**Why.** The geometry-conditional pilot (topic 5) gave odd worst-stratum numbers.
+- **Audit the "worst-stratum coverage" definition** (the weird results): empty-bin /
+  singleton handling, empty sets counted, per-trial vs pooled, bin-edge sensitivity.
+  Re-confirm the worst-stratum 0.60/0.75 -> ~0.90 claim once the metric is clean.
+- **Check the solution's effect on per-CLASS coverage** (CovGap): does conditioning
+  on geometry leave class-conditional coverage unchanged, help it, or disturb it?
+  (Geometry and class are different axes — we need to know fixing one doesn't break
+  the other.)
 
-**Output:** `output/from_cluster/fca_cluster/results_aircraft.json` (FCA family,
-50 trials), `output/from_cluster/aircraft_ablation/*.json` (PCA x NCM, 9 configs),
-`output/from_cluster/mscs_softmax/results_aircraft.json` (penalty sweep). Dataset
-loader `src/download_datasets.py` (+FGVC-Aircraft); scripts
-`cluster/run_aircraft_ablation.sh`, `src/fca_family_cluster_experiment.py`,
-`src/mscs_softmax_experiment.py`. All shipped to main.
+### 4. CAOS (Waldron, arXiv:2601.05219) — finish review + literature sweep
 
-### 2. CIFAR-100 PCA x MS-CS ablation on prototype-softmax — the well-behaved counterpart
+**Why.** CAOS is our nearest split-free one-shot ally (topic "Literature"); only the
+Appendix-E "~52% of the win is not-splitting" decomposition is locked in so far.
+- **Finish reading** CAOS and write a short **key-takeaways** summary for our
+  positioning (validity argument, score/aggregation levers, what transfers to our
+  few-shot many-class regime).
+- **Review CAOS's related-work** for neighbours we've missed.
+- **Fresh last-few-months scan** for more split-free / few-shot / transductive CP
+  papers; fold the keepers into `literature.md` (§5 few-shot, §8 semi-sup).
 
-**What we did.** Controlled 2x2 (PCA on/off x MS-CS on/off) on prototype-softmax
-vs geodesic mean, 20 trials, CIFAR-100. Set size (coverage):
+---
+
+## Week ending 2026-06-29 (work on 06-23 to 06-29)
+
+Two arcs this week, merged into one section. (A) The prototype-softmax NCM
+matured (GPU paths), was stress-tested to its scope limit, and three side
+threads closed — a validity bug fix (shipped) plus LATA and SAPS (both killed,
+unmerged). (B) A new **geometry-conditional coverage** direction was piloted
+end-to-end (the primary novelty result). Each topic gives the intuition, the
+paper it builds on, and where to find the table/plot. Defaults as in the header
+(CIFAR-100, DINOv2, balanced cal+test, alpha=0.1) unless noted.
+
+### 1. prototype-softmax matured — GPU fast paths + a MS-CS validity bug fix (shipped)
+
+**Intuition.** prototype-softmax is our FCA-style NCM (Silva-Rodriguez et al.,
+IPMI 2025, arXiv:2506.06076): score a label by a softmax over cosine similarity to
+class-mean prototypes, re-fit per candidate in closed form so Full CP stays exact.
+This week it became fast and a subtle validity bug was found and fixed.
+- **GPU fast paths + the softmax-update trick.** A candidate's refit moves only ONE
+  class's prototype, so the softmax denominator is *swapped* (one exp term) instead
+  of recomputed over all K classes — an O(1)-per-cal-point update. Result: **~27x
+  faster (25.1s -> 0.93s/trial @ cal=800/K=100/test=1000), dropping prototype from
+  46x slower than the geodesic NCM to ~1.7x** — the FCA-style head is now nearly as
+  cheap as our ratio NCM. The MS-CS penalty got its own GPU kernel (~130x). All
+  bit-exact, CUDA-parity tested. (`src/conformal_prediction.py`, `mscs_gpu.py`.)
+- **MS-CS y_hat bug (fixed, `cf639b2`).** The penalty's suspected-class y_hat was
+  argmax over the FULL prototypes (non-LOO): a calibration point "saw itself" in
+  its own class while the test point did not, so the penalty was not a symmetric
+  function of the bag -> coverage broke once the penalty had weight. Fix: y_hat =
+  argmax of the NCM's own leave-one-out logits, with a coverage-under-domination
+  regression test. **The geodesic NCM was never affected (its y_hat already
+  excludes self) — all geodesic MS-CS results stand.**
+- **Correction to last week.** The reported "MS-CS shrinks prototype sets" was a
+  coverage-break artifact. Post-fix (20-trial ablation, see the table below),
+  MS-CS is a **no-op for prototype** at lambda=0.05 — coverage now valid at every
+  cal and set size essentially unchanged on PCA features (slight inflation on raw
+  768-D). MS-CS stays a genuine efficiency lever for geodesic, not for prototype.
+
+**Current status of the prototype NCM (CIFAR-100, post-fix) — one-glance summary,
+plot `output/from_cluster/fca_ablation/ablation_cifar100.png`** (prototype vs
+geodesic mean, PCA on/off x MS-CS on/off, 20 trials, regenerated 2026-06-30 with the
+post-`cf639b2` code). Set size (coverage):
 
 | arm | cal=200 | cal=400 | cal=800 |
 |-----|---------|---------|---------|
-| prototype, PCA, no MS-CS | 4.25 (.947) | 1.67 (.919) | 1.30 (.902) |
-| prototype, PCA, + MS-CS  | 2.72 (.925) | 1.56 (.911) | 1.27 (.898) |
-| prototype, no PCA        | 10.80 (.962)| 2.17 (.925) | 1.40 (.906) |
-| geodesic mean, PCA       | 5.21 (.921) | 2.18 (.910) | 1.58 (.913) |
+| **prototype + PCA-128, no penalty (recommended)** | **4.25** (.95) | **1.67** (.92) | **1.30** (.90) |
+| prototype + PCA-128, + MS-CS (lambda=0.05) | 4.24 (.94) | 1.67 (.92) | 1.30 (.90) |
+| prototype, no PCA (full 768-D) | 10.80 (.96) | 2.17 (.93) | 1.40 (.91) |
+| geodesic mean + PCA-128 | 5.21 (.92) | 2.18 (.91) | 1.58 (.91) |
 
-**Key points:**
-- **PCA-128 is the dominant lever at small cal:** 10.80 -> 4.25 @ cal=200
-  (-61%); the gap shrinks to ~7% by cal=800.
-- **MS-CS is small-cal insurance:** -36% @ cal=200 (4.25 -> 2.72), -7% @ cal=400,
-  -2% (noise) @ cal=800 — all still valid. Same shape as the geodesic MS-CS story.
-- **Prototype beats geodesic mean at every cal** (4.25 vs 5.21 @ 200; 1.30 vs
-  1.58 @ 800), reconfirming last week's prototype-dominance headline on the
-  controlled (separable) dataset.
-- **The contrast with topic 1 is the point:** identical recipe, opposite outcome
-  — CIFAR-100 (separable) -> tight valid sets + MS-CS helps; Aircraft
-  (unseparable) -> huge sets + MS-CS harms.
+- **Best valid recipe = prototype + PCA-128, penalty OFF** — beats geodesic mean at
+  every cal; PCA-128 is the dominant lever (10.8 -> 4.25 @ cal=200). These
+  no-penalty arms are unaffected by the bug, so the numbers stand (local GPU
+  re-confirmed cal=800 sz 1.30).
+- **MS-CS is a no-op for prototype (post-fix):** at lambda=0.05 on PCA features it
+  neither shrinks nor helps (4.25 -> 4.24 @ cal=200; identical from cal=400) and on
+  raw 768-D it slightly INFLATES (10.80 -> 11.62). Coverage is now valid at every
+  cal incl. cal=800 (.902, vs the buggy .898) — the prior "MS-CS shrinks prototype"
+  was purely the coverage-break artifact. So keep the penalty OFF for prototype;
+  MS-CS stays a real lever only for the geodesic NCM.
 
-**Output:** `output/from_cluster/fca_ablation/results_cifar100.json`, script
-`src/fca_ablation_cluster_experiment.py`. Shipped to main.
+### 2. Scope limit — prototype works on separable data, breaks on fine-grained FGVC-Aircraft
 
-### 3. LATA posterior smoothing — concluded: a split-CP tool, near-no-op in Full CP (branch unmerged)
+**Intuition.** The whole tight-set story assumes the backbone actually separates
+the classes. We pinned down both sides: CIFAR-100 (DINOv2 separates) vs the new
+FGVC-Aircraft (100 near-identical variants it does not).
+- **CIFAR-100 (well-behaved), 20 trials.** PCA-128 is the dominant lever
+  (prototype sz 10.8 -> 4.25 @ cal=200, valid) and **prototype beats geodesic mean
+  at every cal** (4.25 vs 5.21 @200; 1.30 vs 1.58 @800). The MS-CS rows were
+  regenerated post-fix (2026-06-30) and now show MS-CS is a no-op for prototype
+  (see section 1). Table + plot:
+  `output/from_cluster/fca_ablation/results_cifar100.json`, `ablation_cifar100.png`.
+- **FGVC-Aircraft (stress test), 50 trials, set size (coverage):**
 
-**Background.** LATA (Bozorgtabar et al., arXiv:2602.17535) = KL-anchored
-Laplacian smoothing of zero-shot posteriors over a kNN graph on cal+test. It
-resolves a name-collision with our abandoned "LATA score smoothing": their fix
-smooths the **C-dim posterior vector** (we had smoothed the **scalar** score,
-which destroyed class discrimination). We adapted it onto prototype-softmax in
-two stages.
+  | cal | prototype | geodesic asym | geodesic mean |
+  |-----|-----------|---------------|---------------|
+  | 200 | 74.6 (.974) | 52.3 (.950) | 47.0 (.917) |
+  | 400 | 21.4 (.920) | 30.6 (.932) | 38.2 (.909) |
+  | 800 | 17.2 (.909) | 21.2 (.918) | 29.3 (.923) |
+  | 1800| 13.2 (.904) | 15.4 (.907) | 18.6 (.909) |
 
-**Stage 0 — split CP, posterior smoothing (CIFAR-100 balanced).** Works, modestly
-and regime-specifically. Set-size cut from baseline: **-21% @ cal=200**
-(10.12 -> 7.95, cov .963 -> .947), **-9% @ cal=400**, **-5% @ cal=800** — all
-stay valid, but mostly **spend the balanced over-coverage cushion** (on the exact
-random arm, gamma >= 2 trades coverage for size and under-covers). **No CovGap
-gain at K=100** (LATA's headline CCV benefit is a few-class-medical effect). The
-**scalar-score control reproduces the old catastrophic failure** (cov collapses
-to .89 / .72) — empirically confirming "smooth the vector, not the scalar".
+  Sets stay **HUGE — 13-75 of K=100** at every cal (vs ~1.3 on CIFAR-100): the
+  **first dataset where the saturating tight-set story fails**. Prototype is
+  tightest-on-average from cal>=400 but over-covers/bloats at cal=200 (sz 74.6) and
+  has the **worst CovGap** (~10.5 pp vs geodesic asym ~7.0) — on hard data
+  **geodesic asym is the more honest choice**. PCA's payoff ~vanishes (asym @
+  cal=1000: 23.7 raw vs 24.0 PCA-128). Plot
+  `output/from_cluster/fca_cluster/compare_aircraft_balanced_both.png`; ablation
+  `output/from_cluster/aircraft_ablation/`.
+- **Takeaway.** A backbone-separability scope limit to state plainly: the headline
+  (tight valid sets) is contingent on class separability; on genuinely fine-grained
+  data the method degrades gracefully on coverage but not on set size.
 
-**Stage 1 — full CP, smoothing inside the per-candidate bag.** Built and proven
-**exactly exchangeable** (permutation invariance 7.6e-15; existing oracle +
-GPU-parity tests still pass), but:
-- **~0 benefit:** cal=400 sz 1.624 -> 1.634 (gamma=2) -> 1.651 (gamma=8) —
-  flat-to-worse. **Mechanism:** Full CP smooths the whole bag symmetrically per
-  candidate, so the effect cancels in the p-value RANK; split CP moves only the
-  test posterior against FIXED cal scores, which is why Stage 0 saw a gain and
-  Stage 1 does not.
-- **Prohibitive cost:** O(B*K*iters*n^2), ~0.29 s per (test, candidate), forfeits
-  the GPU fast path — not viable at K=100.
+### 3. LATA posterior smoothing — KILLED for Full CP: a split-CP-only tool (unmerged)
 
-**Bottom line / recommendation:** posterior smoothing is a **split-CP tool**;
-inside transductive Full CP it is a near-no-op. Recommend **NOT adopting Stage 1**;
-keep the Stage-0 result as a positioning baseline + reviewer defense. Branch
-`worktree-lata-posterior-smoothing` (3 commits) is **NOT merged** — awaiting a
-go/no-go.
+**Intuition.** LATA (Bozorgtabar et al., arXiv:2602.17535) smooths the C-dim
+posterior VECTOR over a kNN graph with a KL anchor — unlike our long-abandoned
+"LATA score smoothing", which smoothed the scalar score and destroyed class
+discrimination. We adapted it onto prototype-softmax.
+- **Stage 0 (split CP):** modest, regime-specific gains — sets -21%/-9%/-5% @
+  cal 200/400/800 (CIFAR-100) but mostly spending the balanced over-coverage
+  cushion (under-covers on the exact random split); **no CovGap gain at K=100**
+  (LATA's headline is a few-class effect). The scalar-score control reproduces the
+  old failure -> confirms "smooth the vector, not the scalar". Plot
+  `output/lata_posterior_smoothing/crossover.png`.
+- **Stage 1 (full CP):** built and proven exactly exchangeable, but **~0 benefit**
+  — smoothing the whole bag symmetrically per candidate cancels in the p-value
+  rank (split CP moved only the test posterior vs fixed cal scores, hence its
+  gain), at prohibitive cost O(B*K*iters*n^2). Plot
+  `output/lata_fullcp_smoothing/fullcp_smoothing.png`.
+- **Verdict:** posterior smoothing is a split-CP tool; do NOT adopt Stage 1. Branch
+  `worktree-lata-posterior-smoothing`, NOT merged — awaiting go/no-go.
 
-**Output:** `output/lata_posterior_smoothing/` (Stage 0),
-`output/lata_fullcp_smoothing/` (Stage 1). Docs: `literature.md` moved LATA from
-§8 (Semi-Sup CP) to §2 (VLM line) with a corrected note.
+### 4. SAPS / APS rank scores on prototype — KILLED on the size/CovGap frontier; salvaged as an adaptivity tool (unmerged)
 
-### 4. Engineering — GPU fast paths for prototype-softmax (shipped)
+**Intuition.** LAC (1 - p(y)) bloats on hard data. Rank-based scores — APS (Romano,
+Sesia & Candes, NeurIPS 2020, arXiv:2006.02544) and SAPS (Huang et al., ICML 2024,
+arXiv:2310.06430) — score by label RANK to spread coverage across set sizes. We
+added them to prototype-softmax (exactly exchangeable, GPU paths) plus a new
+**SSCV** metric (size-stratified coverage violation).
+- **Verdict (10 trials):** SAPS does NOT win the size/CovGap frontier — geodesic
+  asym stays CovGap champion on Aircraft (~7.2 vs SAPS-cosine ~8.5); on CIFAR-100
+  SAPS strictly loses to LAC (sz 2.7 vs 1.3); plain APS bloats (sz ~50).
+- **Salvage:** SAPS-cosine wins SSCV decisively on hard large-set data (~0.5-1.7 vs
+  ~10) — it is an adaptivity tool, not a size winner; and the result **strengthens
+  the denominator-free geodesic thesis** (rank scoring can't fix the softmax CovGap
+  bloat -> the pathology is intrinsic to the normalized-softmax score). Plot
+  `output/saps_local_aircraft/compare_aircraft_balanced_both.png`. Branch
+  `worktree-saps-prototype-ncm` (commit 13940be), archived, NOT merged.
 
-- **Denominator-swap LAC fast path (cosine): ~27x**, bit-exact vs brute-force LOO.
-- **MS-CS penalty GPU path: ~130x**, bit-exact — removes the last CPU-idle arm,
-  so prototype + MS-CS now runs fully on GPU.
-- Both unit-tested (incl. CUDA parity). These made the 20-50-trial cluster runs in
-  topics 1-2 cheap.
+### 5. NEW direction — geometry-conditional Full CP (primary novelty pilot, unmerged)
 
-Files: `src/conformal_prediction.py`, `src/mscs_gpu.py`, tests in
-`tests/test_prototype_softmax_ncm.py`. Shipped to main.
+**Intuition.** Marginal 90% coverage is an AVERAGE over the test distribution; it
+can hide regions that are badly under-covered. We stratify test points by a
+LABEL-FREE geometric covariate — local density (kth-NN radius) or local intrinsic
+dimension (Levina-Bickel MLE, 2004), computed on the unlabeled pool (a fixed
+pool-function -> exactly exchangeable) — and measure per-stratum coverage
+(CovGap_geo, the geometry-axis analogue of the class-conditional CovGap of Ding,
+Tibshirani & Ramdas 2023, arXiv:2306.09335).
+- **Diagnosis (CIFAR-100 + miniImageNet).** Per-stratum coverage is MONOTONE in
+  geometry (Spearman -1.0): the sparse / high-LID 20% **under-cover to 0.60-0.75**
+  at a 0.90 marginal (a 15-40 pp conditional gap); miniImageNet's sparsest stratum
+  even gets mean set size 0.74 (<1) — the method hands EMPTY sets to its hardest
+  points. The gap is split- and NCM-invariant, grows with cal, and is per-point.
+  Plot `output/novelty_selling/geometry_sell.png`.
+- **Fix — Mondrian CP** (Vovk): a SEPARATE conformal threshold per geometric
+  stratum => group-conditional coverage. It cuts CovGap_geo **87-95%** (mini
+  11.5 -> 0.58 pp; cifar 7.1 -> 0.89 pp), lifts worst-stratum coverage to ~0.90,
+  keeps the marginal valid, at a +22-59% size tax confined to the sparse stratum
+  (the distribution-free price; exact per-point conditional coverage is impossible,
+  Foygel-Barber et al. 2021). A confidence-conditioning control fails (softmax is
+  miscalibrated exactly on atypical points) -> geometry is the necessary axis.
+  Robust across alpha x G x covariate; on Aircraft it is a no-op (no strong
+  backbone -> no local holes). Secondary continuous variant RLCP (Hore & Barber
+  2024, arXiv:2310.07850). Plot `output/novelty_selling/geometric_robustness.png`;
+  dirs `output/geometric_conditional*/`; write-up `docs/novelty_pilots_findings.md`.
+- **Regular (global FCP) vs Mondrian, BALANCED, G=5 density, 15 trials**
+  (coverage / CovGap_geo pp / set size / worst-stratum coverage):
 
-### 5. Ongoing (open thread) — SAPS / APS adaptivity score modes for prototype-softmax
+  | dataset | cal | global FCP | Mondrian |
+  |---------|-----|------------|----------|
+  | CIFAR-100    | 400 | 0.921 / 5.65 / 1.75 / 0.823 | 0.928 / 2.75 / 2.71 / 0.918 |
+  | CIFAR-100    | 800 | 0.902 / 7.07 / 1.27 / 0.761 | 0.910 / 1.02 / 1.73 / 0.905 |
+  | miniImageNet | 400 | 0.915 / 9.96 / 1.03 / 0.669 | 0.930 / 2.96 / 1.49 / 0.907 |
+  | miniImageNet | 800 | 0.900 / 11.41 / 0.99 / 0.601 | 0.906 / 0.56 / 1.19 / 0.902 |
 
-**Motivation (from topic 1):** LAC (1 - p(y)) bloats on hard data and gives poor
-per-set-size coverage. We are adding APS/SAPS-style scores to PrototypeSoftmaxNCM
-to target **adaptivity** (uniform coverage across set sizes), not just marginal
-tightness.
-- New `score_mode in {lac, aps, saps_softmax, saps_cosine}` + a `saps_lambda`
-  knob; tie-safe strict-greater ranks (CPU/GPU-identical); GPU paths for all
-  modes; exactly exchangeable for fixed T; bit-exact tests added.
-- New **SSCV metric** (size-stratified coverage violation; bins <=1 / 2-3 / 4-10 /
-  11-30 / 31+) wired into the cluster experiment — the adaptivity metric SAPS
-  targets, distinct from class-conditional CovGap.
-- The controlled diagnostic (aircraft + cifar100; LAC vs APS vs both SAPS anchors
-  x lambda x fixed-T sweep, reporting CovGap AND SSCV vs the geodesic baselines)
-  is **wired but not yet run/committed**.
+  (cal=400 residual CovGap is larger — n_g = 400/5 = 80 per stratum is a noisier
+  quantile than 160 @ cal=800 — but worst-stratum is still lifted to ~0.91.)
+- Validity gated: unit tests 5/5 + GPU-parity 7/7. Branch `worktree-novelty-pilots`,
+  NOT merged.
 
-**State:** uncommitted in worktree `worktree-saps-prototype-ncm`. This entry will
-be updated when the diagnostic run lands.
+### 6. (Secondary pilot) calibration-conditional reliability — full CP is ~12x cheaper
 
-### Repo / doc maintenance
+**Intuition.** At few-shot the calibration DRAW dominates coverage variance. Over
+100 draws at fixed label budget B, full CP rides the Beta(n=B) coverage-SD floor
+(split-CP coverage law, Vovk 2012) while matched-budget Split-CP-THR degenerates to
+size-K sets at B<=400; the set-size cost of a 95%-reliable 0.90 guarantee (SSBC
+small-sample Beta correction) is **~12x cheaper** for full CP. Plots
+`output/novelty_selling/reliability_sell.png`,
+`reliability_convergence_cifar100.png`. Branch `worktree-novelty-pilots`.
 
-Archived 4 watch-list candidates (review date reached) and the one-off
-`literature_update_semicp_2026-05.md` (its 2 paper recs still pending fold into
-`literature.md` §8). Pruned a done findings item; synced the CLAUDE.md
-active-scripts list with `src/`.
+### Literature + maintenance
+
+- **CAOS** (Waldron, arXiv:2601.05219): split-free one-shot conformal adaptation on
+  frozen foundation-model features; its Appendix E decomposition shows **~52% of
+  its set-size win is "not splitting"** (reusing all labels), with ~7% from
+  aggregation — external quantitative support for our FCP-over-SplitCP thesis.
+  Tracked in `literature.md` §5.
+- Archived 4 watch-list candidates + the one-off `literature_update_semicp_2026-05.md`
+  (2 paper recs still pending into `literature.md` §8); pruned a done findings item;
+  synced the CLAUDE.md active-scripts list with `src/`.
 
 ---
 
