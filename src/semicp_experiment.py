@@ -78,6 +78,27 @@ DATASETS = {
         "n_classes": 10,
         "pca_dim": 64,  # K=10 — lower-dim than CIFAR-100/miniImageNet (K=100)
     },
+    "aircraft": {
+        # FGVC-Aircraft, the scope-limit set: DINOv2 does not separate the 100
+        # variants, so this is the hard-backbone regime for the FCP-vs-Split-CP
+        # head-to-head. trainval = labeled pool, test split = disjoint unlabeled
+        # pool (same labeled/unlabeled convention as mini-ImageNet/CIFAR).
+        "labeled": "output/embeddings_aircraft.pt",
+        "unlabeled": "output/embeddings_aircraft_unlabeled.pt",
+        "test": None,
+        "n_classes": 100,
+        "pca_dim": 128,  # PCA payoff ~vanishes on aircraft; 128 matches the ablation
+    },
+    "stanford_cars": {
+        # 2nd "DINOv2-struggles" multi-class scope-limit set (K=196 fine-grained car
+        # models, CLIP/CoOp transfer suite, like aircraft). Native train/test over
+        # the same classes -> train=labeled pool, test=disjoint unlabeled pool.
+        "labeled": "output/embeddings_stanford_cars.pt",
+        "unlabeled": "output/embeddings_stanford_cars_unlabeled.pt",
+        "test": None,
+        "n_classes": 196,
+        "pca_dim": 128,  # fine-grained; PCA payoff likely modest as on aircraft
+    },
 }
 
 ALPHA = 0.1
@@ -419,14 +440,27 @@ def main():
     parser.add_argument("--n_trials", type=int, default=5)
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--pca_dim", type=int, default=128)
+    parser.add_argument("--data_dir", type=str, default=None,
+                        help="Override the directory of the embedding .pt files "
+                             "(replaces the 'output/' prefix in DATASETS). Use e.g. "
+                             "output/from_cluster for locally-pulled cluster embeddings.")
     parser.add_argument("--output_dir", type=str, default="output/semicp_experiments")
     args = parser.parse_args()
+
+    def _resolve(p):
+        """Rewrite a DATASETS path's directory to --data_dir, if given."""
+        if p is None or args.data_dir is None:
+            return p
+        return str(Path(args.data_dir) / Path(p).name)
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for ds_name in args.datasets:
-        cfg = DATASETS[ds_name]
+        cfg = dict(DATASETS[ds_name])
+        cfg["labeled"] = _resolve(cfg["labeled"])
+        cfg["unlabeled"] = _resolve(cfg.get("unlabeled"))
+        cfg["test"] = _resolve(cfg.get("test"))
         labeled_path = cfg["labeled"]
 
         if not Path(labeled_path).exists():

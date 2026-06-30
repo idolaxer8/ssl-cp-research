@@ -113,7 +113,7 @@ def _base_scores(C, Sw, k, eps=1e-8):
 
 
 def run_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alpha, lam, M,
-                   *, exchangeable, yhat_mode, update_M_fn,
+                   *, exchangeable, yhat_mode, update_M_fn, similarity="cluster",
                    class_centroids, class_counts, class_to_cluster,
                    cluster_centroids, cluster_dists, effective_tau,
                    device="cuda", batch_size=128, return_sets=False):
@@ -126,6 +126,11 @@ def run_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alpha, lam, M,
         raise MSCSGpuUnsupported("needs GeodesicTopKMeanNCM topk_same+topk_other")
     if yhat_mode != "ncm":
         raise MSCSGpuUnsupported("only yhat_mode='ncm'")
+    if similarity != "cluster":
+        # only the cluster-M centroid-shift update is vectorised for the geodesic
+        # NCM; prototype/centroid M -> CPU fallback (update_M_fn handles them there)
+        raise MSCSGpuUnsupported(f"geodesic GPU MS-CS supports cluster-M only "
+                                 f"(got similarity='{similarity}')")
     if exchangeable and update_M_fn is not None:
         raise MSCSGpuUnsupported("only built-in cluster-M update (update_M_fn=None)")
     if device == "cuda" and not torch.cuda.is_available():
@@ -244,16 +249,27 @@ def run_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alpha, lam, M,
 
 
 def run_prototype_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alpha, lam, M,
-                             *, exchangeable, yhat_mode, update_M_fn,
+                             *, exchangeable, yhat_mode, update_M_fn, similarity="cluster",
                              class_centroids, class_counts, class_to_cluster,
                              cluster_centroids, cluster_dists, effective_tau,
                              device="cuda", batch_size=128, return_sets=False):
-    """GPU MS-CS for PrototypeSoftmaxNCM (cosine), exchangeable cluster-M.
+    """GPU MS-CS for PrototypeSoftmaxNCM (cosine).
 
-    Reuses run_mscs_torch's NCM-independent M_aug + penalty + p-value blocks; only
-    the conformal scores (the denominator-swap prototype path) and the suspected
-    class y_hat (argmax prototype similarity) are prototype-specific. float64 ->
-    bit-parity with the CPU run_fcp_with_mscs(prototype, yhat_mode='ncm'). Raises
+    Two exchangeable M-update modes (``similarity``):
+      * "cluster"   -- the Fargion k-means cluster-M centroid-shift update (needs
+                       the cluster_* artifacts; update_M_fn must be None).
+      * "prototype" -- the SOFTMAX-NATIVE cosine-prototype M. M is the Gram of the
+                       NCM's own class-mean prototypes, so the augmented row for a
+                       candidate (z, k) is just the cosine of the shifted prototype
+                       normalize(class_sum_k + z) against every prototype -- computed
+                       internally here from P / class_sum (reusing f_test and
+                       norm_aug2 already formed for the scores). The CPU fallback's
+                       update_M_fn is ignored here; the math is identical.
+
+    Reuses the NCM-independent penalty + p-value blocks; only the conformal scores
+    (denominator-swap prototype path), the suspected class y_hat (argmax prototype
+    similarity), and the M_aug row are prototype-specific. float64 -> bit-parity
+    with the CPU run_fcp_with_mscs(prototype, yhat_mode='ncm'). Raises
     MSCSGpuUnsupported for anything else (dot logits, frozen, centroid-M, missing
     classes) so the caller falls back to the CPU loop."""
     from conformal_prediction import PrototypeSoftmaxNCM
@@ -264,8 +280,16 @@ def run_prototype_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alph
         raise MSCSGpuUnsupported("prototype GPU MS-CS is cosine-only (dot exp overflows)")
     if yhat_mode != "ncm":
         raise MSCSGpuUnsupported("prototype GPU MS-CS uses yhat_mode='ncm' (argmax sim)")
-    if not exchangeable or update_M_fn is not None:
-        raise MSCSGpuUnsupported("only exchangeable cluster-M (update_M_fn=None)")
+    if not exchangeable:
+        raise MSCSGpuUnsupported("prototype GPU MS-CS is exchangeable-only")
+    if similarity == "cluster":
+        if update_M_fn is not None:
+            raise MSCSGpuUnsupported("cluster-M GPU path needs update_M_fn=None")
+    elif similarity == "prototype":
+        pass   # update_M_fn (CPU updater) ignored; M_aug built from prototypes here
+    else:
+        raise MSCSGpuUnsupported(f"prototype GPU MS-CS: unsupported similarity "
+                                 f"'{similarity}' (use 'cluster' or 'prototype')")
     if device == "cuda" and not torch.cuda.is_available():
         raise MSCSGpuUnsupported("cuda requested but unavailable")
     classes = np.asarray(all_classes)
@@ -312,11 +336,18 @@ def run_prototype_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alph
     yh_thresh = torch.where(is_top1_yh, t2v.view(1, n_cal), t1v.view(1, n_cal))     # (K, n_cal)
     yh_fallback = torch.where(is_top1_yh, t2c.view(1, n_cal), t1c.view(1, n_cal))   # (K, n_cal)
 
-    # exchangeable cluster-M artifacts (transformed space, NOT L2-normalised)
-    cc = f(class_centroids); cn = f(class_counts)
-    clcen = f(cluster_centroids); cld = f(cluster_dists)
-    c2c = f(class_to_cluster, torch.long); tau = float(effective_tau)
-    Xtr_all = f(X_test)                                  # transformed test (M-update space)
+    if similarity == "cluster":
+        # exchangeable cluster-M artifacts (transformed space, NOT L2-normalised)
+        cc = f(class_centroids); cn = f(class_counts)
+        clcen = f(cluster_centroids); cld = f(cluster_dists)
+        c2c = f(class_to_cluster, torch.long); tau = float(effective_tau)
+        Xtr_all = f(X_test)                              # transformed test (M-update space)
+    else:
+        # prototype-M: M_aug[k, j] = <normalize(class_sum_k + z), P_j>. Reuses
+        # f_test (= z @ P) and norm_aug2 (= |class_sum_k + z|^2) from the score
+        # block; only CSP[k, j] = <class_sum_k, P_j> is new (K x K, computed once).
+        CSP = (class_sum.t() @ P).contiguous()           # (K, K)
+        diagK_bool = torch.eye(K, device=dev, dtype=torch.bool)
     Xt_norm = f(X_test)                                  # L2 test (prototype space)
     Xt_norm = Xt_norm / Xt_norm.norm(dim=1, keepdim=True).clamp_min(eps)
 
@@ -354,19 +385,31 @@ def run_prototype_mscs_torch(cp, X_cal, y_cal, X_test, y_test, all_classes, alph
         yhat_aug = torch.where(flip, arangeK.view(1, K, 1).expand(B, K, n_cal),
                                yh_fallback.view(1, K, n_cal).expand(B, K, n_cal))  # M-col
 
-        # ---- M_aug row yc (B,K,K): update_M_for_candidate (NCM-independent) ----
-        new_cen = (cn.view(1, K, 1) * cc.view(1, K, -1) + Xtr_all[s:e].view(B, 1, -1)) \
-                  / (cn.view(1, K, 1) + 1.0)
-        d2 = ((new_cen.unsqueeze(2) - clcen.view(1, 1, -1, clcen.shape[1])) ** 2).sum(-1)
-        new_clu = d2.argmin(dim=-1)                       # (B,K)
-        changed = new_clu != c2c.view(1, K)
-        same_clu = c2c.view(1, 1, K) == new_clu.unsqueeze(-1)
-        dd = cld[new_clu.unsqueeze(-1).expand(B, K, K), c2c.view(1, 1, K).expand(B, K, K)]
-        changed_val = torch.where(same_clu, torch.ones_like(dd), torch.exp(-dd ** 2 / tau))
-        base_row = Mt.unsqueeze(0).expand(B, K, K)
-        M_aug_row = torch.where(changed.unsqueeze(-1), changed_val, base_row)
-        diagK = torch.eye(K, device=dev, dtype=torch.bool).unsqueeze(0)
-        M_aug_row = torch.where(diagK, torch.ones_like(M_aug_row), M_aug_row)
+        # ---- M_aug row yc (B,K,K): row k = updated similarities of candidate k ----
+        if similarity == "cluster":
+            # cluster-M centroid-shift update (update_M_for_candidate; NCM-indep.)
+            new_cen = (cn.view(1, K, 1) * cc.view(1, K, -1) + Xtr_all[s:e].view(B, 1, -1)) \
+                      / (cn.view(1, K, 1) + 1.0)
+            d2 = ((new_cen.unsqueeze(2) - clcen.view(1, 1, -1, clcen.shape[1])) ** 2).sum(-1)
+            new_clu = d2.argmin(dim=-1)                   # (B,K)
+            changed = new_clu != c2c.view(1, K)
+            same_clu = c2c.view(1, 1, K) == new_clu.unsqueeze(-1)
+            dd = cld[new_clu.unsqueeze(-1).expand(B, K, K), c2c.view(1, 1, K).expand(B, K, K)]
+            changed_val = torch.where(same_clu, torch.ones_like(dd), torch.exp(-dd ** 2 / tau))
+            base_row = Mt.unsqueeze(0).expand(B, K, K)
+            M_aug_row = torch.where(changed.unsqueeze(-1), changed_val, base_row)
+            diagK = torch.eye(K, device=dev, dtype=torch.bool).unsqueeze(0)
+            M_aug_row = torch.where(diagK, torch.ones_like(M_aug_row), M_aug_row)
+        else:
+            # prototype-M: candidate (z_b, k) shifts ONLY class k's prototype to
+            # normalize(class_sum_k + z_b); row k = cos of that against every proto.
+            # <class_sum_k + z_b, P_j> = CSP[k,j] + f_test[b,j]; |class_sum_k+z_b| =
+            # sqrt(norm_aug2[b,k]) -- both already in hand. (matches the CPU
+            # update_prototype_M_for_candidate; diag forced to 1.)
+            M_aug_row = (CSP.unsqueeze(0) + f_test.unsqueeze(1)) \
+                / torch.sqrt(norm_aug2).clamp_min(eps).unsqueeze(2)        # (B,K,K)
+            M_aug_row = torch.where(diagK_bool.unsqueeze(0),
+                                    torch.ones_like(M_aug_row), M_aug_row)
 
         # ---- cal penalty (B,K,n_cal): M_aug[cal_row, yhat_aug] ----
         base_pen = Mt[cal_row.view(1, 1, -1).expand(B, K, n_cal), yhat_aug]

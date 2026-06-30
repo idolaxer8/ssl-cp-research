@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 warnings.filterwarnings("ignore")
 from mscs_unlabeled_experiment import (  # noqa: E402
     build_cluster_similarity_matrix, build_centroid_similarity_matrix,
-    update_centroid_M_for_candidate, run_fcp_with_mscs)
+    update_centroid_M_for_candidate, build_prototype_similarity_matrix,
+    update_prototype_M_for_candidate, run_fcp_with_mscs)
 
 
 def gmm(K, per, d, seed, sep=4.0):
@@ -71,6 +72,30 @@ def main():
         rg = run_fcp_with_mscs(Xc, yc, Xt, yt, allc, ncm, 0.1, 0.05, Mcen, device="cuda", **fb)  # falls back
         same = all(set(a) == set(b) for a, b in zip(_sets(rc), _sets(rg)))
         print(f"  cal={cal} centroid-M (GPU->CPU fallback): parity={same}")
+        ok = ok and same
+
+    # --- prototype_softmax + softmax-native prototype-cosine M (GPU path) ---
+    # GPU prototype path requires every candidate class present in cal -> balanced
+    # cal. Checks the internal prototype-M_aug equals the CPU update_prototype_M.
+    print("prototype_softmax + prototype-cosine M (similarity='prototype'):")
+    for cal_per, test_per, lam in [(6, 8, 0.1), (10, 6, 0.3)]:
+        Xp, yp = gmm(K, cal_per + test_per + 4, d, seed=11)
+        ci, ti, rngp = [], [], np.random.default_rng(2)
+        for c in range(K):
+            ix = rngp.permutation(np.where(yp == c)[0])
+            ci.append(ix[:cal_per]); ti.append(ix[cal_per:cal_per + test_per])
+        ci, ti = np.concatenate(ci), np.concatenate(ti)
+        Xc, yc, Xt, yt = Xp[ci], yp[ci], Xp[ti], yp[ti]
+        Mp, csum, cnt, Pn = build_prototype_similarity_matrix(Xc, yc, allc, cosine=True)
+        upd = (lambda yi, xt, Mb, csum=csum, cnt=cnt, Pn=Pn:
+               update_prototype_M_for_candidate(csum, cnt, Pn, True, yi, xt, Mb))
+        cm = dict(exchangeable=True, yhat_mode="ncm", return_sets=True,
+                  temperature=0.1, logit="cosine", similarity="prototype", update_M_fn=upd)
+        rc = run_fcp_with_mscs(Xc, yc, Xt, yt, allc, "prototype_softmax", 0.1, lam, Mp, device="cpu", **cm)
+        rg = run_fcp_with_mscs(Xc, yc, Xt, yt, allc, "prototype_softmax", 0.1, lam, Mp, device="cuda", **cm)
+        same = all(set(a) == set(b) for a, b in zip(_sets(rc), _sets(rg)))
+        print(f"  cal={cal_per*K} lam={lam}: prototype-M parity={same} "
+              f"cov {rc[0]:.4f}/{rg[0]:.4f} sz {rc[1]:.3f}/{rg[1]:.3f}")
         ok = ok and same
 
     print("\n" + ("PASS" if ok else "FAIL") + "  MS-CS GPU parity")

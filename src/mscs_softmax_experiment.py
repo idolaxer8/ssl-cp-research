@@ -44,9 +44,46 @@ import torch
 
 from conformal_prediction import FullConformalPredictor, create_ncm, PrototypeSoftmaxNCM
 from exchangeable_features import make_transform
-from mscs_unlabeled_experiment import build_cluster_similarity_matrix, run_fcp_with_mscs
+from mscs_unlabeled_experiment import (
+    build_cluster_similarity_matrix, run_fcp_with_mscs,
+    build_centroid_similarity_matrix, update_centroid_M_for_candidate,
+    build_prototype_similarity_matrix, update_prototype_M_for_candidate,
+)
 
 SOFTMAX_NCMS = {"prototype_softmax"}   # ridge_softmax MS-CS is not wired -> excluded
+
+
+def build_M_and_run_kwargs(similarity, Xu_t, Xc, yc, allc, args, tau_arg):
+    """Build the MS-CS similarity matrix M + the run_fcp_with_mscs kwargs for the
+    chosen --similarity mode. All three modes are exactly exchangeable here
+    (per-candidate M update); they differ only in how class similarity is defined:
+      cluster   : k-means on the unlabeled pool (Fargion-style; needs Xu_t).
+      centroid  : cal class-centroid Gaussian kernel (cal-only, no pool).
+      prototype : cosine between class-mean prototypes (softmax-NATIVE; the
+                  prototype NCM's own logit geometry, M = Gram of its prototypes).
+    Returns (M, run_kwargs) where run_kwargs feeds run_fcp_with_mscs(... **kwargs).
+    """
+    if similarity == "cluster":
+        (M, c2c, eff_tau, med_d2, cc, cn, uc, ud) = build_cluster_similarity_matrix(
+            Xu_t, Xc, yc, allc, args.n_clusters_mscs, tau=tau_arg)
+        return M, dict(similarity="cluster", class_centroids=cc, class_counts=cn,
+                       class_to_cluster=c2c, cluster_centroids=uc, cluster_dists=ud,
+                       effective_tau=eff_tau)
+    if similarity == "centroid":
+        (M, eff_tau, med_d2, cc, cn) = build_centroid_similarity_matrix(
+            Xc, yc, allc, tau=tau_arg)
+        upd = (lambda yc_idx, x, Mb: update_centroid_M_for_candidate(
+            cc, cn, eff_tau, yc_idx, x, Mb))
+        return M, dict(similarity="centroid", class_centroids=cc, class_counts=cn,
+                       effective_tau=eff_tau, update_M_fn=upd)
+    if similarity == "prototype":
+        cosine = (args.logit == "cosine")
+        M, csum, cnt, Pn = build_prototype_similarity_matrix(
+            Xc, yc, allc, cosine=cosine)
+        upd = (lambda yc_idx, x, Mb: update_prototype_M_for_candidate(
+            csum, cnt, Pn, cosine, yc_idx, x, Mb))
+        return M, dict(similarity="prototype", update_M_fn=upd)
+    raise ValueError(f"unknown similarity '{similarity}'")
 
 
 def balanced_split(y, allc, m_cal, m_test, rng):
@@ -106,6 +143,13 @@ def main():
     ap.add_argument("--whiten", default="cluster", choices=["cluster", "global", "none"])
     ap.add_argument("--n_clusters_whiten", type=int, default=100)
     ap.add_argument("--n_clusters_mscs", type=int, default=20)
+    ap.add_argument("--similarity", default="cluster",
+                    choices=["cluster", "centroid", "prototype"],
+                    help="MS-CS class-similarity M: 'cluster' (k-means on the "
+                         "unlabeled pool, default), 'centroid' (cal class-centroid "
+                         "Gaussian kernel, no pool), or 'prototype' (softmax-native "
+                         "cosine between class-mean prototypes; M = the prototype "
+                         "NCM's own logit Gram, label-free, exactly exchangeable).")
     ap.add_argument("--tau", type=float, default=0.5, help="MS-CS tau multiplier on median_d^2.")
     ap.add_argument("--yhat_mode", default="ncm", choices=["ncm", "1nn"])
     ap.add_argument("--logit", default="cosine", choices=["cosine", "dot"])
@@ -177,18 +221,15 @@ def main():
                         covs.append(float(np.mean([yt[i] in psets[i] for i in range(len(yt))])))
                         szs.append(float(np.mean([len(s) for s in psets])))
                     else:
-                        (M, c2c, eff_tau, med_d2, cc, cn, uc, ud
-                         ) = build_cluster_similarity_matrix(
-                            transform.Xu_transformed_, Xc, yc, allc,
-                            args.n_clusters_mscs, tau=tau_arg)
+                        M, run_kw = build_M_and_run_kwargs(
+                            args.similarity, transform.Xu_transformed_, Xc, yc,
+                            allc, args, tau_arg)
                         soft_kw = (dict(temperature=T_map[ncm_name], logit=args.logit)
                                    if is_soft else {})
                         cov, sz = run_fcp_with_mscs(
                             Xc, yc, Xt, yt, allc, ncm_name, args.alpha, lam, M,
                             exchangeable=True, yhat_mode=args.yhat_mode,
-                            class_centroids=cc, class_counts=cn, class_to_cluster=c2c,
-                            cluster_centroids=uc, cluster_dists=ud, effective_tau=eff_tau,
-                            device=args.device, **soft_kw)
+                            device=args.device, **run_kw, **soft_kw)
                         covs.append(cov); szs.append(sz)
                 cov_m, sz_m = float(np.mean(covs)), float(np.mean(szs))
                 if lam == 0.0:
@@ -200,7 +241,10 @@ def main():
                 print(f"  {ncm_name:20s} lam={lam:<5} cov={cov_m:.4f} sz={sz_m:7.3f} "
                       f"red={red:5.1f}%  ({time.time()-t0:.1f}s)")
 
-    out = os.path.join(args.output_dir, f"results_{args.dataset}.json")
+    # tag non-default similarity so prototype/centroid runs don't clobber the
+    # existing cluster-M results_<ds>.json
+    sim_tag = "" if args.similarity == "cluster" else f"_{args.similarity}"
+    out = os.path.join(args.output_dir, f"results_{args.dataset}{sim_tag}.json")
     with open(out, "w") as f:
         json.dump({"dataset": args.dataset, "config": vars(args), "rows": rows}, f, indent=2)
     print(f"\nSaved -> {out}")

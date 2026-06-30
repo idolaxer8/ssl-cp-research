@@ -87,6 +87,15 @@ DATASET_INFO = {
                 "'train'->trainval (~67/class, labeled pool), "
                 "'test'->test (~33/class, disjoint unlabeled pool).",
     },
+    "stanford_cars": {
+        "num_classes": 196,
+        "size": "variable (~360x240+)",
+        "note": "Stanford Cars (CLIP/CoOp transfer suite, like aircraft -- DINOv2 "
+                "struggles on the fine-grained car models). Official Stanford URL is "
+                "dead; loaded from the HF mirror tanganke/stanford_cars. "
+                "'train'->train (~41/class, labeled pool), "
+                "'test'->test (~41/class, disjoint unlabeled pool).",
+    },
     "miniimagenet": {
         "num_classes": 100,
         "size": "84x84",
@@ -165,6 +174,43 @@ def download_miniimagenet(args, output_dir):
     save_dataset_as_images(merged, output_dir, class_names, args.num_per_class)
 
 
+def download_stanford_cars(args, output_dir):
+    """Download Stanford Cars via the HuggingFace mirror tanganke/stanford_cars.
+
+    The official Stanford URL (ai.stanford.edu/~jkrause/cars) is dead and
+    torchvision's StanfordCars(download=True) no longer fetches anything, so we
+    use the community mirror. 196 fine-grained car models; train (~8144) and test
+    (~8041) share the SAME 196 classes, so -- like aircraft / mini-ImageNet --
+    'train' is the labeled pool and 'test' a naturally disjoint unlabeled pool.
+
+    A CLIP/CoOp transfer-suite set where frozen DINOv2 features do NOT separate the
+    fine-grained models well: the second 'DINOv2-struggles' multi-class scope-limit
+    dataset alongside FGVC-Aircraft.
+
+    Supports --split train|test (default: train).
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError("The 'datasets' library is required for Stanford Cars.\n"
+                          "Install with:  pip install datasets")
+
+    split = getattr(args, "split", "train") or "train"
+    hf_split = {"train": "train", "test": "test", "both": "train"}.get(split, "train")
+    print(f"\nDownloading Stanford Cars via HuggingFace tanganke/stanford_cars")
+    print(f"  HF split to materialize: {hf_split}")
+
+    ds_dict = load_dataset("tanganke/stanford_cars")
+    feat = ds_dict[hf_split].features["label"]
+    class_names = ([_sanitize_name(c) for c in feat.names]
+                   if hasattr(feat, "names") and feat.names
+                   else [f"class_{i:03d}" for i in range(196)])
+    print(f"  {len(class_names)} classes; {len(ds_dict[hf_split])} images in '{hf_split}'")
+
+    merged = [(row["image"], int(row["label"])) for row in ds_dict[hf_split]]
+    save_dataset_as_images(merged, output_dir, class_names, args.num_per_class)
+
+
 def download_tiny_imagenet(args, output_dir):
     """Download Tiny ImageNet-200 from Stanford and save in ImageFolder format.
 
@@ -240,15 +286,17 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Download dataset and save as images")
     parser.add_argument("--dataset", type=str, default="cifar10",
                        choices=["cifar10", "cifar100", "stl10", "eurosat", "flowers102",
-                                "cub200", "aircraft", "miniimagenet", "tiny_imagenet"],
+                                "cub200", "aircraft", "stanford_cars", "miniimagenet",
+                                "tiny_imagenet"],
                        help="Dataset to download")
     parser.add_argument("--output_dir", type=str, default=None,
                        help="Output directory (default: data/<dataset>)")
     parser.add_argument("--split", type=str, default="train",
                        choices=["train", "test", "both"],
                        help="Which split to download. cifar10/cifar100/stl10: train|test|both. "
-                            "miniimagenet/aircraft: 'train'->labeled pool, 'test'->disjoint "
-                            "unlabeled pool. Ignored for eurosat/flowers102/cub200.")
+                            "miniimagenet/aircraft/stanford_cars: 'train'->labeled pool, "
+                            "'test'->disjoint unlabeled pool. "
+                            "Ignored for eurosat/flowers102/cub200.")
     parser.add_argument("--num_per_class", type=int, default=None,
                        help="Limit number of images per class (None = all)")
     parser.add_argument("--download_dir", type=str, default="./dataset_download",
@@ -526,6 +574,8 @@ def main():
         download_cub200(args, output_dir)
     elif args.dataset == "aircraft":
         download_aircraft(args, output_dir)
+    elif args.dataset == "stanford_cars":
+        download_stanford_cars(args, output_dir)
     elif args.dataset == "miniimagenet":
         download_miniimagenet(args, output_dir)
     elif args.dataset == "tiny_imagenet":

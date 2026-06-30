@@ -220,6 +220,119 @@ def update_centroid_M_for_candidate(class_centroids, class_counts, effective_tau
     return M_updated
 
 
+# ---------------------------------------------------------------------------
+# Prototype-cosine (softmax-native) similarity matrix
+# ---------------------------------------------------------------------------
+# A score-ALIGNED class similarity for the MS-CS penalty: instead of clustering
+# the pool (cluster M) or a Gaussian kernel on Euclidean centroid distance
+# (centroid M), build M directly from the SAME geometry the prototype_softmax
+# NCM scores in -- the cosine between class-mean prototypes:
+#
+#     M[i, j] = cos(mu_i, mu_j),   mu_c = the cosine-normalised class-c prototype
+#
+# This is the prototype NCM's own logit geometry (cosine class means), so when
+# the NCM is prototype_softmax(logit="cosine") M is literally the Gram matrix of
+# its prototypes. Label-free in structure (no superclass labels, no k-means), and
+# exactly exchangeable: adding (x_test, yc) to the bag shifts ONLY class yc's
+# prototype, so only row/col yc of M changes (per-candidate update below).
+#
+# `cosine` matches the NCM's `logit` mode: cosine -> L2-normalise rows before
+# averaging (mean direction); dot -> raw class mean. M itself is always the
+# cosine similarity of the prototype vectors (range [-1, 1], diag 1). Pass
+# clip_negative=True to fold anti-correlated prototypes to 0 (M in [0, 1], the
+# cluster/centroid-M convention) instead of letting the penalty exceed lam.
+
+def _proto_from_sum(s, count, cosine, eps=1e-12):
+    """Prototype direction from a class sum-of-prepped-rows ``s`` over ``count``
+    members -- mirrors PrototypeSoftmaxNCM._proto. Returns None if degenerate."""
+    if count <= 0:
+        return None
+    if cosine:
+        nrm = float(np.linalg.norm(s))
+        return None if nrm < eps else s / nrm
+    return s / count
+
+
+def _unit(v, eps=1e-12):
+    nrm = float(np.linalg.norm(v))
+    return v / nrm if nrm >= eps else v
+
+
+def build_prototype_similarity_matrix(X_cal, y_cal, all_classes, cosine=True,
+                                      clip_negative=False, eps=1e-12):
+    """Softmax-native class similarity M[i,j] = cos(mu_i, mu_j) from prototypes.
+
+    The prototypes are class means in the SAME prepped space the prototype NCM
+    uses (``cosine=True`` -> L2-normalise each cal row first, then the class-mean
+    direction). A class ABSENT from cal gets a ZERO prototype -> M[absent, j] = 0
+    (maximally dissimilar; penalty = lam, mirroring the missing-class score=1.0
+    rule). A constant (data-independent) absent prototype is what keeps the
+    per-candidate update EXACTLY exchangeable -- a global-mean fallback would make
+    every absent class's prototype shift with the bag, which a row/col-yc update
+    cannot track.
+
+    Returns (M, class_sums, class_counts, prototypes_unit) where:
+        M               : (n_classes, n_classes) cosine-similarity matrix, diag 1
+        class_sums      : (n_classes, d) sum of PREPPED cal rows per class
+                          (state for the exchangeable per-candidate update)
+        class_counts    : (n_classes,) per-class cal sample counts
+        prototypes_unit : (n_classes, d) L2-normalised prototype directions
+    """
+    classes = all_classes
+    n_classes = len(classes)
+    Z = np.asarray(X_cal, dtype=np.float64)
+    if cosine:
+        Z = Z / np.maximum(np.linalg.norm(Z, axis=1, keepdims=True), eps)
+    d = Z.shape[1]
+
+    class_sums = np.zeros((n_classes, d))
+    class_counts = np.zeros(n_classes)
+    for i, c in enumerate(classes):
+        mask = y_cal == c
+        class_counts[i] = int(mask.sum())
+        class_sums[i] = Z[mask].sum(axis=0)
+
+    protos = np.zeros((n_classes, d))
+    for i in range(n_classes):
+        p = _proto_from_sum(class_sums[i], class_counts[i], cosine, eps)
+        if p is not None:                   # absent/degenerate -> zero proto (M row 0)
+            protos[i] = p
+    # cosine similarity of prototype vectors (unit-normalise so dot == cosine)
+    protos_unit = protos / np.maximum(np.linalg.norm(protos, axis=1, keepdims=True), eps)
+    M = protos_unit @ protos_unit.T
+    if clip_negative:
+        M = np.maximum(M, 0.0)
+    np.fill_diagonal(M, 1.0)
+    return M, class_sums, class_counts, protos_unit
+
+
+def update_prototype_M_for_candidate(class_sums, class_counts, prototypes_unit,
+                                     cosine, yc_idx, x_test, M_base,
+                                     clip_negative=False, eps=1e-12):
+    """Exchangeable update of the prototype-cosine M when (x_test, yc) is added.
+
+    Adding (x_test, yc) to the bag shifts ONLY class yc's prototype:
+        sum_yc' = sum_yc + prep(x_test);  mu_yc' = direction(sum_yc', n_yc + 1)
+    so only row/col yc of M changes: M[yc, j] = cos(mu_yc', mu_j).
+    """
+    z = np.asarray(x_test, dtype=np.float64)
+    if cosine:
+        z = _unit(z, eps)
+    new_sum = class_sums[yc_idx] + z
+    new_proto = _proto_from_sum(new_sum, class_counts[yc_idx] + 1.0, cosine, eps)
+    if new_proto is None:
+        return M_base
+    new_proto = _unit(new_proto, eps)
+    sims = prototypes_unit @ new_proto       # cos(mu_yc', mu_j) for all j
+    if clip_negative:
+        sims = np.maximum(sims, 0.0)
+    M_updated = M_base.copy()
+    M_updated[yc_idx, :] = sims
+    M_updated[:, yc_idx] = sims
+    M_updated[yc_idx, yc_idx] = 1.0
+    return M_updated
+
+
 def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                       alpha, lam, M, exchangeable=False,
                       class_centroids=None, class_counts=None,
@@ -227,7 +340,7 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                       cluster_dists=None, effective_tau=None,
                       return_sets=False, update_M_fn=None, yhat_mode="ncm",
                       allow_nonexchangeable=False, device="cpu", gpu_batch_size=128,
-                      temperature=None, logit="cosine"):
+                      temperature=None, logit="cosine", similarity="cluster"):
     """Run FCP with MS-CS continuous penalty.
 
     Args:
@@ -254,6 +367,14 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
             fixed-ŷ/M penalty used when exchangeable=False. exchangeable=True with
             an unwhitened NCM (from an unlabeled-pool transform) is exact and needs
             no approval.
+        similarity: Which M the penalty uses ("cluster" | "centroid" | "prototype").
+            The CPU loop is similarity-agnostic (it reads M + update_M_fn directly);
+            this only tells the GPU dispatch which fast path applies. "cluster" ->
+            built-in cluster-centroid-shift update (update_M_fn must be None).
+            "prototype" -> the prototype NCM's softmax-native cosine-prototype M,
+            computed internally on GPU from the NCM's own prototypes (the passed
+            update_M_fn is used by the CPU fallback only). "centroid" has no GPU
+            path -> MSCSGpuUnsupported -> CPU fallback.
     """
     # The exchangeable=False MS-CS penalty freezes ŷ/M at fit() time rather than
     # recomputing them on the augmented bag per candidate -> O(1/n) break.
@@ -282,6 +403,7 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
             return gpu_fn(
                 cp, X_cal, y_cal, X_test, y_test, all_classes, alpha, lam, M,
                 exchangeable=exchangeable, yhat_mode=yhat_mode, update_M_fn=update_M_fn,
+                similarity=similarity,
                 class_centroids=class_centroids, class_counts=class_counts,
                 class_to_cluster=class_to_cluster, cluster_centroids=cluster_centroids,
                 cluster_dists=cluster_dists, effective_tau=effective_tau,
