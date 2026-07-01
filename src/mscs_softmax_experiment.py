@@ -48,6 +48,7 @@ from mscs_unlabeled_experiment import (
     build_cluster_similarity_matrix, run_fcp_with_mscs,
     build_centroid_similarity_matrix, update_centroid_M_for_candidate,
     build_prototype_similarity_matrix, update_prototype_M_for_candidate,
+    build_centered_cosine_similarity_matrix, update_centered_cosine_M_for_candidate,
 )
 
 SOFTMAX_NCMS = {"prototype_softmax"}   # ridge_softmax MS-CS is not wired -> excluded
@@ -61,6 +62,10 @@ def build_M_and_run_kwargs(similarity, Xu_t, Xc, yc, allc, args, tau_arg):
       centroid  : cal class-centroid Gaussian kernel (cal-only, no pool).
       prototype : cosine between class-mean prototypes (softmax-NATIVE; the
                   prototype NCM's own logit geometry, M = Gram of its prototypes).
+      centered_cosine : FAITHFUL Fargion MS (their §5): cosine of the CENTERED
+                  class means, cos(h_c-h_G, h_c'-h_G), h_c from cal (score-aligned),
+                  h_G = prepped-pool global mean (needs Xu_t; bag-independent -> the
+                  update stays exactly exchangeable).
     Returns (M, run_kwargs) where run_kwargs feeds run_fcp_with_mscs(... **kwargs).
     """
     if similarity == "cluster":
@@ -83,6 +88,14 @@ def build_M_and_run_kwargs(similarity, Xu_t, Xc, yc, allc, args, tau_arg):
         upd = (lambda yc_idx, x, Mb: update_prototype_M_for_candidate(
             csum, cnt, Pn, cosine, yc_idx, x, Mb))
         return M, dict(similarity="prototype", update_M_fn=upd)
+    if similarity == "centered_cosine":
+        cosine = (args.logit == "cosine")
+        clipneg = getattr(args, "clip_negative", False)
+        M, csum, cnt, Vu, hG = build_centered_cosine_similarity_matrix(
+            Xc, yc, allc, Xu_t, cosine=cosine, clip_negative=clipneg)
+        upd = (lambda yc_idx, x, Mb: update_centered_cosine_M_for_candidate(
+            csum, cnt, Vu, hG, cosine, yc_idx, x, Mb, clip_negative=clipneg))
+        return M, dict(similarity="centered_cosine", update_M_fn=upd)
     raise ValueError(f"unknown similarity '{similarity}'")
 
 
@@ -144,12 +157,18 @@ def main():
     ap.add_argument("--n_clusters_whiten", type=int, default=100)
     ap.add_argument("--n_clusters_mscs", type=int, default=20)
     ap.add_argument("--similarity", default="cluster",
-                    choices=["cluster", "centroid", "prototype"],
+                    choices=["cluster", "centroid", "prototype", "centered_cosine"],
                     help="MS-CS class-similarity M: 'cluster' (k-means on the "
                          "unlabeled pool, default), 'centroid' (cal class-centroid "
-                         "Gaussian kernel, no pool), or 'prototype' (softmax-native "
+                         "Gaussian kernel, no pool), 'prototype' (softmax-native "
                          "cosine between class-mean prototypes; M = the prototype "
-                         "NCM's own logit Gram, label-free, exactly exchangeable).")
+                         "NCM's own logit Gram, label-free, exactly exchangeable), "
+                         "or 'centered_cosine' (FAITHFUL Fargion MS §5: cosine of "
+                         "CENTERED class means cos(h_c-h_G, h_c'-h_G); h_G = "
+                         "prepped-pool global mean, needs the unlabeled pool).")
+    ap.add_argument("--clip_negative", action="store_true",
+                    help="centered_cosine/prototype: fold anti-correlated classes "
+                         "(M<0) to 0 (ablation; default off = signed [-1,1], faithful).")
     ap.add_argument("--tau", type=float, default=0.5, help="MS-CS tau multiplier on median_d^2.")
     ap.add_argument("--yhat_mode", default="ncm", choices=["ncm", "1nn"])
     ap.add_argument("--logit", default="cosine", choices=["cosine", "dot"])

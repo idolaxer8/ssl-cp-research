@@ -333,6 +333,105 @@ def update_prototype_M_for_candidate(class_sums, class_counts, prototypes_unit,
     return M_updated
 
 
+# ---------------------------------------------------------------------------
+# Centered-cosine (faithful Fargion MS, their §5) similarity matrix
+# ---------------------------------------------------------------------------
+# The paper-FAITHFUL Model-Specific M: cosine of the CENTERED class means,
+#
+#     M[c,c'] = cos(h_c - h_G, h_c' - h_G),
+#
+# where h_c is the class-c mean and h_G the "global" mean. Fargion et al. center
+# by the mean of the class means on a labeled TRAINING set. We adapt it to our
+# transductive, frozen-SSL, few-shot regime:
+#   * h_c : score-aligned class means from CAL, in the SAME prepped space the
+#           prototype_softmax NCM scores in (cosine -> L2-normalise rows before
+#           averaging).
+#   * h_G : mean of the PREPPED UNLABELED-POOL rows, fit ONCE offline. The pool is
+#           independent of cal+test, so h_G is a bag-independent constant; the
+#           per-candidate update then shifts ONLY the candidate class's h_c (row/col
+#           yc) and stays EXACTLY exchangeable -- no O(1/(Cn)) slack a cal-fit h_G
+#           would carry. (The pool global mean equals the paper's mean-of-class-means
+#           only under class balance; our pool is stratified, so it is a close
+#           label-free proxy.)
+# M is the signed cosine in [-1, 1] (diag 1). clip_negative folds anti-correlated
+# classes to 0 (an ABLATION -- it discards the anti-correlation signal the paper
+# keeps; note an affine [0,1] remap (1+M)/2 is identical up to lambda -> 2*lambda).
+# An ABSENT class gets a ZERO centered vector -> M row 0 (bag-independent, keeps the
+# update exchangeable), mirroring the prototype-M missing-class convention.
+
+def build_centered_cosine_similarity_matrix(X_cal, y_cal, all_classes, X_pool,
+                                            cosine=True, clip_negative=False, eps=1e-12):
+    """Faithful centered class-mean cosine M (Fargion §5), h_G fit on the pool.
+
+    Returns (M, class_sums, class_counts, centered_unit, h_G) where:
+        M             : (n_classes, n_classes) cosine of centered class means, diag 1
+        class_sums    : (n_classes, d) sum of PREPPED cal rows per class (update state)
+        class_counts  : (n_classes,) per-class cal counts
+        centered_unit : (n_classes, d) L2-normalised centered class means (M = Gram)
+        h_G           : (d,) prepped-pool global mean (bag-independent centering point)
+    """
+    classes = all_classes
+    n_classes = len(classes)
+    Z = np.asarray(X_cal, dtype=np.float64)
+    if cosine:
+        Z = Z / np.maximum(np.linalg.norm(Z, axis=1, keepdims=True), eps)
+    d = Z.shape[1]
+
+    # h_G from the (prepped) unlabeled pool -- a constant, independent of cal+test.
+    ZP = np.asarray(X_pool, dtype=np.float64)
+    if cosine:
+        ZP = ZP / np.maximum(np.linalg.norm(ZP, axis=1, keepdims=True), eps)
+    h_G = ZP.mean(axis=0)
+
+    class_sums = np.zeros((n_classes, d))
+    class_counts = np.zeros(n_classes)
+    for i, c in enumerate(classes):
+        mask = y_cal == c
+        class_counts[i] = int(mask.sum())
+        class_sums[i] = Z[mask].sum(axis=0)
+
+    V = np.zeros((n_classes, d))
+    for i in range(n_classes):
+        if class_counts[i] > 0:
+            V[i] = class_sums[i] / class_counts[i] - h_G       # centered class mean
+        # absent class -> V[i] stays 0 (bag-independent) -> M row 0
+    V_unit = V / np.maximum(np.linalg.norm(V, axis=1, keepdims=True), eps)
+    M = V_unit @ V_unit.T
+    if clip_negative:
+        M = np.maximum(M, 0.0)
+    np.fill_diagonal(M, 1.0)
+    return M, class_sums, class_counts, V_unit, h_G
+
+
+def update_centered_cosine_M_for_candidate(class_sums, class_counts, centered_unit,
+                                           h_G, cosine, yc_idx, x_test, M_base,
+                                           clip_negative=False, eps=1e-12):
+    """Exchangeable update of the centered-cosine M when (x_test, yc) is added.
+
+    h_G is constant (pool-fit), so adding (x_test, yc) shifts ONLY class yc's
+    centered mean: h_yc' = (sum_yc + prep(x_test)) / (n_yc + 1); v_yc' = h_yc' - h_G.
+    Only row/col yc change: M[yc, j] = cos(v_yc', v_j). Matches a full rebuild on
+    the augmented bag (see tests/test_mscs_gpu_parity.py).
+    """
+    z = np.asarray(x_test, dtype=np.float64)
+    if cosine:
+        z = _unit(z, eps)
+    new_mean = (class_sums[yc_idx] + z) / (class_counts[yc_idx] + 1.0)
+    new_v = new_mean - h_G
+    nrm = float(np.linalg.norm(new_v))
+    if nrm < eps:
+        return M_base
+    new_v_unit = new_v / nrm
+    sims = centered_unit @ new_v_unit          # cos(v_yc', v_j) for all j
+    if clip_negative:
+        sims = np.maximum(sims, 0.0)
+    M_updated = M_base.copy()
+    M_updated[yc_idx, :] = sims
+    M_updated[:, yc_idx] = sims
+    M_updated[yc_idx, yc_idx] = 1.0
+    return M_updated
+
+
 def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
                       alpha, lam, M, exchangeable=False,
                       class_centroids=None, class_counts=None,
@@ -367,10 +466,12 @@ def run_fcp_with_mscs(X_cal, y_cal, X_test, y_test, all_classes, ncm_name,
             fixed-ŷ/M penalty used when exchangeable=False. exchangeable=True with
             an unwhitened NCM (from an unlabeled-pool transform) is exact and needs
             no approval.
-        similarity: Which M the penalty uses ("cluster" | "centroid" | "prototype").
-            The CPU loop is similarity-agnostic (it reads M + update_M_fn directly);
-            this only tells the GPU dispatch which fast path applies. "cluster" ->
-            built-in cluster-centroid-shift update (update_M_fn must be None).
+        similarity: Which M the penalty uses ("cluster" | "centroid" | "prototype"
+            | "centered_cosine"). The CPU loop is similarity-agnostic (it reads M +
+            update_M_fn directly); this only tells the GPU dispatch which fast path
+            applies. "cluster" -> built-in cluster-centroid-shift update (update_M_fn
+            must be None). "centered_cosine" (faithful Fargion MS §5) has no GPU path
+            yet -> MSCSGpuUnsupported -> exact CPU loop (uses the passed update_M_fn).
             "prototype" -> the prototype NCM's softmax-native cosine-prototype M,
             computed internally on GPU from the NCM's own prototypes (the passed
             update_M_fn is used by the CPU fallback only). "centroid" has no GPU

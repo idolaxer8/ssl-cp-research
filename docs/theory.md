@@ -184,48 +184,121 @@ sense above (whitening is the `O(1/n)` cal-fit term of §1).
 
 ## 3. Add-on B — MS-CS class-similarity penalty (formalized vs Fargion)
 
-### 3.1 Reference: MA-CS (Fargion, Dabah & Tirer 2025, arXiv:2511.19359)
+### 3.1 Reference: Fargion, Dabah & Tirer 2025 (arXiv:2511.19359) — TWO variants
 
-Fargion et al. add a group-error penalty to the score. With a semantic grouping
-`g : [K] → [G]` they define a **binary** dissimilarity and penalized score:
+Fargion et al. penalize any base score `s(x,y)` by a class-distance term, using
+the model's predicted label `ŷ(x) = argmax_i π̂_i(x)` (softmax argmax, their
+§3). They give **two** ways to build the class distance, both deployed in
+**split CP**:
+
+**MA — Model-Agnostic (their §4).** A *known* human partition `g : [C] → [G]`
+(superclasses); **binary** out-of-group penalty:
 
 ```
 d(y, y') = 𝟙{ g(y) ≠ g(y') }                                       (Fargion Eq. 1)
 s_λ(x, y) = s(x, y) + λ · d( y, ŷ(x) )                             (Fargion Eq. 2)
 ```
 
-where `ŷ(x)` is the predicted (1-NN) label. Their validity claim
-(their Thm 3.1, after Vovk et al.): *`s_λ` is itself a valid nonconformity
-score, so it inherits the coverage guarantee* — the penalty changes *which*
-sets you get, never *whether* they cover. In their **split-CP** setting this is
-immediate: any fixed deterministic transform of a valid score is a valid score.
-
-### 3.2 Our MS-CS: label-free, continuous, data-driven `M`
-
-We remove the need for a human taxonomy `g`. Build a **class-similarity matrix**
-`M ∈ [0,1]^{K×K}` from k-means on the unlabeled pool `U`
-(`build_cluster_similarity_matrix`):
+**MS — Model-Specific (their §5).** *No human partition.* A continuous
+`M ∈ [−1,1]^{C×C}` from the trained classifier's penultimate features `h_θ(·)`
+on **labeled training data** — the cosine of the **centered class means**:
 
 ```
-1. k-means(U) → cluster centroids {μ_1, …, μ_C}, assignment a: [C clusters].
-2. class centroid  c̄_y = mean{ X_i : Y_i = y }     (from cal; global mean if absent)
-3. class→cluster   κ(y) = argmin_c ‖ c̄_y − μ_c ‖
-4. M[y, y'] = 1                       if y = y' or κ(y) = κ(y')          (same cluster)
-            = exp( −‖μ_{κ(y)} − μ_{κ(y')}‖² / τ )   otherwise           (Gaussian kernel)
-   with τ = (scale) · median pairwise squared inter-cluster distance.
+h_c = mean{ h_θ(x) : label = c }            class-c feature mean
+h_G = (1/C) Σ_c h_c                          "global" = mean of the class means
+M[c,c'] = ⟨ h_c − h_G , h_c' − h_G ⟩ / ( ‖h_c − h_G‖ · ‖h_c' − h_G‖ )   (their §5)
+d_MS(y, y') = 1 − M[y, y']                                          (Fargion Eq. 5)
+s_MS_λ(x, y) = s(x, y) + λ · d_MS( y, ŷ(x) )                        (Fargion Eq. 6)
 ```
 
-`M` is symmetric, `M[y,y] = 1`. The penalized score generalizes Fargion's
-binary `d` to the continuous **dissimilarity** `1 − M`:
+`M[c,c]=1`. Centering by `h_G` (the mean of class means — *not* the global
+sample mean) removes the common component so the cosines spread out; motivated
+by neural collapse (Papyan et al. 2020). Validity (their Thm 3.1, after
+Angelopoulos–Bates / Vovk): both `s_λ` and `s_MS_λ` are fixed deterministic
+transforms of a valid score, computed identically on cal and test, with `M` on a
+*disjoint training set* and `ŷ` a model output — so in split CP exchangeability
+holds immediately and **no per-candidate update is ever needed**.
+
+### 3.2 Our penalty implementations — and their fidelity to the paper
+
+We have several `M` constructions. Exactly one is faithful to a paper variant;
+the embedding-based ones we introduced are *different* matrices (and one was
+originally mis-described as "their MS-CS"):
+
+| Construction (`--similarity`) | What `M` is | Faithful? |
+|---|---|---|
+| `macs_experiment.py` (binary) | `𝟙{g(y)=g(y')}`, CIFAR-100 20-superclass taxonomy | **Yes — their MA (Eq. 1–2).** |
+| `cluster` (`mscs_unlabeled`, default) | k-means on unlabeled pool → cluster co-assignment + Gaussian kernel of inter-*cluster* distance, `M∈[0,1]` | **No** — our own quantized, label-free matrix. |
+| `centroid` (`mscs_unlabeled`) | `exp(−‖c̄_y−c̄_y'‖²/τ)` from cal class centroids | **No** — Euclidean-kernel baseline, not a cosine. |
+| `prototype` (branch `worktree-aircraft-cs-splitcp`) | `cos(μ_y, μ_y')`, **un-centered** cosine of (prototype-NCM) class means | **Close but No** — missing the `h_G` centering. |
+| `centered_cosine` (**planned, §3.2.1**) | `cos(h_y−h_G, h_y'−h_G)` | **Yes — their MS (their §5).** |
+
+The k-means `cluster` matrix is what §3.3–§5 and findings §4 analyze. Its
+penalized score is
 
 ```
-s_λ(x, y) = s(x, y) + λ · ( 1 − M[ y, ŷ(x) ] ),    ŷ(x) = 1-NN label.    (Eq. 3)
+s_λ(x, y) = s(x, y) + λ · ( 1 − M[ y, ŷ(x) ] ),   ŷ(x) = NCM-argmax or 1-NN.   (Eq. 3)
 ```
 
-Fargion's MA-CS is the special case `M[y,y'] = 𝟙{g(y)=g(y')}` (cluster = group).
-Best config: `λ = 0.05`, `C = 20` clusters, clustering in PCA-128 space
-(findings §4). Gives 8–9% set reduction over FCP+PCA in the small-cal regime,
-beating binary MA-CS by 2–7% with **no taxonomy labels**.
+**Correction to our earlier framing.** We previously called "a continuous,
+partition-free, embedding-derived `M`" *our* generalization of Fargion's binary
+`d`. That is **their MS variant**, not ours — they already drop the taxonomy and
+already use a continuous embedding `M`. What is genuinely ours: (i) **Full /
+transductive CP** with an *exact exchangeable per-candidate `M`+`ŷ` update*
+(§3.3) — they never need it (split CP, `M` on disjoint training data); (ii) the
+**frozen-SSL, few-shot, many-class** regime with *no trained classifier* and a
+scarce label budget (their MS needs a trained classifier's penultimate space + a
+labeled training set); (iii) applying the penalty to **geodesic / geometry
+NCMs**, not only softmax LAC/RAPS/SAPS; and (iv) the **label-free k-means `M`**
+as an alternative construction — kept or dropped pending the faithful-`M`
+comparison.
+
+#### 3.2.1 Planned faithful port (`centered_cosine`) — locked design
+
+`M[c,c'] = cos(h_c − h_G, h_c' − h_G)`, `ŷ` = NCM/softmax argmax. Design decisions:
+
+- **Score-aligned `h_c`.** Use the `prototype_softmax(cosine)` NCM's own
+  cosine-prepped class-mean prototypes as `h_c` (from cal), so `M` is built from
+  the exact geometry the score ranks in. (We have no separate trained-classifier
+  training set, so cal supplies the class means.)
+- **`h_G` from the unlabeled pool → exactly exchangeable.** Fit `h_G` = mean of
+  the (cosine-prepped) **unlabeled-pool** embeddings, once, offline. Because the
+  pool is independent of cal+test, `h_G` is a constant w.r.t. the augmented bag,
+  so each centered prototype `h_c − h_G` is a symmetric function of the bag and
+  the per-candidate update shifts **only the candidate class's `h_c`** (row/col
+  `yc`) — identical to the un-centered `prototype` update, but with prototypes
+  pre-offset by the constant `h_G`. This is **exact** (no `O(1/(Cn))` slack that a
+  cal-frozen `h_G` would carry), up to the base NCM's own `O(1/n)`. Caveat: the
+  pool *global* mean equals the paper's *mean-of-class-means* only under class
+  balance; our pool is stratified, so it is a close label-free proxy (the exact
+  `h_G` would need pool labels we don't have).
+- **Range = signed `[−1,1]` (faithful).** `1 − M ∈ [0,2]`, no clamp. An affine
+  remap `M' = (1+M)/2 ∈ [0,1]` gives `1 − M' = (1−M)/2`, i.e. the *identical*
+  penalty under `λ → 2λ` — same sets, not a real alternative. The only `[0,1]`
+  choice that changes anything is relu-clipping negatives, which collapses
+  orthogonal and anti-correlated classes to the same penalty and discards the
+  anti-correlation signal the paper keeps (kept only as a `clip_negative`
+  ablation). Softmax-alignment comes from the shared prototype geometry + `λ`
+  tuning, **not** from `M`'s numeric range.
+
+Only new ingredient over the existing `prototype` mode: subtract the pool `h_G`
+before the normalized Gram.
+
+**Result (CIFAR-100, prototype_softmax, PCA-128, 2 trials, 2026-07-01).** The
+centered `M` is a **no-op for the softmax head — indistinguishable from the
+un-centered `prototype` M**. Head-to-head under identical splits: at cal=800 both
+give −0.2 to −0.9% at λ ≤ 0.1 (sz 1.25); at cal=200 both *bloat* identically
+(prototype −63.5% vs centered −66.0% at λ = 0.1). Centering removes only the
+near-constant off-diagonal offset (mean +0.146 → −0.007) that the quantile
+already absorbs — the *spread* is unchanged, so the sets don't move. This
+**confirms the goal-1 hypothesis and rules out the alternative**: the penalty's
+`M` is redundant with a prototype-cosine softmax score whether or not it is the
+paper-faithful centered form — it was *not* our unfaithful M that killed the
+effect. The small-cal bloat is the paper's large-cal-assumption breakdown
+(Assumption 1), shared by every M (regime, not bug). Net: the class-similarity
+penalty stays a **geodesic-NCM lever**, not a softmax one; keep the k-means
+`cluster` M for geodesic. Exactness is intact regardless (update == rebuild
+1.7e-16, `tests/test_mscs_gpu_parity.py`).
 
 ### 3.3 Validity of MS-CS — split CP vs Full CP (the subtle part)
 
@@ -430,7 +503,7 @@ the head is undertrained.
 - Neighborhood CP — Ghosh et al., **AAAI 2023** (arXiv:2303.10694) — k-NN distance NCM + distance-weighted adaptive sets; prior art our NN-ratio cites and competes with. (baseline)
 
 **E. Class-similarity penalty** — *our MS-CS add-on (§3).*
-- MA-CS — Fargion, Dabah & Tirer 2025 (arXiv:2511.19359) — binary superclass penalty; MS-CS (§3.2) generalizes its d(y, y') to a continuous, label-free, cluster-derived 1 − M. (reference / the thing we extend)
+- Fargion, Dabah & Tirer 2025 (arXiv:2511.19359, ICML 2026) — **two** class-similarity penalty variants: MA (binary superclass `d`, §4) and MS (continuous `1 − M`, `M` = cosine of **centered** class means, §5; no taxonomy). Our `macs_experiment.py` reproduces MA; their MS is the faithful target the `centered_cosine` port implements (§3.2.1). The k-means `cluster` M is our own construction, **not** their MS. (reference / partly reproduce, partly extend)
 
 **F. VLM / zero-shot transductive CP — the Silva-Rodriguez line** — *nearest setting, but text-based; we are pure SSL with no text encoder.* The FCA skeleton inspires the text-free prototype/ridge rungs in §4.1.
 - FCA — Silva-Rodriguez et al., **IPMI 2025** (arXiv:2506.06076) — full-CP adaptation with an SS-Text linear probe.

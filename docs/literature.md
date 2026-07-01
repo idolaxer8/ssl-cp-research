@@ -16,7 +16,7 @@ Legend: `[ ]` unread · `[~]` in progress · `[x]` read · `*` closest setting
 
 ## 2. Directly Adjacent Work — Closest Settings
 
-The Silva-Rodriguez et al. trilogy is the nearest neighbour to our work: transductive, split-free CP on frozen foundation-model embeddings, few-shot calibration, optimizing set size. They win via **feature/probe adaptation** (info-max, SS-Text, OT) to close the pretrain->task gap; we keep the backbone frozen and win via **SSL-geometry NCM + unlabeled-pool PCA + label-free MS-CS**. They are VLM/zero-shot (often medical); we are pure SSL (DINOv2) on many-class natural images.
+The Silva-Rodriguez et al. trilogy is the nearest neighbour to our work: transductive, split-free CP on frozen foundation-model embeddings, few-shot calibration, optimizing set size. They win via **feature/probe adaptation** (info-max, SS-Text, OT) to close the pretrain->task gap; we keep the backbone frozen and win via **SSL-geometry NCM + unlabeled-pool PCA + a class-similarity penalty (MS-CS, adapted from Fargion et al. to transductive FCP)**. They are VLM/zero-shot (often medical); we are pure SSL (DINOv2) on many-class natural images.
 
 | Status | Paper | Venue | Year | Link | Notes |
 |---|---|---|---|---|---|
@@ -26,7 +26,7 @@ The Silva-Rodriguez et al. trilogy is the nearest neighbour to our work: transdu
 | [~] | **Fillioux, Cherian et al.** — "Are Foundation Models Good Conformal Predictors?" | arXiv | 2024 | [arXiv:2412.06082](https://arxiv.org/abs/2412.06082) | Survey-style closest work. 17 FMs + Split CP only. We differ: Full CP, geodesic NCMs, few-shot regime. |
 | [ ] | **Fisch et al.** — "Few-Shot Conformal Prediction with Auxiliary Tasks" | ICML | 2021 | [arXiv:2102.08898](https://arxiv.org/abs/2102.08898) | Seminal few-shot CP (meta-learning). We extend with SSL embeddings instead. |
 | [ ] | **Angelopoulos et al.** — "Uncertainty Sets for Image Classifiers" (RAPS) | ICLR | 2021 | [arXiv:2009.14193](https://arxiv.org/abs/2009.14193) | RAPS baseline. **Must implement for paper.** |
-| [~] | **Fargion, Dabah & Tirer** — "Enhancing CP via Class Similarity" (MA-CS) | arXiv | 2025 | [arXiv:2511.19359](https://arxiv.org/abs/2511.19359) | MA-CS penalty theory. We validate in FCP + geodesic NCMs. |
+| [x] | **Fargion, Dabah & Tirer** — "Enhancing CP via Class Similarity" (MA-CS / MS-CS) | ICML | 2026 | [arXiv:2511.19359](https://arxiv.org/abs/2511.19359) | **Read 2026-06-30.** TWO variants: **MA** (binary superclass penalty, §4) + **MS** (continuous `1−M`, `M`=cosine of **centered** class means `cos(h_c−h_G, h_c'−h_G)`, §5; no taxonomy). Split CP, `M` on disjoint training data → no per-candidate update. Our `macs_experiment.py` = faithful MA; our k-means `mscs_unlabeled` is a DIFFERENT M (not their MS). Faithful MS port (`centered_cosine`) planned; theory §3.1–3.2.1. |
 | [ ] | **Fan & Sesia** — "Transductive Standardization in CP" | arXiv | 2025 | [arXiv:2512.15383](https://arxiv.org/abs/2512.15383) | Supports our O(1/n) exchangeability argument for whitened NCMs. |
 
 ---
@@ -115,7 +115,7 @@ The Silva-Rodriguez et al. trilogy is the nearest neighbour to our work: transdu
 **vs Silva-Rodriguez trilogy (FCA / Conf-OT / SCA-T):**
 1. **Frozen backbone, no feature adaptation** — they adapt features/probe (info-max, SS-Text, OT); we change *only* the NCM + an unsupervised PCA, keeping DINOv2 fully frozen.
 2. **SSL geometry, not VLM zero-shot** — geodesic NN-ratio NCM for hyperspherical DINOv2 embeddings; they use a text-derived linear classifier.
-3. **Label-free class-similarity penalty (MS-CS)** — none of the three use a similarity penalty.
+3. **Class-similarity penalty (MS-CS)** — none of the three use a similarity penalty. (We adapt Fargion et al.'s MS-CS to transductive Full CP; our k-means variant is additionally label-free. NB: Fargion's MS is *also* continuous + taxonomy-free — see §2 — so the differentiator vs *them* is the transductive/Full-CP exact-exchangeable port + geodesic NCMs, not "continuous, label-free".)
 4. **Many-class natural images at small cal/K** — CIFAR-100/miniImageNet/CUB-200 (K>=100); they target medical (FCA/SCA-T) or generic VLM transfer.
 
 **vs Fillioux/Cherian (2024):** Full CP not Split CP; geodesic NCMs for SSL geometry; few-shot regime (k=3-5/class) they don't test; backbone-geometry analysis (DINOv2 > CLIP for NN-ratio CP).

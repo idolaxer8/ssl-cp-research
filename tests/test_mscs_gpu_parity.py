@@ -15,7 +15,8 @@ warnings.filterwarnings("ignore")
 from mscs_unlabeled_experiment import (  # noqa: E402
     build_cluster_similarity_matrix, build_centroid_similarity_matrix,
     update_centroid_M_for_candidate, build_prototype_similarity_matrix,
-    update_prototype_M_for_candidate, run_fcp_with_mscs)
+    update_prototype_M_for_candidate, run_fcp_with_mscs,
+    build_centered_cosine_similarity_matrix, update_centered_cosine_M_for_candidate)
 
 
 def gmm(K, per, d, seed, sep=4.0):
@@ -29,6 +30,40 @@ def gmm(K, per, d, seed, sep=4.0):
 
 def _sets(ret):
     return ret[2]
+
+
+def test_centered_cosine_exchangeability():
+    """CPU-only: the per-candidate centered-cosine M update equals a full rebuild
+    on the augmented bag (exact exchangeability). No CUDA needed. h_G is fit on an
+    independent pool, so only the candidate class's centered mean shifts."""
+    print("centered_cosine M: per-candidate update == rebuild-on-augmented-bag (CPU):")
+    K, d = 20, 32
+    allc = np.arange(K)
+    rng = np.random.default_rng(5)
+    Xu, _ = gmm(K, 40, d, seed=9)                    # independent pool for h_G
+    ok = True
+    for cosine in (True, False):
+        for drop in ((), (3, 11)):                   # incl. classes absent from cal
+            X, y = gmm(K, 8, d, seed=4)
+            keep = ~np.isin(y, drop)                  # drop classes -> absent from cal
+            Xc, yc = X[keep], y[keep]
+            M, csum, cnt, Vu, hG = build_centered_cosine_similarity_matrix(
+                Xc, yc, allc, Xu, cosine=cosine)
+            err = 0.0
+            for y_star in range(K):                   # candidate (x*, y_star), incl. absent
+                x_star = (rng.normal(size=d) * 4.0).astype(np.float32)
+                M_upd = update_centered_cosine_M_for_candidate(
+                    csum, cnt, Vu, hG, cosine, int(y_star), x_star, M)
+                Xa = np.vstack([Xc, x_star[None]])
+                ya = np.concatenate([yc, [y_star]])
+                M_reb, *_ = build_centered_cosine_similarity_matrix(
+                    Xa, ya, allc, Xu, cosine=cosine)
+                err = max(err, float(np.max(np.abs(M_upd - M_reb))))
+            good = err < 1e-9
+            print(f"  cosine={cosine!s:5} absent={len(drop)}: max|upd-reb|={err:.1e} "
+                  f"-> {'PASS' if good else 'FAIL'}")
+            ok = ok and good
+    return 0 if ok else 1
 
 
 def main():
@@ -103,4 +138,6 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    rc_cc = test_centered_cosine_exchangeability()   # CPU-only, always runs
+    rc_gpu = main()                                  # GPU parity, self-skips w/o CUDA
+    sys.exit(rc_cc or rc_gpu)
