@@ -43,16 +43,39 @@ and to confirm the limit is general, not Aircraft-specific.
   Stanford Cars, CUB-200, Oxford-Flowers-102 — we already have cub/flowers
   embeddings).
 
-### 3. Geometric-conditional coverage — audit the "worst" metric + per-class effect
+### 3. Geometric-conditional coverage — RESOLVED (worst metric + per-class effect)
 
-**Why.** The geometry-conditional pilot (topic 5) gave odd worst-stratum numbers.
-- **Audit the "worst-stratum coverage" definition** (the weird results): empty-bin /
-  singleton handling, empty sets counted, per-trial vs pooled, bin-edge sensitivity.
-  Re-confirm the worst-stratum 0.60/0.75 -> ~0.90 claim once the metric is clean.
-- **Check the solution's effect on per-CLASS coverage** (CovGap): does conditioning
-  on geometry leave class-conditional coverage unchanged, help it, or disturb it?
-  (Geometry and class are different axes — we need to know fixing one doesn't break
-  the other.)
+**Verdict.** Both bullets closed; the fix is **one-sided (coverage-monotone) Mondrian**.
+Full reference `docs/geometric_conditional_methods.md` + code on branch
+`worktree-novelty-pilots` (commits e57d0f9..2321d83; unified harness
+`src/geometric_methods_comparison.py`, 30-trial cifar100+mini).
+- **"worst" metric = coverage FLOOR (not weird, just mislabeled).** "worst-stratum
+  coverage" = MIN coverage over the G geometry strata = the field-standard safety floor
+  (worst-slice, Cauchois 2021; worst-class, Ding 2023) — higher = safer, target
+  >= 1-alpha. The odd-looking numbers were a LABEL trap: when a method OVER-covers, the
+  min stratum is the one CLOSEST to target, so calling it "worst" inverts the intuition
+  — renamed to **"coverage floor (min over strata)"**. `CovGap_geo` is TWO-SIDED (charges
+  over- AND under-coverage), so an over-covering method scores a nonzero gap with a
+  perfect floor. Metric is clean (min over G strata, pooled); floor lift 0.60/0.77 ->
+  ~0.90 confirmed at 30 trials.
+- **Per-class effect: hard Mondrian BREAKS the class axis; one-sided fixes BOTH.** Sparse
+  strata ARE the badly-covered classes (Spearman(class cov, sparseness) = -0.63 cifar /
+  -0.67 mini; worst classes at the 78th/87th sparseness pctile). BUT hard per-stratum
+  Mondrian equalizes the stratum MARGINAL by reallocating coverage to intrinsically-easy
+  classes -> **worst-class COLLAPSES** (mini cal=800: 0.625 -> 0.343) while CovGap_geo is
+  fixed. **One-sided Mondrian** — per point take the more lenient of {global, its-stratum}
+  threshold = `max(q_global, q_stratum)` = global set UNION stratum set — lifts sparse
+  strata to the floor WITHOUT lowering dense strata, fixing the geo floor AND improving
+  class coverage with no new victims (mini cal=800: floor 0.61 -> 0.91, worst-class 0.625
+  -> 0.775, best CovGap_class). Cost = marginal over-coverage (~0.94-0.98) + bigger sparse
+  sets — a floor guarantee MATHEMATICALLY requires some over-coverage (averaging arg).
+  **one-sided AUTO** = cal-calibrated shrinkage k0 (guarantee-first default, held the test
+  floor in 9/10 configs). **Shrinkage** buys back 15-49% set size at small cal. **RLCP
+  does NOT beat one-sided** (exact-marginal can't guarantee a floor; plain RLCP worst-class
+  0.367 on mini; monotone RLCP trades the floor guarantee for class-worst).
+- **Naming:** "Mondrian" (Vovk 2003) = general per-TAXONOMY-cell quantile, NOT per-class;
+  ours is the GEOMETRY/group-conditional taxonomy -> qualify as "Mondrian-over-geometry" /
+  "stratum-conditional" to avoid the per-class connotation.
 
 ### 4. CAOS (Waldron, arXiv:2601.05219) — finish review + literature sweep
 
