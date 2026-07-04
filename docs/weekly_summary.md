@@ -193,7 +193,11 @@ no-op at cal=400 (−0.2%) but +19% at cal=800 (milder than cluster, still no he
 Coverage holds ~0.89–0.90 (the earlier cal=400 → 0.79 "collapse" was the pre-`cf639b2`
 y_hat bug, now confirmed gone). Same verdict as topic 1: a class-level M is not a lever
 for the softmax head — its cosine score already encodes class similarity. Fig
-`output/week_1_7_res/prototype_cs_aircraft.png`.
+`output/week_1_7_res/prototype_cs_aircraft.png`. **Sanity control (geodesic NCM):** the
+SAME two penalties on `unwhitened_topk_mean` instead SHRINK the aircraft sets — cluster-M
+red +9%, centered_cosine +16% at cal=800 (both valid ~0.91, λ=0.2), centered the better
+lever — confirming the effect is NCM-specific (not dataset-specific) and mirroring the
+CIFAR-100 geodesic result of topic 1. `output/week_1_7_res/geodesic/`.
 
 **(b) Split-CP head-to-head — FCP dominates few-shot, converges by ~10 shots/class.**
 Our FCP framework (`prototype_softmax` + `geodesic_topk_asym`, full label budget) vs
