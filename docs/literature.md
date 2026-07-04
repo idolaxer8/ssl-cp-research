@@ -11,6 +11,7 @@ Legend: `[ ]` unread · `[~]` in progress · `[x]` read · `*` closest setting
 | [ ] | **Shafer & Vovk** — "A Tutorial on Conformal Prediction" | JMLR | 2008 | [arXiv:0706.3188](https://arxiv.org/abs/0706.3188) | Full CP, ICP, k-NN NCM. Theory base. |
 | [ ] | **Barber, Candes, Tibshirani & Wager** — "Predictive Inference with the Jackknife+" | Ann. Statistics | 2021 | [arXiv:1905.02928](https://arxiv.org/abs/1905.02928) | CV+ and 1-2a guarantee. |
 | [ ] | **Angelopoulos & Bates** — "A Gentle Introduction to Conformal Prediction" | FnTML | 2022 | [arXiv:2107.07511](https://arxiv.org/abs/2107.07511) | Best tutorial. Read before writing methods. |
+| [ ] | **Vovk** — "Cross-Conformal Predictors" | Ann. Math. & AI | 2015 | [arXiv:1208.0806](https://arxiv.org/abs/1208.0806) | Foundational **data-reuse CP** (split-CP + CV): reuse all labels for fit + calibration, no train/cal split. Basis of our "don't split" thesis and CAOS's LOO scheme. |
 
 ---
 
@@ -37,7 +38,8 @@ The Silva-Rodriguez et al. trilogy is the nearest neighbour to our work: transdu
 |---|---|---|---|---|---|
 | [ ] | **Wang, Sun & Dobriban** — "Singleton-Optimized Conformal Prediction" (SOCOP) | arXiv | 2026 | [arXiv:2509.24095](https://arxiv.org/abs/2509.24095) | NCM that minimizes P(non-singleton set), O(K). Image classification. Alternative route to our set-size goal — NCM-design baseline. |
 | [ ] | **(anon.)** — "Direct Prediction Set Minimization via Bilevel Conformal Training" (DPSM) | arXiv | 2025 | [arXiv:2506.06599](https://arxiv.org/abs/2506.06599) | Bilevel conformal training, ~20% set-size cut. Requires *training* the classifier — contrast for our frozen-backbone constraint. |
-| [ ] | **Liu et al.** — "C-Adapter: Adapting Deep Classifiers for Efficient CP Sets" | arXiv | 2024 | [arXiv:2410.09408](https://arxiv.org/abs/2410.09408) | Adapter tuning for efficient CP sets (trainable head). Landscape reference. |
+| [ ] | **Liu et al.** — "C-Adapter: Adapting Deep Classifiers for Efficient CP Sets" | arXiv | 2024 | [arXiv:2410.09408](https://arxiv.org/abs/2410.09408) | Adapter tuning for efficient CP sets (trainable head). Landscape reference. **NOTE: withdrawn by authors ("experimental results not sufficient") — do not cite as a result.** |
+| [ ] | **Conformal aggregation / selection family** (Rivera; Alami; Hegazy; Vovk) | NeurIPS'25 / AAAI'26 / arXiv | 2024–26 | — | Score-level aggregation + valid selection from a POOL of CP predictors for tighter sets: Rivera [2405.16246](https://arxiv.org/abs/2405.16246) (NeurIPS'25), Alami SACP [2512.06945](https://arxiv.org/abs/2512.06945) (AAAI'26), Hegazy [2506.20173](https://arxiv.org/abs/2506.20173), Vovk e-class [2605.07963](https://arxiv.org/abs/2605.07963). **CAOS's family** — tangential to our single-NCM full CP; landscape, not a baseline we run. |
 
 ---
 
@@ -46,6 +48,7 @@ The Silva-Rodriguez et al. trilogy is the nearest neighbour to our work: transdu
 | Status | Paper | Venue | Year | Link | Notes |
 |---|---|---|---|---|---|
 | [ ] | **Ghosh et al.** — "Neighborhood Conformal Prediction" (NCP) | AAAI | 2023 | [arXiv:2303.10694](https://arxiv.org/abs/2303.10694) | k-NN in learned representation + distance-weighted adaptive sets. **Prior art for our geodesic NN-ratio NCM — cite.** |
+| [ ] | * **Marazov, Balieva, Tanchev, Lazarova & Rankova** — "Conformal Predictions for Visual Animal Identification" | Technologies (MDPI) 14(4):232 | 2026 | [DOI:10.3390/technologies14040232](https://doi.org/10.3390/technologies14040232) | **Nearest non-VLM published sibling to our NN-ratio NCM.** Split CP on **frozen ResNet-50 / Swin-T** embeddings; **cosine-distance** nonconformity, 3 scores (NN-**ratio** / min / mean); cow + goat re-ID. **Ratio score cuts mean set size up to 79% vs min/mean** — external validation of ratio NCMs; Swin-T beats ResNet-50 by up to 14pp singleton rate. **Identity-level split** (disjoint IDs, open-set re-ID; gallery/query): cow cal/test = 55/55 IDs (229/183 gallery refs + 55/55 queries), goat = 36/36 IDs (113/118 refs + 36/36 queries) — conformal n = #queries ≈ 36–55 (tiny). We differ: **Full** CP, **arccos geodesic** ratio, PCA + MS-CS, many-class natural images at few-shot cal. |
 | [ ] | **(DANCE)** — "Doubly Adaptive Neighborhood Conformal Estimation" | arXiv | 2026 | [arXiv:2602.20652](https://arxiv.org/abs/2602.20652) | Latest neighborhood-adaptive CP. Watch for NCM positioning. |
 | [ ] | **Katsios et al.** — "Multi-label CP with a Mahalanobis NCM" | COPA (PMLR v230) | 2024 | [proceedings](https://proceedings.mlr.press/v230/katsios24a.html) | Mahalanobis-distance NCM — theory/contrast for `MahalNNRatio` + whitening. |
 | [ ] | **Bateni et al.** — "Improved Few-Shot Visual Classification" | CVPR | 2020 | — | Pooled Mahalanobis distance. Theory for `MahalNNRatio`. |
@@ -57,7 +60,10 @@ The Silva-Rodriguez et al. trilogy is the nearest neighbour to our work: transdu
 
 | Status | Paper | Venue | Year | Link | Notes |
 |---|---|---|---|---|---|
-| [ ] | **CAOS** — "Conformal Aggregation of One-Shot Predictors" | arXiv | 2026 | [arXiv:2601.05219](https://arxiv.org/abs/2601.05219) | One-shot FM adaptation, **leave-one-out calibration**, smaller sets than split-CP. Extreme of our "don't waste B on a train/cal split" thesis. |
+| [x] | **Waldron** — "CAOS: Conformal Aggregation of One-Shot Predictors" | arXiv | 2026 | [arXiv:2601.05219](https://arxiv.org/abs/2601.05219) | **Reviewed 06-30 (goal 4).** One-shot adaptation on **frozen DINOv3**: 1-shot score `1 - cos(z_test, z_ref)`, aggregate = **sum of k=3 smallest**, calibrate **leave-one-out over all n (no split)**. Valid by **monotonicity** (C_full contained in C_caos; full CP only a proof device -> conservative / over-covers). **App. E: of the ~55% set-size win over split-CP, ~52pp is NOT-splitting, ~7pp the aggregation** — quantified support for our no-split thesis. Equivalent to our `update_calibration_scores=False` static-LOO path with a sum-of-k-min cosine score; one-shot **patch**-classification, not many-class natural images. |
+| [ ] | **Gasparin & Ramdas** — "Improving the Statistical Efficiency of Cross-Conformal Prediction" | ICML | 2025 | [arXiv:2503.01495](https://arxiv.org/abs/2503.01495) | Efficient p-value combination for CV+ / cross-conformal -> smaller sets, same guarantees. The split-free data-reuse efficiency machinery behind CAOS's "reuse all labels". |
+| [ ] | **Bashari et al.** — "Synthetic-Powered Predictive Inference" | arXiv | 2025 | [arXiv:2505.13432](https://arxiv.org/abs/2505.13432) | Score-transporter aligns real/synthetic scores -> tighter sets when calibration is scarce; demoed on image classification. Scarce-cal efficiency; contrast to our unlabeled-pool route. |
+| [ ] | **Bhattacharyya, Zhang & Barber** — "Approximating Full CP via the Tournament Correction" | arXiv | 2026 | [arXiv:2605.29200](https://arxiv.org/abs/2605.29200) | Cheap full-CP approximation generalizing LOO cross-conformal; distribution-free 1-2α, tightens under stability. Full-CP efficiency reference. |
 | [ ] | **Park et al.** — "Few-Shot Calibration via Meta-Learned CV-Based CP" (meta-XB) | IEEE TSP | 2023 | [arXiv:2210.03067](https://arxiv.org/abs/2210.03067) | Few-shot CP via meta-learned CV+. Same motivation (split-CP bloats sets at low data), different machinery. |
 | [ ] | **Seedat et al.** — "Improving Adaptive CP Using Self-Supervised Learning" (SSCP) | AISTATS | 2023 | [arXiv:2302.12238](https://arxiv.org/abs/2302.12238) | SSL pretext tasks improve NCM. Designed for regression — needs classification adaptation. |
 
@@ -122,4 +128,4 @@ The Silva-Rodriguez et al. trilogy is the nearest neighbour to our work: transdu
 
 ---
 
-*Last updated: 2026-06-07.*
+*Last updated: 2026-06-30.*

@@ -77,16 +77,30 @@ Full reference `docs/geometric_conditional_methods.md` + code on branch
   ours is the GEOMETRY/group-conditional taxonomy -> qualify as "Mondrian-over-geometry" /
   "stratum-conditional" to avoid the per-class connotation.
 
-### 4. CAOS (Waldron, arXiv:2601.05219) — finish review + literature sweep
+### 4. CAOS + literature sweep — RESOLVED (finish review + fold-in)
 
-**Why.** CAOS is our nearest split-free one-shot ally (topic "Literature"); only the
-Appendix-E "~52% of the win is not-splitting" decomposition is locked in so far.
-- **Finish reading** CAOS and write a short **key-takeaways** summary for our
-  positioning (validity argument, score/aggregation levers, what transfers to our
-  few-shot many-class regime).
-- **Review CAOS's related-work** for neighbours we've missed.
-- **Fresh last-few-months scan** for more split-free / few-shot / transductive CP
-  papers; fold the keepers into `literature.md` (§5 few-shot, §8 semi-sup).
+**Verdict.** All three sub-items done; keepers folded into `literature.md`. Absolute
+essentials:
+- **CAOS (Waldron 2601.05219):** split-free one-shot CP on frozen DINOv3; valid by
+  **monotonicity / containment** (C_full within C_caos), NOT full CP -> conservative.
+  Durable takeaway = **App-E: of the ~55% set-size win over split-CP, ~52pp is
+  not-splitting and ~7pp the aggregation** — external, quantified support for
+  FCP-over-SplitCP. CAOS == our `update_calibration_scores=False` static-LOO path
+  (sum-of-k-min cosine score); one-shot *patch* classification -> an ally, not a
+  many-class baseline.
+- **Closest new sibling (lit.md §4):** Marazov et al. (Technologies 2026) — split CP on
+  **frozen ResNet-50 / Swin, cosine NN-ratio**; **ratio score -79% set size vs min/mean**
+  = external validation of our ratio NCM.
+- **Barber "beyond exchangeability" (2202.13415):** umbrella for our O(1/n) story, BUT its
+  exact asymmetric-algorithm guarantee needs a randomized swap we do NOT use, so it cleanly
+  certifies only our *symmetric exact* path (gap 0); **Fan & Sesia stays the O(1/n) rate**
+  for our deterministic frozen-transform path.
+- **Folded into `literature.md`:** Vovk'15 cross-conformal (§1); C-Adapter *withdrawn* flag
+  + aggregation/selection family Rivera/Alami/Hegazy/Vovk-eclass (§3); Marazov animal-ID
+  (§4); CAOS enriched + Gasparin&Ramdas'25 + Bashari'25 + Bhattacharyya tournament'26 (§5).
+  **No §8 semi-sup keepers.** Also flagged (not folded): SAPS/RC3P/CPL (conference
+  must-baselines) and Ding "Long-Tailed CP" 2507.06867 (class-conditional many-class; PAS
+  score is a no-op under our balanced splits).
 
 ---
 
