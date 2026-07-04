@@ -14,7 +14,7 @@ All experiments: CIFAR-100, DINOv2 embeddings, exchangeable pipeline
 Forward-looking plan, not results. Each item converts into the dated entry above
 as it lands. Four threads, building directly on last week's findings.
 
-### 1. Class-similarity (MS-CS) on the softmax NCM — investigate, rethink M
+### 1. Class-similarity (MS-CS) on the softmax NCM — investigate, rethink M  ✔ RESOLVED (see "Week ending 2026-07-04" below)
 
 **Why.** MS-CS is now a **no-op for prototype-softmax** (last week, topic 1): the
 k-means cluster-M penalty neither shrinks nor helps once the y_hat bug is fixed,
@@ -29,7 +29,7 @@ prototype cosines, so an external cluster-M adds nothing.
   score-aligned similarity — and re-test on CIFAR-100. Keep exchangeability (fit on
   the unlabeled pool / per-candidate update).
 
-### 2. Aircraft — class-similarity, Split-CP comparison, a second fine-grained set
+### 2. Aircraft — class-similarity, Split-CP comparison, a second fine-grained set  ✔ RESOLVED (see "Week ending 2026-07-04" below)
 
 **Why.** FGVC-Aircraft is our scope-limit dataset (DINOv2 can't separate the 100
 variants; topic 2). We want to know if class-similarity helps where features can't,
@@ -87,6 +87,142 @@ Appendix-E "~52% of the win is not-splitting" decomposition is locked in so far.
 - **Review CAOS's related-work** for neighbours we've missed.
 - **Fresh last-few-months scan** for more split-free / few-shot / transductive CP
   papers; fold the keepers into `literature.md` (§5 few-shot, §8 semi-sup).
+
+---
+
+## Week ending 2026-07-04 (work on 06-30 to 07-04)
+
+Topics 1 and 2 of the week's plan resolved. Headline: (1) our MS-CS was not faithful
+to the source paper; we built the faithful version, which settles the question — a
+class-similarity M **cannot** help the (tight) softmax NCM, for a concrete structural
+reason, but IS the **better** lever for the geodesic NCM; (2) on the hard-backbone
+Aircraft set the same story holds (both the old and the faithful M inflate the softmax
+sets), Full-CP dominates Split-CP in the few-shot regime, and the scope limit
+replicates on a second fine-grained set (Stanford Cars, K=196). Defaults as in the
+header unless noted.
+
+**How each MS-CS M works.** The penalty is s_λ(x,y) = s(x,y) + λ·(1 − M[y, ŷ(x)]): it
+raises the nonconformity of a candidate class y in proportion to its DISsimilarity to
+the suspected class ŷ, pushing classes unlike ŷ out of the prediction set. The variants
+differ only in how the class-similarity matrix M is built:
+- **cluster** (our original "MS-CS"): k-means on the unlabeled pool; M[c,c'] = 1 if the
+  two class means fall in the same cluster, else exp(−d²/τ) on the inter-cluster
+  distance. Pool-derived, quantized.
+- **centered_cosine** (= Fargion §5 "MS", the *faithful* port): M[c,c'] =
+  cos(h_c − h_G, h_c' − h_G) — cosine of the class means *centered by the global mean*
+  h_G, with h_G fit once on the pool (bag-independent → exactly exchangeable).
+- **prototype** (softmax-native, the goal-1 attempt): M[c,c'] = cos(μ_c, μ_c') — cosine
+  of the (uncentered) class-mean prototypes = the Gram of the prototype NCM's own cosine
+  logits (redundant with the softmax score by construction).
+- **MA** (Fargion §4, Model-Agnostic): binary M[c,c'] = 1{g(c)=g(c')} from coarse
+  superclass labels g. (centroid: a pool-free Gaussian kernel on cal-centroid distances,
+  a control.)
+
+### 1. Class-similarity (MS-CS) on the softmax NCM — rethink M [RESOLVED]
+
+**Fidelity correction (the starting point).** Reading Fargion, Dabah & Tirer (2025,
+arXiv:2511.19359, ICML 2026) closely: their penalty has TWO M variants — **MA**
+(Model-Agnostic, a binary superclass indicator 1{g(y)!=g(y')}, their §4) and **MS**
+(Model-Specific, a continuous matrix from the model's embeddings, their §5 = cosine
+of the CENTERED class means, cos(h_c-h_G, h_c'-h_G)). Our `macs_experiment.py`
+reproduces their MA faithfully, but our "MS-CS" (k-means cluster-M and the
+prototype-cosine M) is NOT their MS — we had taken the name but built a different,
+uncentered/quantized matrix. This also retracts a novelty claim: we had positioned
+"a continuous, label-free, embedding-derived M" as our generalization of their
+binary d, but that is exactly their MS. Corrected in `theory.md` §3.1-3.2 and
+`literature.md`.
+
+**What we tried — the faithful port.** Implemented their MS exactly as
+`--similarity centered_cosine`: M[c,c'] = cos(h_c-h_G, h_c'-h_G), with score-aligned
+class means h_c from calibration and the global mean h_G fit ONCE on the unlabeled
+pool. Because the pool is independent of cal+test, h_G is a bag-independent constant,
+so the per-candidate Full-CP update shifts only the candidate class's mean ->
+**exactly exchangeable** (verified: per-candidate update == full rebuild on the
+augmented bag to 1.7e-16, incl. absent-class revival; regression test added).
+Committed `d34c0e7`, branch `mscs-centered-cosine-m`.
+
+**Result — no-op for the softmax NCM, and WHY it fails.** On prototype-softmax
+(CIFAR-100, PCA-128) the faithful centered M is indistinguishable from the
+uncentered prototype-M: at cal=800 (tight sets, sz 1.27) every M gives ~0% change
+(+/-0.5%). The mechanism (diagnostic): a similarity penalty lambda*(1-M[y,yhat])
+drops the LEAST-similar classes first, but the classes actually cluttering a tight
+softmax set are the MOST-similar to yhat (mean M[c,yhat] = +0.42 for in-set extras
+vs -0.01 for correctly-excluded classes) — so the penalty protects exactly the
+clutter and can only raise the quantile -> no-op (or bloat). There is also little
+headroom (77.5% of sets are already singletons), and the residual ambiguity is
+per-instance, which no class-level (x-independent) M can resolve. We then tested the
+one remaining M-shaped escape — an ASYMMETRIC confusion/correction matrix
+M[y,yhat]=P(true=y|pred=yhat), built both from cal LOO errors and from pool
+soft-confusion — and it also failed: at cal=800 all no-op; at cal=200 the plain
+similarity M (+20%) even beats the confusion M (+6%). **Conclusion:** a class-level
+M is HEADROOM-gated — it helps loose sets and is a no-op on tight ones, independent
+of how M is built. The tight-softmax regime that carries our headline set sizes has
+no M lever; the honest lever there is score-side (posterior smoothing / adaptivity),
+not a class-distance penalty. (En route we corrected an earlier misattribution: the
+"cal=200 bloat" was an artifact of the exact per-candidate update at m=2/class, not
+the penalty — the frozen penalty reduces sets at small cal.)
+
+**Positive spin-off — the faithful M is the BETTER lever for the geodesic NCM.**
+Where M is not redundant with the score (the geodesic NCM ranks by NN-ratio, not
+prototype cosine), the faithful centered M is a real, valid set-size lever and
+competitive-to-better than the old k-means cluster-M (unwhitened_topk_mean, 3
+trials): cal=200 cluster slightly ahead (22.1% vs 19.1% at lambda=0.1); **cal=800
+(the tight-set regime) centered WINS and is lambda-monotone** (5.5% vs cluster 2.1%
+at lambda=0.1; cluster peaks at lambda=0.05 = 3.3% then degrades). Coverage valid
+(~0.90) throughout. **Decision: `centered_cosine` is now the default MS-CS M for the
+geodesic NCM.** (To firm up: unwhitened_topk_asym + more trials; centered is still
+CPU-only.)
+
+**Outputs.** `theory.md` §3.1-3.2.1 (derivation + both results); commit `d34c0e7`
+(faithful M + doc fidelity fixes); `tests/test_mscs_gpu_parity.py` (exchangeability
+regression); memory `macs-paper-fidelity`.
+
+### 2. Aircraft — class-similarity, Split-CP head-to-head, 2nd fine-grained set [RESOLVED]
+
+All three parts run in the hard-backbone regime (DINOv2 cannot separate the fine-grained
+classes, so every method's sets are large), single-label throughout — we did NOT add any
+multi-label / multi-label-CP machinery. Aircraft = FGVC-Aircraft (K=100); the 2nd set is
+Stanford Cars (K=196). Pipeline as in the header (PCA-128 + cluster-whiten off the pool),
+20-50 trials on the cluster / 5 trials locally, α=0.1.
+
+**(a) Class-similarity on Aircraft — confirms topic 1 on the hard backbone.** Ran
+`prototype_softmax` with no-CS vs the old **cluster** M vs the faithful **centered_cosine**
+M (post-`cf639b2`, 5 trials). Neither helps: under the exact (exchangeable) penalty BOTH
+INFLATE the softmax sets — cluster red −4% / −25% / −40% at cal 400/800/1200; centered a
+no-op at cal=400 (−0.2%) but +19% at cal=800 (milder than cluster, still no help).
+Coverage holds ~0.89–0.90 (the earlier cal=400 → 0.79 "collapse" was the pre-`cf639b2`
+y_hat bug, now confirmed gone). Same verdict as topic 1: a class-level M is not a lever
+for the softmax head — its cosine score already encodes class similarity. Fig
+`output/week_1_7_res/prototype_cs_aircraft.png`.
+
+**(b) Split-CP head-to-head — FCP dominates few-shot, converges by ~10 shots/class.**
+Our FCP framework (`prototype_softmax` + `geodesic_topk_asym`, full label budget) vs
+**SCP-THR** and **SemiCP-THR** (budget split 50/50 into train+cal; softmax classifier;
+THR score = 1−p(y); SemiCP adds NNM scores from the unlabeled pool). Aircraft, size(cov):
+at cal=400 (4 shots/class) Split-CP degenerates to the trivial full set (SCP 94 / SemiCP
+100 vs FCP+proto 21 / geo_asym 28); the gap closes as cal grows, and by cal=1000 (10
+shots) SemiCP-THR (18.4) is competitive with FCP+geo_asym (19.7) and trails only FCP+proto
+(16.2). SemiCP's NNM is unreliable (hurts at cal=600, helps at cal=1000) — the unlabeled
+pool does NOT rescue Split-CP. So FCP's win is a *few-shot* story. `geo_asym`+cluster-M
+shrinks a further ~1–3.5% (the small real geodesic lever, per topic 1). Fig
+`output/week_1_7_res/split_vs_fcp_size_cov.png`.
+
+**(c) 2nd fine-grained set (Stanford Cars, K=196) — the scope limit generalizes.** Added a
+loader for the HF mirror `tanganke/stanford_cars` (the official Stanford URL is dead);
+train→labeled, test→unlabeled like aircraft. Scope sweep (`fca_family`, 50 trials,
+balanced): sets stay huge (15–196 of K); `prototype_softmax` is tightest-on-average once
+cal is adequate but DEGENERATES at 2-shot (sz = 196 = the full set at cal=400) and has the
+worst class-conditional coverage; `geodesic_topk_asym` is the more honest NCM (best
+CovGap). Old cluster-M on the prototype BALLOONS sets 3.6–5.4× at cal≥800 (coverage still
+valid) — the "M does not help the softmax NCM" story, dramatized. The backbone-separability
+scope limit is therefore NOT aircraft-specific. Fig
+`output/week_1_7_res/compare_stanford_cars_balanced_both.png`.
+
+**Outputs.** `output/week_1_7_res/` (3 figures + result JSONs: `results_aircraft.json`
+[cluster-M], `results_aircraft_centered_cosine.json`); Stanford Cars loader in
+`download_datasets.py` + `carve_unlabeled.py` + `cluster/run_aircraft_cs_splitcp.sh`
+(committed `25709fb`); memory `prototype-cosine-mscs-M`. Topics 3-4 of the plan
+(geometry-conditional audit, CAOS review) not covered this entry.
 
 ---
 

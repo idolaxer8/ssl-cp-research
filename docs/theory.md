@@ -295,10 +295,19 @@ already absorbs — the *spread* is unchanged, so the sets don't move. This
 `M` is redundant with a prototype-cosine softmax score whether or not it is the
 paper-faithful centered form — it was *not* our unfaithful M that killed the
 effect. The small-cal bloat is the paper's large-cal-assumption breakdown
-(Assumption 1), shared by every M (regime, not bug). Net: the class-similarity
-penalty stays a **geodesic-NCM lever**, not a softmax one; keep the k-means
-`cluster` M for geodesic. Exactness is intact regardless (update == rebuild
-1.7e-16, `tests/test_mscs_gpu_parity.py`).
+(Assumption 1), shared by every M (regime, not bug). Exactness is intact
+regardless (update == rebuild 1.7e-16, `tests/test_mscs_gpu_parity.py`).
+
+**Geodesic result (unwhitened_topk_mean, CIFAR-100, 3 trials, 2026-07-01).**
+Where `M` is *not* score-native, the penalty is a real, valid lever for **both**
+matrices, and the faithful centered-cosine `M` is competitive-to-better than the
+k-means `cluster` M. cal=200: cluster slightly ahead (22.1% vs 19.1% at λ=0.1);
+**cal=800: centered wins and is λ-monotone** (5.5% vs cluster 2.1% at λ=0.1 —
+cluster peaks at λ=0.05 (3.3%) then *degrades*, centered keeps improving 4.0% →
+5.5%). Coverage valid (~0.90) throughout. So centered-cosine is redundant only
+for the *softmax* head; on the geodesic NCM it is a genuine class-similarity M —
+and at the tight-set cal=800 regime, the preferable one. (3-trial, single NCM;
+confirm with `unwhitened_topk_asym` + more trials before a firm claim.)
 
 ### 3.3 Validity of MS-CS — split CP vs Full CP (the subtle part)
 
