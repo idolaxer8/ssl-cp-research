@@ -53,33 +53,53 @@ class IdentityTransform:
 
 
 class UnlabeledTransform:
-    """PCA + within-cluster whitening + k-means, all fit on the unlabeled pool.
+    """Projection + whitening + k-means, all fit on the unlabeled pool.
 
     Args:
-        pca_dim:     target PCA dimension (None or >= D disables PCA).
-        whiten:      'cluster' (pooled within-k-means-cluster variance, default),
-                     'global' (total per-dim variance), or None (no whitening).
+        pca_dim:     target projection dimension (None or >= D disables it).
+        whiten:      'cluster' (pooled within-k-means-cluster per-dim variance,
+                     default), 'global' (total per-dim variance), 'lw_global' /
+                     'lw_cluster' (FULL-matrix ZCA whitening from a Ledoit-Wolf
+                     shrunk covariance -- the continuous, truncation-free
+                     alternative to PCA; use with pca_dim=None), or None.
         n_clusters:  k-means clusters (whitening pseudo-labels + MS-CS). Coarse
                      (20) -> looser whitening; fine (~n_classes) -> tighter.
         reg:         whitening regularisation floor (matches GeodesicTopKMeanNCM).
         random_state: seed for PCA / k-means (the pool is fixed, so this is fixed).
+        projection:  'pca' (default), 'random' (Gaussian Johnson-Lindenstrauss
+                     matrix -- data-INDEPENDENT control arm; only the pool mean
+                     is used, for centering parity with PCA), or None.
+        rp_seed:     seed for the random projection matrix (default random_state).
+
+    Every variant remains a function of the unlabeled pool alone (the JL matrix
+    is not even that -- a fixed random matrix), so Proposition 2 (theory.md sec 2)
+    applies verbatim: the transform is a fixed map w.r.t. the cal/test bag and
+    exchangeability is preserved exactly.
     """
 
     has_clusters = True
 
     def __init__(self, pca_dim=None, whiten="cluster", n_clusters=20,
-                 reg=1e-4, random_state=42, n_init=10):
-        assert whiten in ("cluster", "global", None)
+                 reg=1e-4, random_state=42, n_init=10,
+                 projection="pca", rp_seed=None):
+        assert whiten in ("cluster", "global", "lw_global", "lw_cluster", None)
+        assert projection in ("pca", "random", None)
         self.pca_dim = pca_dim
         self.whiten = whiten
         self.n_clusters = n_clusters
         self.reg = reg
         self.random_state = random_state
         self.n_init = n_init
+        self.projection = projection
+        self.rp_seed = random_state if rp_seed is None else rp_seed
         # fitted state
         self.pca_ = None
+        self.rp_ = None                  # JL matrix (D x d), 'random' projection
+        self.center_ = None              # pool mean (random-proj / lw paths)
         self.kmeans_ = None
-        self.inv_std_ = None
+        self.inv_std_ = None             # diagonal whitening ('cluster'/'global')
+        self.W_ = None                   # full-matrix ZCA whitening ('lw_*')
+        self.lw_shrinkage_ = None        # fitted Ledoit-Wolf shrinkage intensity
         self.cluster_centroids_ = None   # in transformed (post-whiten) space
         self.cluster_dists_ = None
 
@@ -87,13 +107,27 @@ class UnlabeledTransform:
     def fit(self, X_unlabeled):
         X = np.asarray(X_unlabeled, dtype=np.float64)
 
-        # 1) PCA (fit on unlabeled)
-        if self.pca_dim is not None and self.pca_dim < X.shape[1]:
+        # 1) projection (fit on unlabeled)
+        reduce = self.pca_dim is not None and self.pca_dim < X.shape[1]
+        if self.projection == "pca" and reduce:
             self.pca_ = PCA(n_components=self.pca_dim,
                             random_state=self.random_state).fit(X)
             Xp = self.pca_.transform(X)
+        elif self.projection == "random" and reduce:
+            # Johnson-Lindenstrauss Gaussian projection: data-independent by
+            # construction (control for PCA's data-adaptivity). Centering by the
+            # pool mean keeps parity with PCA (which centers internally) --
+            # this matters downstream because the NCMs L2-normalise.
+            self.center_ = X.mean(axis=0)
+            rng = np.random.default_rng(self.rp_seed)
+            self.rp_ = rng.standard_normal(
+                (X.shape[1], self.pca_dim)) / np.sqrt(self.pca_dim)
+            Xp = (X - self.center_) @ self.rp_
+        elif self.whiten in ("lw_global", "lw_cluster"):
+            # full-rank whitening arms: center by the pool mean (PCA parity)
+            self.center_ = X.mean(axis=0)
+            Xp = X - self.center_
         else:
-            self.pca_ = None
             Xp = X
 
         # 2) k-means (whitening pseudo-labels + MS-CS clusters), in PCA space
@@ -102,7 +136,7 @@ class UnlabeledTransform:
                               n_init=self.n_init).fit(Xp)
         labels = self.kmeans_.labels_
 
-        # 3) whitening inv_std (fit on unlabeled)
+        # 3) whitening (fit on unlabeled)
         if self.whiten == "cluster":
             resid = Xp.copy()
             for c in range(self.n_clusters):
@@ -121,11 +155,35 @@ class UnlabeledTransform:
         else:
             self.inv_std_ = None
 
+        if self.whiten in ("lw_global", "lw_cluster"):
+            # Full-matrix ZCA whitening from a Ledoit-Wolf SHRUNK covariance:
+            # Sigma_hat = (1-rho)*S + rho*(tr(S)/d)*I, rho chosen analytically
+            # (Ledoit & Wolf 2004). Well-conditioned even when per-cluster
+            # n < d, so no rank truncation is needed -- the continuous
+            # regularisation alternative to hard PCA truncation.
+            from sklearn.covariance import LedoitWolf
+            if self.whiten == "lw_cluster":
+                resid = Xp.copy()
+                for c in range(self.n_clusters):
+                    m = labels == c
+                    if m.any():
+                        resid[m] -= Xp[m].mean(axis=0)
+            else:
+                resid = Xp - Xp.mean(axis=0)
+            lw = LedoitWolf(assume_centered=True).fit(resid)
+            self.lw_shrinkage_ = float(lw.shrinkage_)
+            evals, evecs = np.linalg.eigh(lw.covariance_)
+            evals = np.maximum(evals, 1e-12)
+            # symmetric (ZCA) inverse square root: rotation-neutral whitening
+            self.W_ = evecs @ np.diag(evals ** -0.5) @ evecs.T
+
         # cluster centroids/dists in the FINAL (post-whiten) transformed space,
         # so MS-CS distances match the space the NCM scores in.
         cen = self.kmeans_.cluster_centers_
         if self.inv_std_ is not None:
             cen = cen * self.inv_std_
+        elif self.W_ is not None:
+            cen = cen @ self.W_
         self.cluster_centroids_ = cen
         from sklearn.metrics import euclidean_distances
         self.cluster_dists_ = euclidean_distances(cen, cen)
@@ -133,7 +191,12 @@ class UnlabeledTransform:
         # Cache the transformed unlabeled pool so downstream MS-CS can build its
         # similarity matrix in the SAME (post-transform) space, reusing the one
         # unlabeled pool rather than re-deriving features.
-        self.Xu_transformed_ = (Xp * self.inv_std_) if self.inv_std_ is not None else Xp
+        if self.inv_std_ is not None:
+            self.Xu_transformed_ = Xp * self.inv_std_
+        elif self.W_ is not None:
+            self.Xu_transformed_ = Xp @ self.W_
+        else:
+            self.Xu_transformed_ = Xp
         return self
 
     # -- apply to cal/test --------------------------------------------------
@@ -141,8 +204,14 @@ class UnlabeledTransform:
         Xp = np.asarray(X, dtype=np.float64)
         if self.pca_ is not None:
             Xp = self.pca_.transform(Xp)
+        elif self.rp_ is not None:
+            Xp = (Xp - self.center_) @ self.rp_
+        elif self.center_ is not None:
+            Xp = Xp - self.center_
         if self.inv_std_ is not None:
             Xp = Xp * self.inv_std_
+        elif self.W_ is not None:
+            Xp = Xp @ self.W_
         return Xp
 
     def cluster_of(self, X_transformed):
@@ -154,8 +223,11 @@ class UnlabeledTransform:
         return np.argmin(d, axis=1)
 
     def __repr__(self):
+        proj = "" if self.projection == "pca" else f", projection={self.projection!r}"
+        lw = (f", lw_shrinkage={self.lw_shrinkage_:.4f}"
+              if self.lw_shrinkage_ is not None else "")
         return (f"UnlabeledTransform(pca_dim={self.pca_dim}, whiten={self.whiten!r}, "
-                f"n_clusters={self.n_clusters})")
+                f"n_clusters={self.n_clusters}{proj}{lw})")
 
 
 def make_transform(unlabeled=None, pca_dim=None, whiten="cluster",

@@ -15,107 +15,128 @@ nothing else works.
 
 ## Operating Theory
 
-Three load-bearing claims, each now backed by experiments in
-`docs/findings.md`:
+Four load-bearing claims, each backed by experiments in `docs/findings.md` /
+`docs/weekly_summary.md`:
 
 1. **Validity is an exchangeability property of the score function, and it is
-   binary.** The coverage guarantee needs every nonconformity score to be a
+   binary.** The guarantee needs every nonconformity score to be a
    permutation-symmetric function of the calibration+test bag. Any transform
    fit on the calibration set — whitening, PCA, RBF bandwidth, a fixed ŷ in
-   the MS-CS penalty — breaks this, even at O(1/n). Two practical
-   consequences shaped the codebase: (a) all data-dependent transforms are
-   fit on an *independent unlabeled pool* (`exchangeable_features.py`), or
-   label-free on cal+test itself (pool_source result: exactly exchangeable,
-   recovers most of the benefit); (b) asymmetries hiding in edge cases are
-   real bugs, not noise — the missing-class `1e9` sentinel in `score_x`
-   depressed small-cal coverage (0.844 at cal=200) until replaced by
-   symmetric handling.
+   the CS penalty — breaks this, even at O(1/n). Consequences shaped the
+   codebase: (a) all data-dependent transforms are fit on an *independent
+   unlabeled pool* (`exchangeable_features.py`), or label-free on cal+test
+   itself (pool_source result: exactly exchangeable, recovers most of the
+   benefit); (b) asymmetries hiding in edge cases are real bugs — the
+   missing-class sentinel and the MS-CS non-LOO ŷ both broke coverage until
+   made symmetric.
 
-2. **The efficiency win is mostly the no-train-split NCM, not the
-   transductive machinery.** SCP with the geodesic top-k NCM matches FCP with
-   the same NCM at every budget (within 0.02 set size); FCP's apparent
-   dominance over SCP-THR is really "distance-based NCM that spends the whole
-   budget on calibration" vs "classifier that must split it". The honest
-   paper claim is about NCM design + budget allocation; FCP vs SCP machinery
-   is a cost/runtime choice (`predict(update_calibration_scores=False)` gives
-   the cheap variant).
+2. **The efficiency win is NCM design + budget allocation, not transductive
+   machinery.** SCP-geodesic matches FCP-geodesic at every budget; FCP's
+   dominance over SCP-THR is "distance/prototype NCM that spends the whole
+   budget on calibration" vs "classifier that must split it". The current
+   NCM ranking: `prototype_softmax` (FCA-style class-mean cosine softmax,
+   closed-form LOO refit) is tightest on separable data at every cal;
+   `geodesic_topk_asym` is the more honest choice (best class-conditional
+   CovGap) on hard fine-grained data. Class-level similarity penalties are
+   **headroom-gated**: no M (cluster, faithful Fargion centered-cosine,
+   prototype-Gram, confusion) can help a tight softmax set — the classes
+   cluttering it are exactly the most-similar to ŷ, which the penalty
+   protects — while M remains a modest real lever for the geodesic NCM.
 
 3. **Unlabeled data buys efficiency through the feature transform first, the
-   penalty second.** The pool ablation decomposes the gain: pool-fit PCA-128
-   + within-cluster whitening accounts for most of the 43-53% set-size
-   reduction at cal=200-400; the MS-CS cluster-similarity penalty adds a few
-   percent on top. MA-CS (true superclass labels) remains the strongest
-   penalty (~23% at cal=600); label-free MS-CS lands within 2-4pp of it.
+   penalty second** (pool ablation: features 41-48% of the cut, penalty a few
+   percent, all exchangeable).
 
-The lead pipeline is therefore: DINOv2 embeddings -> pool-fit PCA-128 +
-cluster-whiten -> unwhitened geodesic top-k NCM -> FCP (GPU fast path) ->
-optional MS-CS penalty. Everything in that chain is exactly exchangeable, so
-coverage sits at the theoretical target 1 - floor(alpha(n+1))/(n+1) ~ 0.90 at
-every cal size — confirmed to be Monte-Carlo-tight by the 100-trial
-diagnostic.
+4. **The transform IS the metric half of the NCM** — the current workstream.
+   Whiten-then-Euclidean is Mahalanobis under the pool covariance, so pool-fit
+   PCA-truncate + within-cluster whitening = a low-rank regularized estimate
+   of the precision metric that both NCMs' inner products live in; d' is the
+   metric's regularization knob (the d'-U-shape is bias-variance in metric
+   estimation, not a coverage effect). This dissolves the "PCA is ad hoc /
+   unrelated to the NCM" objection that the old "removes low-variance noise"
+   line invited (falsified in-house: PCA-128 keeps only 56% of variance,
+   participation ratio 232). Mechanism, per the new geometry diagnostics
+   (2026-07-05): the lever is *data-adaptive subspace selection* — on the
+   CIFAR-100 pool PCA-128 raises between/within class contrast ~40%
+   (1.42 -> 1.97) and triples relative distance contrast (2.2 -> 7.0),
+   while a Johnson-Lindenstrauss projection to the same d changes neither
+   (it preserves noise as faithfully as signal) and full-768 Ledoit-Wolf
+   whitening *destroys* contrast (class ratio 1.10) by equalizing pure-noise
+   directions with signal. Anisotropy itself is mild in DINOv2 (mean pair
+   cosine 0.06) and dies with centering — so the paper should lean on
+   contrast concentration, not the NLP-style anisotropy-repair story.
+
+The lead pipeline: DINOv2 embeddings -> pool-fit PCA-128 + cluster-whiten ->
+`prototype_softmax` (or `unwhitened_topk_asym` on hard data) -> FCP GPU fast
+path -> optional MS-CS penalty (geodesic NCM only, centered-cosine M).
+Everything in the chain is exactly exchangeable; coverage is Monte-Carlo-tight
+at ~0.90 on the random split at every cal size.
 
 ## Strategy
 
-The campaign is "exchangeability-first": make the exact-guarantee path the
-*default* and force every deviation to announce itself. `GeodesicTopKMeanNCM`
-defaults to `whiten=False`; every cal-fit variant routes through
-`warn_nonexchangeable` and requires `allow_nonexchangeable=True`. This turns
-a theory requirement into an API affordance — new experiments are valid
-unless someone explicitly opts out.
+The campaign is "exchangeability-first": the exact-guarantee path is the
+*default* and every deviation must announce itself (`warn_nonexchangeable` +
+`allow_nonexchangeable=True`). New experiments are valid unless someone
+explicitly opts out.
 
-The codebase now mirrors that theory split. `src/conformal_prediction.py` is
-the transductive core (NCMs, `FullConformalPredictor` + GPU path, CV+, split
-utilities, the exchangeability gate); `src/split_cp_baselines.py` holds the
-inductive baselines we compare against (SoftmaxSplitCP, SemiCP,
-ClusteredSplitCP) and is re-exported for compatibility; superseded one-off
-drivers live in `src/archive/` with a README recording what superseded them.
-Refactors of this code are constrained by reproducibility: recorded findings
-must stay re-runnable, so structural changes are verbatim moves verified
-bit-identical (same RNG stream -> same splits -> same numbers) and gated by
-the two GPU parity tests in `tests/`.
+The current thrust is hardening the paper's weakest rationalization — the
+transform — with controls that each sever one confound, all exchangeable by
+construction (`transform_control_experiment.py`):
 
-The layout is kept ordered by a standing cadence rather than ad-hoc cleanups:
-borderline scripts carry greppable `ARCHIVE-CANDIDATE (review <date>)` notes
-collected in a watch list (`src/archive/README.md`), and a bi-weekly cloud
-routine executes `docs/repo_cleanup_routine.md` — archiving past-due unused
-candidates, flagging newly stale files, and delivering a review PR. Scripts
-tied to pending `docs/findings.md` §10 items are HOLD-marked and outlive
-their review date until the item closes.
+- **JL random projection at d'=128** (+/- the same cluster whitening):
+  separates mere dimension reduction from PCA's data-adaptivity.
+- **Ledoit-Wolf full-matrix whitening at 768** (global / within-cluster): the
+  principled continuous alternative to hard truncation. If it loses, the rank
+  cut is empirically justified against the obvious "why not shrinkage?"
+  question; smoke + diagnostics already point that way.
+- **Geometry diagnostic figure** (`embedding_geometry_diagnostic.py`): hubness
+  skew, anisotropy, relative contrast, class contrast, 1-NN accuracy per
+  space — assigns credit to the right component (hubness reduction belongs to
+  whitening/scaling, not rotation, per Feldbauer & Flexer).
 
-Deliberately *not* unified: the three `stratified_split` variants
-(pool-balanced random-boundary in macs/mscs; exact per-class in semicp;
-generic N-way in pca_experiment) encode different statistical designs —
-balancing cal is label-dependent and over-covers (~+1-3pp, conservative),
-while the random-boundary variant is exactly exchangeable and tight. Merging
-them would silently change experiment semantics.
+Adjacent active workstreams (other sessions): Multi-Dimensional CP
+(Tawachi & Laufer-Goldshtein) as a possible full-CP extension of their
+split-only cell-selection; geometry-conditional coverage (one-sided Mondrian
+floor guarantee) as the primary novelty pilot, unmerged on
+`worktree-novelty-pilots`.
 
 ## Key Discoveries (pivots)
 
-- **"FCP wins" reframed**: SCP-geodesic == FCP-geodesic across datasets and
-  budgets killed the original framing; the story is NCM design under a total
-  label budget B.
-- **Small-cal under-coverage was a bug, not a regime**: the missing-class
-  sentinel fix moved cal=200 coverage 0.844 -> 0.91; pre-fix small-cal
-  numbers are untrustworthy.
+- **"FCP wins" reframed**: SCP-geodesic == FCP-geodesic killed the machinery
+  framing; the story is NCM design under a total label budget B.
+- **Small-cal under-coverage was a bug, not a regime** (missing-class sentinel;
+  cal=200 coverage 0.844 -> 0.91). Later mirrored by the MS-CS ŷ bug: both
+  were asymmetric-function bugs, reinforcing claim 1.
+- **prototype_softmax dominates on separable data** (CIFAR-100: sz 1.30 vs
+  geodesic 1.58 @ cal=800; -19 to -22% at mid cal) but bloats/over-covers on
+  fine-grained data where geodesic asym stays honest — a backbone-separability
+  scope limit (Aircraft, Stanford Cars), stated plainly in the paper.
+- **No class-level M helps a tight softmax NCM** (headroom-gating, structural);
+  the faithful Fargion centered-cosine M is the better lever for the geodesic
+  NCM and our old "MS-CS" was not Fargion's MS — novelty claim retracted,
+  fidelity corrected.
 - **PCA beats AE because the downstream NCM is linear**, not because the
-  embeddings are (they are measurably curved); pairing AE with a nonlinear
-  RBF NCM recovers the advantage at medium cal.
-- **A separate unlabeled pool is a convenience, not a requirement**: fitting
-  the transform on cal+test (label-free, SCA-T-style) is exactly
-  exchangeable and recovers most of the gain — the pool's only edge is
-  sample count.
-- **ClusterCP degenerates to plain SplitCP in our regime** (cal/K <= 8), so
-  FCP+PCA+MS-CS also wins class-conditional CovGap, not just marginal size.
+  embeddings are (they are measurably curved); AE + nonlinear RBF NCM recovers
+  the advantage at medium cal. First evidence for the transform-NCM coupling
+  now formalized as claim 4.
+- **A separate unlabeled pool is a convenience, not a requirement** (cal+test
+  transduction recovers most of the gain; the pool's edge is sample count).
+- **Truncation is load-bearing** (2026-07-05): LW shrinkage whitening at full
+  rank — the "principled" alternative — underperforms PCA-128+cw at cal=400 on
+  both NCMs (prototype 2.05 vs 1.61, geodesic 2.63 vs 2.01, smoke); the JL arm
+  behaves exactly as JL theory predicts, validating the control design.
 
 ## Open Questions
 
-- The cal=600 over-coverage (92.5%) under stratified splits: explained as
-  balanced-cal conservatism + ceiling quantile + trial variance, but the
-  planned stratified-vs-random ablation should settle it quantitatively.
-- `geodesic_topk_asym` (the efficiency-best NCM) has not been re-confirmed on
-  the cluster matched-518 setup, nor through the SCP-geodesic equivalence.
-- Multi-dataset breadth for the penalty story (MA-CS/MS-CS on CUB-200,
-  miniImageNet) and the very-small-cal regime (cal/K = 2-8) are the main
-  unproven legs of the paper's headline table. The MA-CS-vs-MS-CS
-  head-to-head driver on the exchangeable engine is
-  `src/mscs_vs_macs_experiment.py` (results in `output/mscs_vs_macs{,_pca}/`).
+- Full 7-arm FCP sweep (running): does rp128_cw close any gap to pca128_cw?
+  Much-closed => whitening is the lever (isotropization framing returns);
+  barely-closed => adaptive subspace selection carries the paragraph.
+- **d'-selection protocol** — the one honest remaining vulnerability: 128/512
+  came from U-shapes on the evaluation datasets. Candidate fixes: a-priori
+  default (Babenko et al. 2014's 128-d operating point) + robustness band, or
+  a pool-only criterion. Not yet piloted.
+- Do the transform conclusions transfer to the scope-limit datasets
+  (Aircraft/Stanford Cars)? The diagnostic run there should predict the
+  vanishing PCA payoff (low class contrast at any d').
+- MS-CS centered-cosine M: still CPU-only, confirmed at 3 trials on the mean
+  NCM only — asym + high-trial confirmation pending before it's paper-grade.

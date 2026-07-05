@@ -123,6 +123,8 @@ numerically unchanged, it just warns.
 - `src/semicp_experiment.py` -- SemiCP vs FCP comparison (Zhou et al. 2025)
 - `src/conditional_coverage_experiment.py` -- class-conditional coverage (CovGap, ClusterCP baseline)
 - `src/pca_experiment.py` -- PCA/AE dimensionality reduction
+- `src/transform_control_experiment.py` -- PCA-vs-controls ablation (JL random projection, Ledoit-Wolf full-matrix whitening; every arm pool-fit/exchangeable)
+- `src/embedding_geometry_diagnostic.py` -- hubness / anisotropy / class-contrast diagnostics per transform arm (the "why PCA helps" mechanism figure)
 - `src/ncm_comparison_reduced.py` -- NCM comparison across reductions
 - `src/rbf_ncm_experiment.py` -- RBF density NCM iteration
 - `src/compare_backbones.py` -- SSL backbone comparison
