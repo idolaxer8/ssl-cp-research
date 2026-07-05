@@ -121,16 +121,23 @@ floor guarantee) as the primary novelty pilot, unmerged on
   now formalized as claim 4.
 - **A separate unlabeled pool is a convenience, not a requirement** (cal+test
   transduction recovers most of the gain; the pool's edge is sample count).
-- **Truncation is load-bearing** (2026-07-05): LW shrinkage whitening at full
-  rank — the "principled" alternative — underperforms PCA-128+cw at cal=400 on
-  both NCMs (prototype 2.05 vs 1.61, geodesic 2.63 vs 2.01, smoke); the JL arm
-  behaves exactly as JL theory predicts, validating the control design.
+- **The transform-control verdict** (2026-07-05, 7-arm FCP sweep, 10 trials,
+  both NCMs, both splits, `output/pca_pilots/`): (a) JL-128 is ~2x WORSE than
+  raw-768 (balanced cal=800: geodesic 4.1 vs 2.1, prototype 3.0 vs 1.4) —
+  "mere dimension reduction" actively destroys NN structure at this d/n, so
+  the PCA win is entirely data-adaptive subspace selection; (b) rp128_cw ==
+  rp128 exactly — whitening pays ONLY inside the signal subspace, killing the
+  isotropization-first framing; (c) LW-global-768 is catastrophic (5x worse
+  than raw — equalizing noise directions with signal); (d) LW-cluster-768,
+  the serious truncation-free alternative, beats raw but loses to pca128_cw
+  everywhere — mildly at cal=800/prototype (1.34 vs 1.30), badly in the
+  label-scarce regime that carries the paper (+77-88% at cal=200) — so hard
+  truncation is empirically load-bearing, not a lazy stand-in for shrinkage;
+  (e) all arms hold ~0.90 coverage on the random split — efficiency varies
+  wildly, validity never moves, which is Prop 2 made visible in one table.
 
 ## Open Questions
 
-- Full 7-arm FCP sweep (running): does rp128_cw close any gap to pca128_cw?
-  Much-closed => whitening is the lever (isotropization framing returns);
-  barely-closed => adaptive subspace selection carries the paragraph.
 - **d'-selection protocol** — the one honest remaining vulnerability: 128/512
   came from U-shapes on the evaluation datasets. Candidate fixes: a-priori
   default (Babenko et al. 2014's 128-d operating point) + robustness band, or
