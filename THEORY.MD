@@ -122,28 +122,40 @@ floor guarantee) as the primary novelty pilot, unmerged on
 - **A separate unlabeled pool is a convenience, not a requirement** (cal+test
   transduction recovers most of the gain; the pool's edge is sample count).
 - **The transform-control verdict** (2026-07-05, 7-arm FCP sweep, 10 trials,
-  both NCMs, both splits, `output/pca_pilots/`): (a) JL-128 is ~2x WORSE than
-  raw-768 (balanced cal=800: geodesic 4.1 vs 2.1, prototype 3.0 vs 1.4) —
-  "mere dimension reduction" actively destroys NN structure at this d/n, so
-  the PCA win is entirely data-adaptive subspace selection; (b) rp128_cw ==
-  rp128 exactly — whitening pays ONLY inside the signal subspace, killing the
-  isotropization-first framing; (c) LW-global-768 is catastrophic (5x worse
-  than raw — equalizing noise directions with signal); (d) LW-cluster-768,
-  the serious truncation-free alternative, beats raw but loses to pca128_cw
-  everywhere — mildly at cal=800/prototype (1.34 vs 1.30), badly in the
-  label-scarce regime that carries the paper (+77-88% at cal=200) — so hard
-  truncation is empirically load-bearing, not a lazy stand-in for shrinkage;
-  (e) all arms hold ~0.90 coverage on the random split — efficiency varies
-  wildly, validity never moves, which is Prop 2 made visible in one table.
+  both NCMs, both splits, 4 datasets, `output/pca_pilots/`). On separable
+  many-class data (CIFAR-100, miniImageNet): (a) JL-128 is 2-3x WORSE than
+  raw-768 — "mere dimension reduction" destroys NN structure, so the PCA win
+  is entirely data-adaptive subspace selection; (b) rp128_cw == rp128 exactly
+  — whitening pays ONLY inside the signal subspace; (c) LW-global-768 is
+  catastrophic (equalizes noise with signal); (d) LW-cluster-768 beats raw
+  but loses to pca128_cw everywhere (worst at cal=200: +77-88%) — hard
+  truncation is load-bearing; (e) CIFAR-10 control: saturated, transform
+  choice irrelevant, no harm. All arms hold ~0.90 on the random split at all
+  datasets — efficiency varies 40x, validity never moves (Prop 2 visible).
+- **The attribution INVERTS on the weak-backbone regime** (Aircraft): PCA-128
+  alone is a no-op (matches the known vanishing-PCA-payoff scope limit), the
+  in-subspace whitening becomes the active ingredient (pca128_cw cuts geodesic
+  sets 21-27% vs raw), and **full-rank LW-cluster whitening BEATS truncation**
+  (geodesic 22.0 vs 29.4 @ cal=800; 29.0 vs 46.7 @ cal=200; prototype ties).
+  The geometry diagnostic predicted this: aircraft's pool participation ratio
+  is 16 (vs 235-246 on cifar/mini) — DINOv2 collapses the variants into a
+  tiny dominant subspace, and the residual fine-grained discrimination lives
+  in the low-variance tail (LW-cluster 1-NN 0.52 vs PCA 0.40-0.46), which
+  truncation discards and full-rank within-cluster whitening amplifies. So
+  the transform's active ingredient tracks backbone separability: subspace
+  selection when the signal is in the top spectrum, within-cluster variance
+  equalization when it is not.
 
 ## Open Questions
 
-- **d'-selection protocol** — the one honest remaining vulnerability: 128/512
-  came from U-shapes on the evaluation datasets. Candidate fixes: a-priori
-  default (Babenko et al. 2014's 128-d operating point) + robustness band, or
-  a pool-only criterion. Not yet piloted.
-- Do the transform conclusions transfer to the scope-limit datasets
-  (Aircraft/Stanford Cars)? The diagnostic run there should predict the
-  vanishing PCA payoff (low class contrast at any d').
+- **d'-selection / transform-selection protocol** — the vulnerability is now
+  sharper AND closer to solved: the pool participation ratio (label-free,
+  pool-only) separates the two regimes (PR ~ 235-246 -> truncate+whiten wins;
+  PR ~ 16 -> full-rank LW-cluster wins). A pool-only decision rule ("if PR >>
+  d', PCA-d'+cw; else lw_cluster") is the candidate protocol — needs
+  validation on held-out datasets (Stanford Cars, CUB, Flowers) before the
+  paper can claim it.
+- Cluster high-trial confirmation of the aircraft LW-cluster win (10 local
+  trials; geodesic margins are >3 SE but prototype ties deserve 50 trials).
 - MS-CS centered-cosine M: still CPU-only, confirmed at 3 trials on the mean
   NCM only — asym + high-trial confirmation pending before it's paper-grade.
