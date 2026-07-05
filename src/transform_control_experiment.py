@@ -118,6 +118,12 @@ def main():
                          "matrix t %% rp_repeats).")
     ap.add_argument("--alpha", type=float, default=0.1)
     ap.add_argument("--n_clusters_whiten", type=int, default=100)
+    ap.add_argument("--random_min_cal_softmax", type=int, default=800,
+                    help="skip softmax NCMs on the random split below this cal: "
+                         "missing classes force the slow CPU fallback (~40-60s/trial "
+                         "vs ~0.5s GPU) only to reproduce the known degenerate "
+                         "corner (prototype at random cal<=400 -> sz~K). Set 0 to "
+                         "run everything.")
     ap.add_argument("--proto_temperature", default="auto")
     ap.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
     ap.add_argument("--seed", type=int, default=42)
@@ -158,6 +164,9 @@ def main():
                 if split == "balanced_both" and m_cal < 2:
                     continue
                 for nm in args.ncms:
+                    if (split == "random" and nm in SOFTMAX_NCMS
+                            and cal < args.random_min_cal_softmax):
+                        continue
                     covs, szs = [], []
                     pooled_cov, pooled_tot = np.zeros(K), np.zeros(K)
                     n_fallback = 0
