@@ -146,16 +146,43 @@ floor guarantee) as the primary novelty pilot, unmerged on
   selection when the signal is in the top spectrum, within-cluster variance
   equalization when it is not.
 
+- **The whitening cluster count k is a second regime-tracking knob**
+  (2026-07-06 k-sweep, k in {10..200}, cifar100+aircraft): on separable data
+  pca128_cw is robust to k (flat from k=50) while lw_cluster NEEDS fine
+  clusters (geodesic @800: 4.19 at k=10 -> 1.81 at k=200; prototype reaches
+  1.30 = PCA level at k=200 — the earlier "shrinkage loses to truncation" gap
+  was partly a cluster-resolution artifact for the prototype NCM). On
+  aircraft the preference INVERTS: coarser is better for both arms
+  (lw_cluster geodesic @800: 18.77 at k=10 vs 22.03 at k=100; pca128_cw
+  prototype @800: 12.39 at k=10 vs 17.33 at k=100 — both new aircraft bests,
+  -53%/-41% vs the old defaults). k_opt ~ PR/2..PR matches both regimes —
+  another pool-only heuristic. Caveat: prototype + coarse-k full-rank
+  whitening degenerates to the trivial set (conservative cov=1) — the softmax
+  head needs either the PCA subspace or fine clusters.
+- **The spectral-band diagnostic makes the mechanism quantitative**
+  (labels-as-diagnostic, `spectral_band_diagnostic.py`): cifar/mini class
+  signal peaks in pool-eigenbasis dims 17-128 (1-NN 0.82/0.93) — variance and
+  signal coincide, truncation is right. Aircraft: the top-16 band carries
+  75.5% of variance at 1-NN 0.27 (nuisance bulk — pose/livery), while dims
+  129-512 carry 4.6% of variance at 1-NN 0.57, the best band, ABOVE the full
+  space (0.41). Exactly what PCA-128 discards and whitening re-weights. Also:
+  mean-distance class ratio misleads on aircraft (top band looks good via
+  coarse family contrast); banded 1-NN is the honest lens for NN-based NCMs.
+  Suggests a band-pass transform (drop top-16 nuisance + 513+ noise) as the
+  collapsed-regime optimum — being probed (tail_r16 / tailcw_r16 / cw768).
+
 ## Open Questions
 
-- **d'-selection / transform-selection protocol** — the vulnerability is now
-  sharper AND closer to solved: the pool participation ratio (label-free,
-  pool-only) separates the two regimes (PR ~ 235-246 -> truncate+whiten wins;
-  PR ~ 16 -> full-rank LW-cluster wins). A pool-only decision rule ("if PR >>
-  d', PCA-d'+cw; else lw_cluster") is the candidate protocol — needs
-  validation on held-out datasets (Stanford Cars, CUB, Flowers) before the
-  paper can claim it.
-- Cluster high-trial confirmation of the aircraft LW-cluster win (10 local
-  trials; geodesic margins are >3 SE but prototype ties deserve 50 trials).
+- Probe arms in flight: does tail-keep (drop top-16) + whitening match or
+  beat lw_cluster on aircraft (and crater on cifar, as the band structure
+  predicts)? Does full-rank DIAGONAL cluster whitening (cw768) recover most
+  of lw_cluster (is the full matrix needed, or just the rescaling)?
+- Third regime point: CUB-200 re-extraction running (historically wanted
+  d'=512 — the intermediate case; where does its band structure put it?).
+- The 'auto' arm (pool-PR transform selection, implemented + smoke-tested) is
+  PARKED by user decision (2026-07-06) until the per-regime picture is fully
+  understood — heuristics first, productization later.
+- Cluster high-trial confirmation of the aircraft findings (10 local trials;
+  geodesic margins are >3 SE, prototype k=10 number deserves 50 trials).
 - MS-CS centered-cosine M: still CPU-only, confirmed at 3 trials on the mean
   NCM only — asym + high-trial confirmation pending before it's paper-grade.
