@@ -164,6 +164,14 @@ def prototype_lac_scores(Zq, Zcal, y_cal, classes, T, loo=False):
 # Rank transform + purity function
 # ---------------------------------------------------------------------------
 
+def parse_mode_name(mode):
+    """Base yhat mode name without the _aug/_gt/_gt4 dose suffix."""
+    for suf in ("_aug", "_gt4", "_gt"):
+        if mode.endswith(suf):
+            return mode[: len(mode) - len(suf)]
+    return mode
+
+
 def missing_class_scores(Zq, Zcal, k):
     """As-if-missing TRUE-label score vector under our conventions: if a point's
     class were absent from cal (or a singleton under LOO), the geodesic score is
@@ -310,31 +318,43 @@ def random_split(y, classes, cal, rng, test=1000):
 # One trial
 # ---------------------------------------------------------------------------
 
-def run_trial(Z, y, Zu, yu_true, classes, cal_size, split, alpha, k_d, T_proto, rng,
+def run_trial(feats, y, yu_true, classes, cal_size, split, alpha, k_d, T_by_view, rng,
+              dim_specs=(("geo", "geo", "default"), ("proto", "proto", "default")),
               purity_mode="ratio", yhat_modes=("oracle", "proto"), pool_graph=None,
               with_dratio1=False):
+    """dim_specs: tuple of (label, ncm in {geo,proto}, view); feats: {view:
+    (Z_labeled, Z_pool)}. Multi-VIEW dimensions (direction 2) let the same
+    backbone provide decorrelated dimensions via different pool-fit feature
+    transforms (screen: proto@pca32_cw vs proto@pca128_cw false-corr 0.669
+    vs same-view geo/proto 0.92)."""
     if split == "balanced_both":
         ci, ti = balanced_both_split(y, classes, cal_size, rng)
     else:
         ci, ti = random_split(y, classes, cal_size, rng)
-    Zc, yc = Z[ci], y[ci]
-    Zt, yt = Z[ti], y[ti]
+    yc, yt = y[ci], y[ti]
     K = len(classes)
     y_test_col = np.searchsorted(classes, yt)
     k_geo = max(1, min(5, len(yc) // K))
 
     # --- dimension scores (cal-anchored) for pool / cal / test ---
     dims = {}
-    dims["geo"] = dict(
-        pool=geodesic_asym_scores(Zu, Zc, yc, classes, k_geo),
-        cal=geodesic_asym_scores(Zc, Zc, yc, classes, k_geo, self_is_cal=True),
-        test=geodesic_asym_scores(Zt, Zc, yc, classes, k_geo),
-    )
-    dims["proto"] = dict(
-        pool=prototype_lac_scores(Zu, Zc, yc, classes, T_proto),
-        cal=prototype_lac_scores(Zc, Zc, yc, classes, T_proto, loo=True),
-        test=prototype_lac_scores(Zt, Zc, yc, classes, T_proto),
-    )
+    for label, ncm, view in dim_specs:
+        Zv, Zuv = feats[view]
+        Zc, Zt = Zv[ci], Zv[ti]
+        if ncm == "geo":
+            dims[label] = dict(
+                pool=geodesic_asym_scores(Zuv, Zc, yc, classes, k_geo),
+                cal=geodesic_asym_scores(Zc, Zc, yc, classes, k_geo, self_is_cal=True),
+                test=geodesic_asym_scores(Zt, Zc, yc, classes, k_geo), view=view)
+        else:
+            T = T_by_view[view]
+            dims[label] = dict(
+                pool=prototype_lac_scores(Zuv, Zc, yc, classes, T),
+                cal=prototype_lac_scores(Zc, Zc, yc, classes, T, loo=True),
+                test=prototype_lac_scores(Zt, Zc, yc, classes, T), view=view)
+    dim_labels = [s[0] for s in dim_specs]
+    # anchor for pseudo-labels / LP seeds: first proto dim, else first dim
+    anchor = next((s[0] for s in dim_specs if s[1] == "proto"), dim_labels[0])
 
     # --- rank space (ECDF fit on the pool cloud, per dimension) ---
     rank = {}
@@ -347,7 +367,7 @@ def run_trial(Z, y, Zu, yu_true, classes, cal_size, split, alpha, k_d, T_proto, 
     res = {}
 
     # --- raw 1-D arms ---
-    for name in ("geo", "proto"):
+    for name in dim_labels:
         cal_true = dims[name]["cal"][cal_rows, cal_col]
         res[f"raw1_{name}"] = scp_eval(cal_true, dims[name]["test"], y_test_col, alpha)
 
@@ -359,17 +379,17 @@ def run_trial(Z, y, Zu, yu_true, classes, cal_size, split, alpha, k_d, T_proto, 
         return mode, None
 
     oracle_col = np.searchsorted(classes, yu_true)
-    proto_col = np.argmin(dims["proto"]["pool"], axis=1)
+    proto_col = np.argmin(dims[anchor]["pool"], axis=1)
     base_modes = {parse_mode(m)[0] for m in yhat_modes}
     yhat = {}
     if "oracle" in base_modes:
         yhat["oracle"] = oracle_col
-    if "proto" in base_modes:      # cal-anchored prototype argmax (old "fullcal")
+    if "proto" in base_modes:      # cal-anchored anchor-dim argmax (old "fullcal")
         yhat["proto"] = proto_col
-    if "ranksum" in base_modes:    # ensemble of both dims' rankings
-        yhat["ranksum"] = np.argmin(rank["geo"]["pool"] + rank["proto"]["pool"], axis=1)
+    if "ranksum" in base_modes:    # ensemble of all dims' rankings
+        yhat["ranksum"] = np.argmin(sum(rank[n]["pool"] for n in dim_labels), axis=1)
     if "lp" in base_modes:         # label spreading on the pool kNN graph
-        Y0 = 1.0 - dims["proto"]["pool"]           # LAC -> posterior rows
+        Y0 = 1.0 - dims[anchor]["pool"]            # LAC -> posterior rows
         Y = label_spread(pool_graph, Y0)
         yhat["lp"] = np.argmax(Y, axis=1)
     if "oracle_present" in base_modes:  # DIAGNOSTIC: oracle where the class is in
@@ -392,11 +412,17 @@ def run_trial(Z, y, Zu, yu_true, classes, cal_size, split, alpha, k_d, T_proto, 
     aug_rank = None
     suffixes = {parse_mode(m)[1] for m in yhat_modes} - {None}
     if suffixes:
-        s1_miss, s2_miss = missing_class_scores(Zu, Zc, k_geo)
-        ref_g = ecdf_fit(dims["geo"]["pool"])
-        ref_p = ecdf_fit(dims["proto"]["pool"])
-        aug_rank = np.stack([ecdf_apply(ref_g, s1_miss),
-                             ecdf_apply(ref_p, s2_miss)], axis=-1)   # (n_pool, 2)
+        # per-dim as-if-missing TRUE score: proto -> LAC = 1 exactly;
+        # geo -> pi / d_other on that dim's view
+        cols = []
+        for label, ncm, view in dim_specs:
+            Zv, Zuv = feats[view]
+            if ncm == "proto":
+                miss = np.ones(len(Zuv))
+            else:
+                miss = missing_class_scores(Zuv, Zv[ci], k_geo)[0]
+            cols.append(ecdf_apply(ecdf_fit(dims[label]["pool"]), miss))
+        aug_rank = np.stack(cols, axis=-1)                       # (n_pool, n_dims)
         n_pool = len(aug_rank)
         counts = np.bincount(np.searchsorted(classes, yc), minlength=K)
         n1 = int((counts == 1).sum())
@@ -423,13 +449,13 @@ def run_trial(Z, y, Zu, yu_true, classes, cal_size, split, alpha, k_d, T_proto, 
         return scp_eval(cal_true, test_D, y_test_col, alpha)
 
     if with_dratio1:
-        res["dratio1_geo"] = dratio(("geo",), proto_col)
-        res["dratio1_proto"] = dratio(("proto",), proto_col)
+        for name in dim_labels:
+            res[f"dratio1_{name}"] = dratio((name,), proto_col)
     for mode in yhat_modes:
         base, suf = parse_mode(mode)
         col = yhat[base]
         extra = extra_by_suffix[suf] if suf else None
-        res[f"dratio2_{mode}"] = dratio(("geo", "proto"), col, extra_true=extra)
+        res[f"dratio2_{mode}"] = dratio(tuple(dim_labels), col, extra_true=extra)
         res[f"_yhat_acc_{mode}"] = float((col == oracle_col).mean())
     return res
 
@@ -453,6 +479,11 @@ def main():
     ap.add_argument("--graph_k", type=int, default=15)
     ap.add_argument("--pca_dim", type=int, default=128)
     ap.add_argument("--whiten", default="cluster")
+    ap.add_argument("--dims", nargs="+", default=None,
+                    help="dimension specs 'ncm:view', e.g. --dims proto:pca128_cw "
+                         "proto:pca32_cw. Views: pca<D>_cw, pca<D>, cw768, raw768, "
+                         "default (=--pca_dim/--whiten). Default dims: "
+                         "geo:default proto:default (the original pair).")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--output_dir", default="output/mdcp_pool_pilot")
     args = ap.parse_args()
@@ -464,23 +495,61 @@ def main():
     classes = np.unique(y)
     print(f"labeled {X.shape}, pool {Xu.shape}, K={len(classes)}")
 
-    tr = make_transform(unlabeled=Xu, pca_dim=args.pca_dim, whiten=args.whiten)
-    Z, Zu = tr.transform(X), tr.transform(Xu)
+    # --- dimension specs + per-view features ---
+    def view_params(vname):
+        if vname == "default":
+            return args.pca_dim, args.whiten
+        if vname == "raw768":
+            return "raw", None
+        if vname == "cw768":
+            return None, "cluster"
+        if vname.startswith("pca"):
+            core = vname[3:]
+            cw = core.endswith("_cw")
+            return int(core[:-3] if cw else core), ("cluster" if cw else None)
+        raise ValueError(f"unknown view {vname!r}")
 
-    # pilot-fixed prototype temperature (repo convention: one stable balanced
-    # draw at m=8/class, fixed seed -> constant across all trials)
-    rng0 = np.random.default_rng(args.seed)
-    ci0, _ = balanced_both_split(y, classes, 8 * len(classes), rng0)
-    pncm = PrototypeSoftmaxNCM(temperature=None, logit="cosine",
-                               allow_nonexchangeable=True)
-    pncm.fit(Z[ci0], y[ci0])
-    T_proto = float(pncm._T)
-    print(f"pilot-fixed prototype T = {T_proto:.4f}")
+    if args.dims:
+        dim_specs = []
+        for i, spec in enumerate(args.dims):
+            ncm, view = spec.split(":")
+            dim_specs.append((f"{ncm}_{view}" if args.dims.count(spec) == 1
+                              else f"{ncm}_{view}_{i}", ncm, view))
+    else:
+        dim_specs = [("geo", "geo", "default"), ("proto", "proto", "default")]
+    print("dims:", [(l, n, v) for l, n, v in dim_specs])
+
+    feats = {}
+    for _, _, view in dim_specs:
+        if view in feats:
+            continue
+        pd_, wh = view_params(view)
+        if pd_ == "raw":
+            feats[view] = (X, Xu)
+        else:
+            tr = make_transform(unlabeled=Xu, pca_dim=pd_, whiten=wh)
+            feats[view] = (tr.transform(X), tr.transform(Xu))
+
+    # pilot-fixed prototype temperature PER VIEW (repo convention: one stable
+    # balanced draw at m=8/class, fixed seed -> constant across all trials)
+    T_by_view = {}
+    for label, ncm, view in dim_specs:
+        if ncm != "proto" or view in T_by_view:
+            continue
+        rng0 = np.random.default_rng(args.seed)
+        ci0, _ = balanced_both_split(y, classes, 8 * len(classes), rng0)
+        pncm = PrototypeSoftmaxNCM(temperature=None, logit="cosine",
+                                   allow_nonexchangeable=True)
+        pncm.fit(feats[view][0][ci0], y[ci0])
+        T_by_view[view] = float(pncm._T)
+        print(f"pilot-fixed prototype T[{view}] = {T_by_view[view]:.4f}")
 
     pool_graph = None
-    if "lp" in args.yhat_modes:
+    if any(parse_mode_name(m) == "lp" for m in args.yhat_modes):
         t0 = time.time()
-        pool_graph = build_pool_graph(Zu, k=args.graph_k)
+        anchor_view = next((v for _, n, v in dim_specs if n == "proto"),
+                           dim_specs[0][2])
+        pool_graph = build_pool_graph(feats[anchor_view][1], k=args.graph_k)
         print(f"pool kNN graph (k={args.graph_k}) built in {time.time()-t0:.0f}s")
 
     results = {}
@@ -490,8 +559,9 @@ def main():
             t0 = time.time()
             for t in range(args.n_trials):
                 rng = np.random.default_rng(args.seed + 1000 * t + cal)
-                r = run_trial(Z, y, Zu, yu, classes, cal, split, args.alpha,
-                              args.k_d, T_proto, rng, purity_mode=args.purity,
+                r = run_trial(feats, y, yu, classes, cal, split, args.alpha,
+                              args.k_d, T_by_view, rng, dim_specs=dim_specs,
+                              purity_mode=args.purity,
                               yhat_modes=args.yhat_modes, pool_graph=pool_graph,
                               with_dratio1=args.with_dratio1)
                 for k, v in r.items():
