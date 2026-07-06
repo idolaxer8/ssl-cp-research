@@ -52,9 +52,21 @@ ARMS = {
     "rp128_cw":      dict(pca_dim=128, whiten="cluster",    projection="random"),
     "pca128":        dict(pca_dim=128, whiten=None,         projection="pca"),
     "pca128_cw":     dict(pca_dim=128, whiten="cluster",    projection="pca"),
+    "pca512_cw":     dict(pca_dim=512, whiten="cluster",    projection="pca"),
     "lw_global768":  dict(pca_dim=None, whiten="lw_global", projection=None),
     "lw_cluster768": dict(pca_dim=None, whiten="lw_cluster", projection=None),
 }
+
+
+def pool_participation_ratio(Xu, n=4000, seed=0):
+    """Effective dimensionality of the pool cloud: (sum ev)^2 / sum ev^2.
+    Pool-only + label-free, so using it to SELECT the transform is itself a
+    fixed (bag-independent) rule -> exchangeability preserved."""
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(len(Xu), min(n, len(Xu)), replace=False)
+    Z = Xu[idx] - Xu[idx].mean(axis=0)
+    ev = np.linalg.svd(Z, compute_uv=False) ** 2
+    return float(ev.sum() ** 2 / (ev ** 2).sum())
 
 
 def balanced_split(y, allc, m_cal, m_test, rng):
@@ -104,7 +116,19 @@ def main():
     ap = argparse.ArgumentParser(description="PCA-vs-controls transform experiment (all arms exchangeable)")
     ap.add_argument("--data_dir", default="output/from_cluster")
     ap.add_argument("--dataset", default="cifar100")
-    ap.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ARMS))
+    ap.add_argument("--arms", nargs="+", default=list(ARMS),
+                    choices=list(ARMS) + ["auto"],
+                    help="'auto' = pool-only transform selection: pool "
+                         "participation ratio >= --auto_pr_threshold -> "
+                         "pca128_cw (signal in the top spectrum), else "
+                         "lw_cluster768 (collapsed spectrum, signal in the "
+                         "tail -> whiten, don't truncate).")
+    ap.add_argument("--auto_pr_threshold", type=float, default=64.0,
+                    help="PR switch point for the auto arm (d'/2 by default; "
+                         "observed PR: aircraft 16, cifar10 117, cifar100 235, "
+                         "mini 246).")
+    ap.add_argument("--out_tag", default="",
+                    help="suffix for results/plot filenames (sweep runs).")
     ap.add_argument("--ncms", nargs="+",
                     default=["unwhitened_topk_mean", "prototype_softmax"])
     ap.add_argument("--splits", nargs="+", default=["balanced_both", "random"],
@@ -143,12 +167,22 @@ def main():
     allc = np.unique(y)
     K = len(allc)
     cls_to_j = {int(c): j for j, c in enumerate(allc)}
-    print(f"{args.dataset}: X={X.shape} K={K} pool={Xu.shape} | device={args.device}")
+    pool_pr = pool_participation_ratio(Xu, seed=args.seed)
+    print(f"{args.dataset}: X={X.shape} K={K} pool={Xu.shape} "
+          f"PR={pool_pr:.1f} | device={args.device}")
 
     rows = []
     for arm in args.arms:
+        if arm == "auto":
+            resolved = ("pca128_cw" if pool_pr >= args.auto_pr_threshold
+                        else "lw_cluster768")
+            print(f"\nauto arm: pool PR={pool_pr:.1f} vs threshold "
+                  f"{args.auto_pr_threshold:g} -> {resolved}")
+            spec_arm, arm = resolved, f"auto->{resolved}"
+        else:
+            spec_arm = arm
         t0 = time.time()
-        tfs = build_arm_transforms(arm, Xu, args)
+        tfs = build_arm_transforms(spec_arm, Xu, args)
         print(f"\n=== arm {arm}: {tfs[0]}"
               + (f" (x{len(tfs)} JL seeds)" if len(tfs) > 1 else "")
               + f"  [fit {time.time()-t0:.0f}s] ===")
@@ -224,8 +258,10 @@ def main():
             torch.cuda.empty_cache()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    out = {"config": vars(args), "dataset": args.dataset, "rows": rows}
-    out_json = os.path.join(args.output_dir, f"results_{args.dataset}.json")
+    tag = f"_{args.out_tag}" if args.out_tag else ""
+    out = {"config": vars(args), "dataset": args.dataset,
+           "pool_participation_ratio": pool_pr, "rows": rows}
+    out_json = os.path.join(args.output_dir, f"results_{args.dataset}{tag}.json")
     with open(out_json, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\nSaved -> {out_json}")
@@ -240,7 +276,9 @@ def plot(out, args):
     import matplotlib.pyplot as plt
 
     rows = out["rows"]
-    arm_order = [a for a in ARMS if a in {r["arm"] for r in rows}]
+    present = {r["arm"] for r in rows}
+    arm_order = ([a for a in ARMS if a in present]
+                 + sorted(a for a in present if a not in ARMS))  # auto->... rows
     colors = plt.cm.tab10(np.linspace(0, 1, len(arm_order)))
     for split in {r["split"] for r in rows}:
         ncms = sorted({r["ncm"] for r in rows})
@@ -268,8 +306,9 @@ def plot(out, args):
         fig.suptitle(f"Transform controls — {out['dataset']} ({split}), "
                      f"{args.n_trials} trials, all arms exchangeable")
         fig.tight_layout()
+        tag = f"_{args.out_tag}" if args.out_tag else ""
         p = os.path.join(args.output_dir,
-                         f"transform_controls_{out['dataset']}_{split}.png")
+                         f"transform_controls_{out['dataset']}_{split}{tag}.png")
         fig.savefig(p, dpi=140)
         print(f"Saved -> {p}")
 
