@@ -107,6 +107,36 @@ def test_lw_cluster_whitens_within():
     assert tf.cluster_centroids_.shape[1] == X.shape[1]
 
 
+def test_pca_tail_projection():
+    X = _synth(d=80)
+    tf = UnlabeledTransform(pca_dim=8, whiten=None, projection="pca_tail",
+                            n_clusters=8).fit(X)
+    Z = tf.transform(X[:100])
+    assert Z.shape == (100, 72)  # D - r dims kept
+    # tail basis is orthonormal and orthogonal to the top-8 directions
+    from sklearn.decomposition import PCA
+    top = PCA(n_components=8).fit(X).components_
+    assert np.allclose(tf.tail_basis_ @ tf.tail_basis_.T, np.eye(72), atol=1e-8)
+    assert np.abs(top @ tf.tail_basis_.T).max() < 1e-6
+    # variance in the tail projection is small relative to the top (spiked synth)
+    var_tail = tf.transform(X).var(axis=0).sum()
+    var_top = ((X - X.mean(0)) @ top.T).var(axis=0).sum()
+    assert var_tail < var_top
+    assert np.allclose(tf.transform(X), tf.Xu_transformed_, atol=1e-10)
+
+
+def test_center_projection_cw():
+    X = _synth()
+    tf = UnlabeledTransform(pca_dim=None, whiten="cluster", projection="center",
+                            n_clusters=8).fit(X)
+    assert tf.center_ is not None and tf.inv_std_ is not None
+    Z = tf.transform(X)
+    assert Z.shape == X.shape
+    # centering applied: transformed pool mean ~ 0 before scaling => scaled too
+    assert np.abs(Z.mean(0)).max() < 5.0 * np.abs(tf.inv_std_).max() * 1e-1
+    assert np.allclose(Z, tf.Xu_transformed_, atol=1e-10)
+
+
 def test_fixed_map_determinism():
     """Same pool -> identical transform (fixed map w.r.t. any future bag)."""
     X = _synth()

@@ -55,6 +55,12 @@ ARMS = {
     "pca512_cw":     dict(pca_dim=512, whiten="cluster",    projection="pca"),
     "lw_global768":  dict(pca_dim=None, whiten="lw_global", projection=None),
     "lw_cluster768": dict(pca_dim=None, whiten="lw_cluster", projection=None),
+    # signal-in-the-tail probes (2026-07-06): keep the orthogonal complement of
+    # the top-16 principal directions (16 ~ aircraft pool PR) / full-rank
+    # diagonal cluster whitening
+    "tail_r16":      dict(pca_dim=16, whiten=None,          projection="pca_tail"),
+    "tailcw_r16":    dict(pca_dim=16, whiten="cluster",     projection="pca_tail"),
+    "cw768":         dict(pca_dim=None, whiten="cluster",   projection="center"),
 }
 
 

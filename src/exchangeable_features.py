@@ -68,7 +68,12 @@ class UnlabeledTransform:
         random_state: seed for PCA / k-means (the pool is fixed, so this is fixed).
         projection:  'pca' (default), 'random' (Gaussian Johnson-Lindenstrauss
                      matrix -- data-INDEPENDENT control arm; only the pool mean
-                     is used, for centering parity with PCA), or None.
+                     is used, for centering parity with PCA), 'pca_tail' (DROP
+                     the top pca_dim principal directions, keep the D - pca_dim
+                     tail -- the mirror image of PCA truncation, for the
+                     signal-in-the-tail probe on collapsed-spectrum data),
+                     'center' (subtract the pool mean only, no reduction), or
+                     None.
         rp_seed:     seed for the random projection matrix (default random_state).
 
     Every variant remains a function of the unlabeled pool alone (the JL matrix
@@ -83,7 +88,7 @@ class UnlabeledTransform:
                  reg=1e-4, random_state=42, n_init=10,
                  projection="pca", rp_seed=None):
         assert whiten in ("cluster", "global", "lw_global", "lw_cluster", None)
-        assert projection in ("pca", "random", None)
+        assert projection in ("pca", "pca_tail", "random", "center", None)
         self.pca_dim = pca_dim
         self.whiten = whiten
         self.n_clusters = n_clusters
@@ -95,7 +100,8 @@ class UnlabeledTransform:
         # fitted state
         self.pca_ = None
         self.rp_ = None                  # JL matrix (D x d), 'random' projection
-        self.center_ = None              # pool mean (random-proj / lw paths)
+        self.tail_basis_ = None          # (D-r, D) tail eigenbasis, 'pca_tail'
+        self.center_ = None              # pool mean (random/tail/center/lw paths)
         self.kmeans_ = None
         self.inv_std_ = None             # diagonal whitening ('cluster'/'global')
         self.W_ = None                   # full-matrix ZCA whitening ('lw_*')
@@ -123,8 +129,20 @@ class UnlabeledTransform:
             self.rp_ = rng.standard_normal(
                 (X.shape[1], self.pca_dim)) / np.sqrt(self.pca_dim)
             Xp = (X - self.center_) @ self.rp_
-        elif self.whiten in ("lw_global", "lw_cluster"):
-            # full-rank whitening arms: center by the pool mean (PCA parity)
+        elif self.projection == "pca_tail" and reduce:
+            # keep the ORTHOGONAL COMPLEMENT of the top pca_dim principal
+            # directions -- the mirror of PCA truncation. Signal-in-the-tail
+            # probe: on collapsed-spectrum data the class signal survives this;
+            # on separable data it should crater.
+            full = PCA(n_components=min(X.shape) if min(X.shape) < X.shape[1]
+                       else X.shape[1],
+                       random_state=self.random_state).fit(X)
+            self.center_ = full.mean_
+            self.tail_basis_ = full.components_[self.pca_dim:]
+            Xp = (X - self.center_) @ self.tail_basis_.T
+        elif self.projection == "center" or self.whiten in ("lw_global",
+                                                            "lw_cluster"):
+            # full-rank arms: center by the pool mean (PCA parity)
             self.center_ = X.mean(axis=0)
             Xp = X - self.center_
         else:
@@ -206,6 +224,8 @@ class UnlabeledTransform:
             Xp = self.pca_.transform(Xp)
         elif self.rp_ is not None:
             Xp = (Xp - self.center_) @ self.rp_
+        elif self.tail_basis_ is not None:
+            Xp = (Xp - self.center_) @ self.tail_basis_.T
         elif self.center_ is not None:
             Xp = Xp - self.center_
         if self.inv_std_ is not None:
