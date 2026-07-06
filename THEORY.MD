@@ -194,6 +194,22 @@ floor guarantee) as the primary novelty pilot, unmerged on
   whitening, coarse k. Pool-only regime flags: PR and top-band variance
   share; the labeled banded-1NN profile is the mechanistic explanation.
 
+- **AE on low-PR data: nonlinearity is not the missing ingredient —
+  decorrelation is** (2026-07-06 AE pilot, aircraft). Vanilla AE-128 behaves
+  exactly as the variance-driven prediction said: geodesic 42.0 @ cal=800
+  (~ PCA-128's no-op, worse than raw), prototype degenerate — MSE
+  reconstruction spends the bottleneck on the 75%-variance nuisance bulk.
+  Whiten-then-AE (LW-cluster k=10 -> AE-128) is the informative arm: it
+  PRESERVES the LW metric win in a compact 128-d code (geodesic 20.5 vs
+  full-rank LW 18.8) and un-breaks the prototype head that full-rank
+  whitening degenerates (16.3 valid vs sz=K) — but it beats neither per-NCM
+  best (geodesic 18.8 full-rank LW; prototype 12.4-13.9 pca128_cw coarse-k).
+  So the AE's only value on collapsed-spectrum data is compressing an
+  already-good metric, consistent with the alignment hypothesis (our
+  metric/linear-friendly NCMs discard AE curvature). The one untested corner
+  where AE could still matter: pairing with the nonlinear RBF NCM (the
+  combination that won at medium cal on CIFAR-100) — low priority.
+
 ## Open Questions
 
 - Pool-only surrogate for the banded-1NN profile (the one labels-dependent
