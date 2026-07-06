@@ -171,18 +171,42 @@ floor guarantee) as the primary novelty pilot, unmerged on
   Suggests a band-pass transform (drop top-16 nuisance + 513+ noise) as the
   collapsed-regime optimum — being probed (tail_r16 / tailcw_r16 / cw768).
 
+- **Probe attribution: it is the full covariance metric, not band selection**
+  (2026-07-06 probes). On aircraft, bare tail-keep (drop top-16) FAILS
+  (geodesic 53.9 vs raw 40.2 @800 — the surviving bands still drown the
+  129-512 signal without rescaling); tail + diagonal whitening only partially
+  recovers (38.8); full-rank DIAGONAL cluster whitening also fails (36.1).
+  Only the full-matrix LW-cluster whitening wins (18.8) — the nuisance bulk is
+  not axis-aligned, so per-dimension rescaling cannot remove it; off-diagonal
+  DECORRELATION is the operative ingredient on collapsed-spectrum data. On
+  cifar the control direction holds (tail arms hurt, cw768 lands between raw
+  and pca128_cw).
+- **CUB-200 = the intermediate regime point, replicated end-to-end** (fresh
+  336px extraction, PR=57.7, top-16 var share 44%, banded 1-NN peak at 17-128
+  with a STRONG 129-512 mid-band 0.77): pca512_cw wins both NCMs @ cal=1600
+  (geodesic 1.51, prototype 1.23), pca128_cw is neutral-to-harmful (1.75 vs
+  raw 1.69 — replicating the historical "PCA-128 hurts CUB"), lw_cluster768
+  loses (2.15). The three-regime map is now: d'_opt and metric richness track
+  how deep the class signal sits in the pool spectrum — cifar/mini (PR~240,
+  signal in top-128) -> truncate 128 + diag cluster whiten, fine k; CUB
+  (PR~58, signal extends to 512) -> truncate 512; aircraft (PR~16, top band
+  nuisance, signal at 129-512) -> no truncation, full-covariance LW-cluster
+  whitening, coarse k. Pool-only regime flags: PR and top-band variance
+  share; the labeled banded-1NN profile is the mechanistic explanation.
+
 ## Open Questions
 
-- Probe arms in flight: does tail-keep (drop top-16) + whitening match or
-  beat lw_cluster on aircraft (and crater on cifar, as the band structure
-  predicts)? Does full-rank DIAGONAL cluster whitening (cw768) recover most
-  of lw_cluster (is the full matrix needed, or just the rescaling)?
-- Third regime point: CUB-200 re-extraction running (historically wanted
-  d'=512 — the intermediate case; where does its band structure put it?).
+- Pool-only surrogate for the banded-1NN profile (the one labels-dependent
+  diagnostic): banded cluster-structure statistics are the obvious candidate.
+  Until then the heuristic map rests on PR / top-band variance share as flags.
 - The 'auto' arm (pool-PR transform selection, implemented + smoke-tested) is
   PARKED by user decision (2026-07-06) until the per-regime picture is fully
-  understood — heuristics first, productization later.
+  understood — heuristics first, productization later. The k knob (k ~ PR)
+  and the d' rung (128/512/full) would fold into it when revived.
 - Cluster high-trial confirmation of the aircraft findings (10 local trials;
   geodesic margins are >3 SE, prototype k=10 number deserves 50 trials).
+- Prototype-softmax + full-rank whitening degenerates (flat cosine posteriors
+  -> trivial sets, conservative): why the softmax head needs the compact
+  subspace while the geodesic ratio does not is worth a short note.
 - MS-CS centered-cosine M: still CPU-only, confirmed at 3 trials on the mean
   NCM only — asym + high-trial confirmation pending before it's paper-grade.
