@@ -89,8 +89,8 @@ def fig_yhat_lever(results, ds, out_dir, key="random_cal200"):
     arms.sort(key=lambda a: r[a]["size"])
     sizes = [r[a]["size"] for a in arms]
     ses = [r[a]["size_se"] for a in arms]
-    colors = [("#d62728" if a.endswith("_aug") else
-               "#2ca02c" if "oracle" in a else
+    colors = [("#2ca02c" if "oracle" in a else
+               "#d62728" if ("_aug" in a or "_gt" in a) else
                "#1f77b4" if a.startswith("dratio2") else "#999999") for a in arms]
     fig, ax = plt.subplots(figsize=(9, 0.55 * len(arms) + 2))
     ypos = np.arange(len(arms))
