@@ -49,6 +49,9 @@ ARM_STYLE = {
     "raw1_proto_pca32_cw":    dict(color="#bbbbbb", ls="--", marker="s", label="raw proto@pca32 (1-D SCP)"),
     "dratio1_proto_pca128_cw": dict(color="#c5b0d5", ls=":", marker="v", label="D-ratio 1-D proto@pca128"),
     "dratio1_proto_pca32_cw": dict(color="#c49c94", ls=":",  marker="s", label="D-ratio 1-D proto@pca32"),
+    "raw1_geo_pca128_cw":     dict(color="#7f7f7f", ls="--", marker="D", label="raw geo@pca128 (1-D SCP)"),
+    "raw1_geo_pca512_cw":     dict(color="#aec7e8", ls="--", marker="D", label="raw geo@pca512 (1-D SCP)"),
+    "raw1_geo_lw768":         dict(color="#000000", ls="--", marker="*", label="raw geo@lw768 (1-D SCP)"),
 }
 
 
