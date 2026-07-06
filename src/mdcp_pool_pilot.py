@@ -172,6 +172,41 @@ def parse_mode_name(mode):
     return mode
 
 
+def view_params(vname, default_pca=128, default_whiten="cluster"):
+    """Feature-view name -> (pca_dim, whiten) for make_transform. Views:
+    default, raw768, cw768 (diag cluster whiten, full rank), lw768 (FULL-matrix
+    Ledoit-Wolf cluster whiten, full rank -- the aircraft/collapsed-spectrum
+    winner per the PCA-audit map; coarse k via make_transform's n_clusters=20
+    default), pca<D> and pca<D>_cw."""
+    if vname == "default":
+        return default_pca, default_whiten
+    if vname == "raw768":
+        return "raw", None
+    if vname == "cw768":
+        return None, "cluster"
+    if vname == "lw768":
+        return None, "lw_cluster"
+    if vname.startswith("pca"):
+        core = vname[3:]
+        cw = core.endswith("_cw")
+        return int(core[:-3] if cw else core), ("cluster" if cw else None)
+    raise ValueError(f"unknown view {vname!r}")
+
+
+def build_view_feats(X, Xu, view_names, default_pca=128, default_whiten="cluster"):
+    feats = {}
+    for view in view_names:
+        if view in feats:
+            continue
+        pd_, wh = view_params(view, default_pca, default_whiten)
+        if pd_ == "raw":
+            feats[view] = (X, Xu)
+        else:
+            tr = make_transform(unlabeled=Xu, pca_dim=pd_, whiten=wh)
+            feats[view] = (tr.transform(X), tr.transform(Xu))
+    return feats
+
+
 def missing_class_scores(Zq, Zcal, k):
     """As-if-missing TRUE-label score vector under our conventions: if a point's
     class were absent from cal (or a singleton under LOO), the geodesic score is
@@ -496,19 +531,6 @@ def main():
     print(f"labeled {X.shape}, pool {Xu.shape}, K={len(classes)}")
 
     # --- dimension specs + per-view features ---
-    def view_params(vname):
-        if vname == "default":
-            return args.pca_dim, args.whiten
-        if vname == "raw768":
-            return "raw", None
-        if vname == "cw768":
-            return None, "cluster"
-        if vname.startswith("pca"):
-            core = vname[3:]
-            cw = core.endswith("_cw")
-            return int(core[:-3] if cw else core), ("cluster" if cw else None)
-        raise ValueError(f"unknown view {vname!r}")
-
     if args.dims:
         dim_specs = []
         for i, spec in enumerate(args.dims):
@@ -519,16 +541,8 @@ def main():
         dim_specs = [("geo", "geo", "default"), ("proto", "proto", "default")]
     print("dims:", [(l, n, v) for l, n, v in dim_specs])
 
-    feats = {}
-    for _, _, view in dim_specs:
-        if view in feats:
-            continue
-        pd_, wh = view_params(view)
-        if pd_ == "raw":
-            feats[view] = (X, Xu)
-        else:
-            tr = make_transform(unlabeled=Xu, pca_dim=pd_, whiten=wh)
-            feats[view] = (tr.transform(X), tr.transform(Xu))
+    feats = build_view_feats(X, Xu, [v for _, _, v in dim_specs],
+                             args.pca_dim, args.whiten)
 
     # pilot-fixed prototype temperature PER VIEW (repo convention: one stable
     # balanced draw at m=8/class, fixed seed -> constant across all trials)

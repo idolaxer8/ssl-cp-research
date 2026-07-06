@@ -25,21 +25,9 @@ import numpy as np
 import torch
 from scipy.stats import spearmanr
 
-from exchangeable_features import make_transform
 from conformal_prediction import PrototypeSoftmaxNCM
 from mdcp_pool_pilot import (geodesic_asym_scores, prototype_lac_scores,
-                             balanced_both_split, scp_eval)
-
-
-def build_views(X, Xu, specs):
-    views = {}
-    for name, (pca_dim, whiten) in specs.items():
-        if pca_dim == "raw":
-            views[name] = (X, Xu)
-        else:
-            tr = make_transform(unlabeled=Xu, pca_dim=pca_dim, whiten=whiten)
-            views[name] = (tr.transform(X), tr.transform(Xu))
-    return views
+                             balanced_both_split, scp_eval, build_view_feats)
 
 
 def pilot_T(Z, y, classes, seed=0):
@@ -58,6 +46,12 @@ def main():
     ap.add_argument("--cal", type=int, default=800)
     ap.add_argument("--alpha", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--anchor", default="proto:pca128_cw")
+    ap.add_argument("--cands", nargs="+",
+                    default=["geo:pca128_cw", "proto:raw768", "geo:raw768",
+                             "proto:cw768", "geo:cw768", "proto:pca32_cw",
+                             "geo:pca32_cw"],
+                    help="candidate dims 'ncm:view' to screen vs the anchor")
     args = ap.parse_args()
 
     d = torch.load(args.embeddings_path, map_location="cpu", weights_only=False)
@@ -67,14 +61,9 @@ def main():
     classes = np.unique(y)
     K = len(classes)
 
-    VIEW_SPECS = {
-        "pca128_cw": (128, "cluster"),   # anchor view (current default)
-        "raw768":    ("raw", None),      # untransformed embeddings
-        "cw768":     (None, "cluster"),  # cluster-whiten, full rank, no PCA
-        "pca32_cw":  (32, "cluster"),    # aggressive truncation
-    }
+    specs = [tuple(args.anchor.split(":"))] + [tuple(c.split(":")) for c in args.cands]
     print("building views...")
-    views = build_views(X, Xu, VIEW_SPECS)
+    views = build_view_feats(X, Xu, [v for _, v in specs])
 
     rng = np.random.default_rng(args.seed + args.cal)
     ci, ti = balanced_both_split(y, classes, args.cal, rng)
@@ -82,17 +71,25 @@ def main():
     y_test_col = np.searchsorted(classes, yt)
     k_geo = max(1, min(5, len(yc) // K))
 
-    # dimension scores for every (ncm, view)
+    # dimension scores for every requested (ncm, view)
     dims = {}
-    for vname, (Zv, _) in views.items():
+    T_cache = {}
+    for ncm, vname in specs:
+        if (ncm, vname) in dims:
+            continue
+        Zv = views[vname][0]
         Zc, Zt = Zv[ci], Zv[ti]
-        T = pilot_T(Zv, y, classes, args.seed)
-        dims[("proto", vname)] = dict(
-            cal=prototype_lac_scores(Zc, Zc, yc, classes, T, loo=True),
-            test=prototype_lac_scores(Zt, Zc, yc, classes, T), T=T)
-        dims[("geo", vname)] = dict(
-            cal=geodesic_asym_scores(Zc, Zc, yc, classes, k_geo, self_is_cal=True),
-            test=geodesic_asym_scores(Zt, Zc, yc, classes, k_geo))
+        if ncm == "proto":
+            if vname not in T_cache:
+                T_cache[vname] = pilot_T(Zv, y, classes, args.seed)
+            T = T_cache[vname]
+            dims[(ncm, vname)] = dict(
+                cal=prototype_lac_scores(Zc, Zc, yc, classes, T, loo=True),
+                test=prototype_lac_scores(Zt, Zc, yc, classes, T), T=T)
+        else:
+            dims[(ncm, vname)] = dict(
+                cal=geodesic_asym_scores(Zc, Zc, yc, classes, k_geo, self_is_cal=True),
+                test=geodesic_asym_scores(Zt, Zc, yc, classes, k_geo))
 
     # solo 1-D SCP size per dimension (single split, indicative)
     rows_c = np.arange(len(yc)); col_c = np.searchsorted(classes, yc)
@@ -103,7 +100,7 @@ def main():
         solo[key] = (cov, sz)
 
     # Spearman vs the anchor, on test scores split into true/false
-    anchor = ("proto", "pca128_cw")
+    anchor = tuple(args.anchor.split(":"))
     mask_true = np.zeros_like(dims[anchor]["test"], dtype=bool)
     mask_true[np.arange(len(yt)), y_test_col] = True
     A = dims[anchor]["test"]
