@@ -44,6 +44,11 @@ ARM_STYLE = {
     "dratio2_oracle":         dict(color="#2ca02c", ls=":",  marker="d", label="2-D D-ratio, ORACLE yhat"),
     "dratio2_oracle_aug":     dict(color="#98df8a", ls=":",  marker="d", label="2-D D-ratio, ORACLE + corner aug"),
     "dratio2_oracle_present": dict(color="#9467bd", ls=":",  marker="x", label="2-D, oracle-on-present-classes"),
+    # multi-view (direction 2) arms
+    "raw1_proto_pca128_cw":   dict(color="#888888", ls="--", marker="v", label="raw proto@pca128 (1-D SCP)"),
+    "raw1_proto_pca32_cw":    dict(color="#bbbbbb", ls="--", marker="s", label="raw proto@pca32 (1-D SCP)"),
+    "dratio1_proto_pca128_cw": dict(color="#c5b0d5", ls=":", marker="v", label="D-ratio 1-D proto@pca128"),
+    "dratio1_proto_pca32_cw": dict(color="#c49c94", ls=":",  marker="s", label="D-ratio 1-D proto@pca32"),
 }
 
 
