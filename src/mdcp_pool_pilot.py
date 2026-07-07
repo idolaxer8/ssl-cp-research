@@ -193,17 +193,51 @@ def view_params(vname, default_pca=128, default_whiten="cluster"):
     raise ValueError(f"unknown view {vname!r}")
 
 
+def load_embedding_sources(path):
+    """Load an embeddings .pt as (sources dict, labels).
+
+    Two formats: the classic {'embeddings','labels'} -> sources={'final': X};
+    the intermediate-layer files from extract_intermediate_features.py
+    ({'labels','layer03',...,'final','meta'}) -> one source per tap key."""
+    d = torch.load(path, map_location="cpu", weights_only=False)
+    labels = d["labels"].numpy()
+    if "embeddings" in d:
+        return {"final": d["embeddings"].numpy().astype(np.float64)}, labels
+    sources = {k: v.numpy().astype(np.float64) for k, v in d.items()
+               if torch.is_tensor(v) and k != "labels"}
+    return sources, labels
+
+
+def parse_view(view):
+    """'layer06__pca128_cw' -> ('layer06', 'pca128_cw'); 'pca128_cw' ->
+    ('final', 'pca128_cw'). The source names an embedding tap (final/layerKK/
+    actKK); the transform part feeds view_params."""
+    if "__" in view:
+        src, tr = view.split("__", 1)
+        return src, tr
+    return "final", view
+
+
 def build_view_feats(X, Xu, view_names, default_pca=128, default_whiten="cluster"):
+    """X, Xu: either plain arrays (classic single-source path) or sources
+    dicts from load_embedding_sources. Each view fits its transform on the
+    POOL of its own source tap."""
+    if not isinstance(X, dict):
+        X, Xu = {"final": X}, {"final": Xu}
     feats = {}
     for view in view_names:
         if view in feats:
             continue
-        pd_, wh = view_params(view, default_pca, default_whiten)
+        src, tr_name = parse_view(view)
+        if src not in X:
+            raise KeyError(f"view {view!r}: source {src!r} not in embeddings file "
+                           f"(available: {sorted(X)})")
+        pd_, wh = view_params(tr_name, default_pca, default_whiten)
         if pd_ == "raw":
-            feats[view] = (X, Xu)
+            feats[view] = (X[src], Xu[src])
         else:
-            tr = make_transform(unlabeled=Xu, pca_dim=pd_, whiten=wh)
-            feats[view] = (tr.transform(X), tr.transform(Xu))
+            trf = make_transform(unlabeled=Xu[src], pca_dim=pd_, whiten=wh)
+            feats[view] = (trf.transform(X[src]), trf.transform(Xu[src]))
     return feats
 
 
@@ -523,12 +557,11 @@ def main():
     ap.add_argument("--output_dir", default="output/mdcp_pool_pilot")
     args = ap.parse_args()
 
-    d = torch.load(args.embeddings_path, map_location="cpu", weights_only=False)
-    X, y = d["embeddings"].numpy().astype(np.float64), d["labels"].numpy()
-    du = torch.load(args.unlabeled_path, map_location="cpu", weights_only=False)
-    Xu, yu = du["embeddings"].numpy().astype(np.float64), du["labels"].numpy()
+    X_src, y = load_embedding_sources(args.embeddings_path)
+    Xu_src, yu = load_embedding_sources(args.unlabeled_path)
     classes = np.unique(y)
-    print(f"labeled {X.shape}, pool {Xu.shape}, K={len(classes)}")
+    print(f"labeled {len(y)}, pool {len(yu)}, K={len(classes)}, "
+          f"sources={sorted(X_src)}")
 
     # --- dimension specs + per-view features ---
     if args.dims:
@@ -541,7 +574,7 @@ def main():
         dim_specs = [("geo", "geo", "default"), ("proto", "proto", "default")]
     print("dims:", [(l, n, v) for l, n, v in dim_specs])
 
-    feats = build_view_feats(X, Xu, [v for _, _, v in dim_specs],
+    feats = build_view_feats(X_src, Xu_src, [v for _, _, v in dim_specs],
                              args.pca_dim, args.whiten)
 
     # pilot-fixed prototype temperature PER VIEW (repo convention: one stable

@@ -27,7 +27,8 @@ from scipy.stats import spearmanr
 
 from conformal_prediction import PrototypeSoftmaxNCM
 from mdcp_pool_pilot import (geodesic_asym_scores, prototype_lac_scores,
-                             balanced_both_split, scp_eval, build_view_feats)
+                             balanced_both_split, scp_eval, build_view_feats,
+                             load_embedding_sources)
 
 
 def pilot_T(Z, y, classes, seed=0):
@@ -54,16 +55,14 @@ def main():
                     help="candidate dims 'ncm:view' to screen vs the anchor")
     args = ap.parse_args()
 
-    d = torch.load(args.embeddings_path, map_location="cpu", weights_only=False)
-    X, y = d["embeddings"].numpy().astype(np.float64), d["labels"].numpy()
-    Xu = torch.load(args.unlabeled_path, map_location="cpu",
-                    weights_only=False)["embeddings"].numpy().astype(np.float64)
+    X_src, y = load_embedding_sources(args.embeddings_path)
+    Xu_src, _yu = load_embedding_sources(args.unlabeled_path)
     classes = np.unique(y)
     K = len(classes)
 
     specs = [tuple(args.anchor.split(":"))] + [tuple(c.split(":")) for c in args.cands]
-    print("building views...")
-    views = build_view_feats(X, Xu, [v for _, v in specs])
+    print(f"building views... (sources: {sorted(X_src)})")
+    views = build_view_feats(X_src, Xu_src, [v for _, v in specs])
 
     rng = np.random.default_rng(args.seed + args.cal)
     ci, ti = balanced_both_split(y, classes, args.cal, rng)
