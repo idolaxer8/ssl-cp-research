@@ -58,6 +58,12 @@ def get_args():
                    help="1-based block indices for FFN-GeLU ('Act') taps (4*d dims each)")
     p.add_argument("--chunk_size", type=int, default=2048,
                    help="images per checkpoint chunk (crash loses at most one chunk)")
+    p.add_argument("--num_workers", type=int, default=0,
+                   help="DataLoader workers. Default 0 (in-process, no /dev/shm) -- "
+                        "worker processes pass batches through shared memory, which "
+                        "is ~64MB in Run:AI/K8s pods and causes 'Bus error' crashes "
+                        "(same reason extract_features.py uses 0). Raise only on "
+                        "machines with adequate shm.")
     p.add_argument("--num_per_class", type=int, default=None)
     p.add_argument("--keep_chunks", action="store_true",
                    help="keep the chunk dir after consolidation")
@@ -158,7 +164,8 @@ def main():
             t0 = time.time()
             lo, hi = c * args.chunk_size, min((c + 1) * args.chunk_size, n)
             loader = DataLoader(Subset(dataset, range(lo, hi)),
-                                batch_size=args.batch_size, shuffle=False, num_workers=2)
+                                batch_size=args.batch_size, shuffle=False,
+                                num_workers=args.num_workers)
             taps = {f"layer{k:02d}": [] for k in args.layers}
             taps.update({f"act{k:02d}": [] for k in args.act_layers})
             taps["final"] = []

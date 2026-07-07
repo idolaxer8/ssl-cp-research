@@ -30,6 +30,7 @@ BATCH_SIZE="${BATCH_SIZE:-64}"
 LAYERS="${LAYERS:-3 6 9 12}"
 ACT_LAYERS="${ACT_LAYERS:-}"             # e.g. "6 9" to also tap FFN GeLU (4x dims)
 CHUNK_SIZE="${CHUNK_SIZE:-2048}"
+NUM_WORKERS="${NUM_WORKERS:-0}"          # 0 = no /dev/shm use (K8s pods have ~64MB shm)
 DATASETS="${DATASETS:-cifar100 aircraft stanford_cars miniimagenet}"
 STEPS="${STEPS:-}"                       # explicit step list overrides DATASETS
 FORCE="${FORCE:-0}"
@@ -84,7 +85,8 @@ run_step () {
         --batch_size "$BATCH_SIZE" \
         --layers $LAYERS \
         ${ACT_LAYERS:+--act_layers $ACT_LAYERS} \
-        --chunk_size "$CHUNK_SIZE"
+        --chunk_size "$CHUNK_SIZE" \
+        --num_workers "$NUM_WORKERS"
     ls -lh "$final"
 }
 
