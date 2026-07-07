@@ -228,7 +228,7 @@ def _all_pairs(shape):
 
 class FullCPMDCP:
     def __init__(self, dims, k_d=10, alpha=0.1, arms=("pool", "bag", "count"),
-                 pool_subsample=100_000, device="cpu", seed=0):
+                 pool_subsample=100_000, device="cpu", seed=0, dtype="float64"):
         self.dims = dims
         self.k_d = k_d
         self.alpha = alpha
@@ -236,6 +236,9 @@ class FullCPMDCP:
         self.pool_subsample = pool_subsample
         self.device = torch.device(device)
         self.seed = seed
+        # float64 = the oracle-verified reference; float32 = grid fast path
+        # (distance-kernel precision only -- validity unaffected)
+        self.dtype = torch.float64 if dtype == "float64" else torch.float32
 
     def fit_trial(self, feats_cal, yc, feats_pool, classes):
         self.K = len(classes)
@@ -257,15 +260,19 @@ class FullCPMDCP:
     def point_state(self, x_feats):
         """Candidate-independent state for one test point (torch tensors)."""
         prods = [d.test_products(x) for d, x in zip(self.dims, x_feats)]
-        dev = self.device
+        dev, dt = self.device, self.dtype
+
+        def T(a):
+            return torch.as_tensor(a, device=dev, dtype=dt)
+
         st = dict(
-            E=[torch.as_tensor(d.E, device=dev) for d in self.dims],
-            Zr=[torch.as_tensor(d.Zrow, device=dev) for d in self.dims],
-            Cx=[torch.as_tensor(p["Cexp"], device=dev) for p in prods],
-            tpr=[torch.as_tensor(p["t_probs"], device=dev) for p in prods],
-            PE=[torch.as_tensor(d.PE, device=dev) for d in self.dims],
-            PZ=[torch.as_tensor(d.PZ, device=dev) for d in self.dims],
-            PCx=[torch.as_tensor(p["PCexp"], device=dev) for p in prods],
+            E=[T(d.E) for d in self.dims],
+            Zr=[T(d.Zrow) for d in self.dims],
+            Cx=[T(p["Cexp"]) for p in prods],
+            tpr=[T(p["t_probs"]) for p in prods],
+            PE=[T(d.PE) for d in self.dims],
+            PZ=[T(d.PZ) for d in self.dims],
+            PCx=[T(p["PCexp"]) for p in prods],
             ycol=torch.as_tensor(self.ycol, device=dev),
             rows=torch.arange(self.m, device=dev),
             u_idx=torch.as_tensor(self.pool_pairs[0], device=dev),
@@ -323,13 +330,89 @@ class FullCPMDCP:
         return out
 
     def predict_point(self, x_feats):
-        """All K candidate p-values for one test point, per arm."""
+        """All K candidate p-values for one test point, per arm (loop path --
+        the oracle-verified reference; predict_point_batched is the fast
+        path validated against it)."""
         st = self.point_state(x_feats)
         p_out = {arm: np.zeros(self.K) for arm in self.arms}
         for y in range(self.K):
             D = self.candidate_D(st, y)
             for arm in self.arms:
                 p_out[arm][y] = self._pvalue(D[arm])
+        return p_out
+
+    def predict_point_batched(self, x_feats, y_chunk=12):
+        """Fast path: identical math to candidate_D, candidates processed in
+        chunks through batched cdist kernels."""
+        st = self.point_state(x_feats)
+        m, K, kd, nd = self.m, self.K, self.k_d, len(self.dims)
+        dev = self.device
+        p_out = {arm: np.zeros(K) for arm in self.arms}
+        own_base = [st["E"][di][st["rows"], st["ycol"]] for di in range(nd)]
+        for lo in range(0, K, y_chunk):
+            Y = torch.arange(lo, min(lo + y_chunk, K), device=dev)
+            B = len(Y)
+            true_c, calF_c, poolF_c = [], [], []
+            for di in range(nd):
+                E, Cx = st["E"][di], st["Cx"][di]
+                Znew = st["Zr"][di][:, None] - E[:, Y] + Cx[:, Y]      # (m, B)
+                is_own = st["ycol"][:, None] == Y[None, :]
+                own = torch.where(is_own, Cx[:, Y], own_base[di][:, None]) / Znew
+                tc = torch.cat([1.0 - own,
+                                (1.0 - st["tpr"][di][Y]).reshape(1, B)])  # (m+1, B)
+                true_c.append(tc.T)                                     # (B, m+1)
+                if "bag" in self.arms or "count" in self.arms:
+                    Pf = (E[None, :, :] / Znew.T[:, :, None]).clone()   # (B, m, K)
+                    bidx = torch.arange(B, device=dev)[:, None].expand(B, m)
+                    ridx = torch.arange(m, device=dev)[None, :].expand(B, m)
+                    cidx = Y[:, None].expand(B, m)
+                    Pf[bidx, ridx, cidx] = (Cx[:, Y] / Znew).T
+                    calF = 1.0 - Pf[:, st["calF_mask"]]                 # (B, m(K-1))
+                    tmask = torch.ones(B, K, dtype=torch.bool, device=dev)
+                    tmask[torch.arange(B, device=dev), Y] = False
+                    tF = 1.0 - st["tpr"][di][None, :].expand(B, -1)[tmask].view(B, K - 1)
+                    calF_c.append(torch.cat([calF, tF], dim=1))         # (B, mK-m+K-1)
+                if "pool" in self.arms:
+                    PE, PCx = st["PE"][di], st["PCx"][di]
+                    PZnew = st["PZ"][di][:, None] - PE[:, Y] + PCx[:, Y]  # (np, B)
+                    isy = st["q_idx"][:, None] == Y[None, :]              # (S, B)
+                    pv = torch.where(isy, PCx[st["u_idx"]][:, Y],
+                                     PE[st["u_idx"], st["q_idx"]][:, None]) \
+                        / PZnew[st["u_idx"]]                              # (S, B)
+                    poolF_c.append((1.0 - pv).T)                          # (B, S)
+            Tc = torch.stack(true_c, dim=-1)                            # (B, m+1, nd)
+
+            dt = torch.cdist(Tc, Tc)                                    # (B, m+1, m+1)
+            torch.diagonal(dt, dim1=1, dim2=2).fill_(float("inf"))
+            num = dt.kthvalue(min(kd, m), dim=2).values                 # (B, m+1)
+
+            D_by_arm = {}
+            if "bag" in self.arms or "count" in self.arms:
+                Fb = torch.stack(calF_c, dim=-1)                        # (B, F, nd)
+                dfb = torch.cdist(Tc, Fb)                               # (B, m+1, F)
+                if "bag" in self.arms:
+                    den = dfb.kthvalue(min(kd, Fb.shape[1]), dim=2).values
+                    D_by_arm["bag"] = num / (den + 1e-9)
+                if "count" in self.arms:
+                    Dc = torch.empty(B, m + 1, dtype=Tc.dtype, device=dev)
+                    nearest = dfb.argmin(dim=1)                         # (B, F)
+                    for b in range(B):
+                        centers, inv, tcnt = torch.unique(
+                            Tc[b], dim=0, return_inverse=True, return_counts=True)
+                        Fcnt = torch.bincount(inv[nearest[b]],
+                                              minlength=len(centers)).to(tcnt.dtype)
+                        Dc[b] = ((Fcnt + tcnt) / tcnt)[inv]
+                    D_by_arm["count"] = Dc
+            if "pool" in self.arms:
+                Fp = torch.stack(poolF_c, dim=-1)                       # (B, S, nd)
+                den = torch.cdist(Tc, Fp).kthvalue(
+                    min(kd, Fp.shape[1]), dim=2).values
+                D_by_arm["pool"] = num / (den + 1e-9)
+
+            for arm, D in D_by_arm.items():
+                cnt = (D[:, :-1] >= D[:, -1:]).sum(dim=1)
+                p_out[arm][Y.cpu().numpy()] = ((1 + cnt).cpu().numpy()
+                                               / (m + 1))
         return p_out
 
     def _test_false(self, t_probs, y):
@@ -378,6 +461,7 @@ def main():
     ap.add_argument("--k_d", type=int, default=10)
     ap.add_argument("--arms", nargs="+", default=["pool", "bag", "count"])
     ap.add_argument("--pool_subsample", type=int, default=100_000)
+    ap.add_argument("--dtype", choices=["float64", "float32"], default="float32")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--output_dir", default="output/mdcp_pool_pilot/full_cp")
@@ -410,7 +494,7 @@ def main():
                 eng = FullCPMDCP(dims, k_d=args.k_d, alpha=args.alpha,
                                  arms=tuple(args.arms),
                                  pool_subsample=args.pool_subsample,
-                                 device=args.device,
+                                 device=args.device, dtype=args.dtype,
                                  seed=args.seed + 7000 * t + cal)
                 eng.fit_trial([feats[v][0][ci] for v in views], y[ci],
                               [feats[v][1] for v in views], classes)
@@ -418,7 +502,8 @@ def main():
                 cov = {a: 0 for a in args.arms}
                 size = {a: 0 for a in args.arms}
                 for k, tidx in enumerate(ti):
-                    p_by_arm = eng.predict_point([feats[v][0][tidx] for v in views])
+                    p_by_arm = eng.predict_point_batched(
+                        [feats[v][0][tidx] for v in views])
                     for a in args.arms:
                         inset = p_by_arm[a] > args.alpha
                         cov[a] += bool(inset[y_test_col[k]])

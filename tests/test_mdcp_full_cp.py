@@ -113,6 +113,17 @@ def test_pvalues_valid_shape_and_range():
         assert np.all(p[arm] >= 1.0 / (M + 1)) and np.all(p[arm] <= 1.0)
 
 
+def test_batched_path_matches_loop_path():
+    """Stage-2 fast path == Stage-1 oracle-verified loop path (all arms,
+    exact p-value identity in float64)."""
+    y, Zc, Zp, x = _make_data()
+    eng = _engine(y, Zc, Zp, pool_subsample=800)
+    p_loop = eng.predict_point(list(x))
+    p_fast = eng.predict_point_batched(list(x), y_chunk=4)
+    for arm in ("pool", "bag", "count"):
+        assert np.array_equal(p_loop[arm], p_fast[arm]), arm
+
+
 if __name__ == "__main__":
     test_cal_rows_match_pilotB_convention()
     test_symmetry_oracle_engine_equals_reference()
