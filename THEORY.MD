@@ -212,17 +212,28 @@ floor guarantee) as the primary novelty pilot, unmerged on
 
 ## Open Questions
 
-- Pool-only surrogate for the banded-1NN profile (the one labels-dependent
-  diagnostic): banded cluster-structure statistics are the obvious candidate —
-  and TAFSSL (ECCV 2020) suggests a sharper one: rank directions by
-  NON-GAUSSIANITY (negentropy/kurtosis) instead of variance. Their per-dim
-  mixture model (dim = rho_n*N(mu_n,sigma_n) + rho_s*N(mu_s,sigma_s)) implies
-  signal-carrying dims are non-Gaussian mixtures regardless of variance — so
-  an ICA/negentropy-ranked pool-fit subspace could find aircraft's tail
-  signal label-free, potentially giving the collapsed regime a compact
-  subspace (fixing the prototype degeneracy) instead of full-rank whitening.
-  Untested; the natural next pilot arm ("ica_d": pool LW-whiten -> FastICA ->
-  keep top-d by negentropy).
+- Pool-only surrogate for the banded-1NN profile: banded cluster-structure
+  statistics remain the open candidate. The TAFSSL-inspired negentropy route
+  was tested and KILLED (2026-07-08 pilot, `ica_negent_pilot.py`): (a) on
+  aircraft the negentropy ranking DOES point at the right bands label-free
+  (70/128 selected dims from 129-512, 0 from the dead 513-768 band) but the
+  resulting compact subspace performs no better than variance selection
+  (negent128_cw 27.8 ~ pca128_cw 25.9, both far behind full-rank LW 18.8) —
+  refining the mechanism: aircraft's class signal is not hidden in a FEW
+  identifiable tail dims, it is THINLY SPREAD across hundreds, so any
+  128-dim cut loses most of it and full-rank whitening is genuinely
+  necessary; (b) on CIFAR-100 negentropy selection is actively harmful
+  (median selected rank 312; sets 5.9-9.4 vs PCA's 1.3-1.6) — with K=100
+  balanced classes a per-dim class mixture approaches Gaussian by the CLT,
+  so non-Gaussianity stops tracking class signal and instead chases
+  kurtotic/rogue noise dims. TAFSSL's criterion is a FEW-WAY tool (their
+  5-way mixtures are detectably non-Gaussian); it does not transfer to
+  many-way pools. (c) LW-whiten -> FastICA-128 also loses (FastICA's
+  internal PCA re-truncates the whitened space); on separable data it lands
+  ~= pca128_cw, as expected. (d) All globally-standardized compact arms
+  degenerate the prototype head (flat cosine posteriors) — prototype needs
+  the scale hierarchy that within-cluster whitening of a PCA subspace
+  preserves.
   Until then the heuristic map rests on PR / top-band variance share as flags.
 - The 'auto' arm (pool-PR transform selection, implemented + smoke-tested) is
   PARKED by user decision (2026-07-06) until the per-regime picture is fully
