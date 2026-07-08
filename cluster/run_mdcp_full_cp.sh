@@ -15,7 +15,23 @@
 
 set -euo pipefail
 
-EMB_DIR="${EMB_DIR:-output/from_cluster/embeddings}"
+# Embeddings location differs by machine: the pod's extraction wrote plain
+# output/, the local reorganization moved them under output/from_cluster/
+# embeddings/. Auto-detect unless EMB_DIR is set explicitly.
+EMB_DIR="${EMB_DIR:-}"
+if [ -z "$EMB_DIR" ]; then
+    for cand in output/from_cluster/embeddings output; do
+        if [ -f "$cand/embeddings_cifar100_layers.pt" ]; then
+            EMB_DIR="$cand"; break
+        fi
+    done
+fi
+if [ -z "$EMB_DIR" ] || [ ! -f "$EMB_DIR/embeddings_cifar100_layers.pt" ]; then
+    echo "ERROR: embeddings_cifar100_layers.pt not found (looked in"
+    echo "       output/from_cluster/embeddings and output). Set EMB_DIR=..."
+    exit 1
+fi
+echo "EMB_DIR=$EMB_DIR"
 DIMS="${DIMS:-proto:final__pca128_cw proto:final__pca32_cw}"
 N_TRIALS="${N_TRIALS:-20}"
 N_TEST="${N_TEST:-150}"
