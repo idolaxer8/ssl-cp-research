@@ -341,11 +341,21 @@ class FullCPMDCP:
                 p_out[arm][y] = self._pvalue(D[arm])
         return p_out
 
-    def predict_point_batched(self, x_feats, y_chunk=12):
+    def predict_point_batched(self, x_feats, y_chunk=None, mem_budget=4.0e8):
         """Fast path: identical math to candidate_D, candidates processed in
-        chunks through batched cdist kernels."""
+        chunks through batched cdist kernels. y_chunk=None auto-sizes the
+        chunk from a GPU-memory budget (bytes) -- the dominant tensor is the
+        (B, m+1, |false cloud|) distance matrix, and exceeding VRAM on a WDDM
+        card degrades to driver paging (observed 07-07: hours of no progress),
+        so we size B for the worst single cdist and floor at 1."""
         st = self.point_state(x_feats)
         m, K, kd, nd = self.m, self.K, self.k_d, len(self.dims)
+        if y_chunk is None:
+            F_bag = (m * (K - 1) + K - 1) if ("bag" in self.arms or
+                                              "count" in self.arms) else 0
+            S = len(self.pool_pairs[0]) if "pool" in self.arms else 0
+            bytes_per_b = 4 * (m + 1) * max(F_bag + S, 1)
+            y_chunk = max(1, min(16, int(mem_budget // bytes_per_b)))
         dev = self.device
         p_out = {arm: np.zeros(K) for arm in self.arms}
         own_base = [st["E"][di][st["rows"], st["ycol"]] for di in range(nd)]
@@ -466,9 +476,11 @@ def main():
     ap.add_argument("--k_d", type=int, default=10)
     ap.add_argument("--arms", nargs="+", default=["pool", "bag", "count"])
     ap.add_argument("--pool_subsample", type=int, default=20_000)
-    ap.add_argument("--y_chunk", type=int, default=6,
-                    help="candidates per batched chunk; keep the live GPU set "
-                         "well under VRAM (4GB WDDM cards page-thrash at the top)")
+    ap.add_argument("--y_chunk", type=int, default=None,
+                    help="candidates per batched chunk (default: auto-sized "
+                         "from --mem_budget; 4GB WDDM cards page-thrash at the top)")
+    ap.add_argument("--mem_budget", type=float, default=4.0e8,
+                    help="bytes allowed for the largest batched distance tensor")
     ap.add_argument("--dtype", choices=["float64", "float32"], default="float32")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
@@ -512,7 +524,7 @@ def main():
                 for k, tidx in enumerate(ti):
                     p_by_arm = eng.predict_point_batched(
                         [feats[v][0][tidx] for v in views],
-                        y_chunk=args.y_chunk)
+                        y_chunk=args.y_chunk, mem_budget=args.mem_budget)
                     for a in args.arms:
                         inset = p_by_arm[a] > args.alpha
                         cov[a] += bool(inset[y_test_col[k]])
