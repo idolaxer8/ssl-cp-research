@@ -413,6 +413,11 @@ class FullCPMDCP:
                 cnt = (D[:, :-1] >= D[:, -1:]).sum(dim=1)
                 p_out[arm][Y.cpu().numpy()] = ((1 + cnt).cpu().numpy()
                                                / (m + 1))
+            # keep the live working set small: a 4GB WDDM card starts paging
+            # near the ceiling and throughput collapses (observed 07-07)
+            del true_c, calF_c, poolF_c, Tc, dt, num, D_by_arm
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
         return p_out
 
     def _test_false(self, t_probs, y):
@@ -460,7 +465,10 @@ def main():
     ap.add_argument("--alpha", type=float, default=0.1)
     ap.add_argument("--k_d", type=int, default=10)
     ap.add_argument("--arms", nargs="+", default=["pool", "bag", "count"])
-    ap.add_argument("--pool_subsample", type=int, default=100_000)
+    ap.add_argument("--pool_subsample", type=int, default=20_000)
+    ap.add_argument("--y_chunk", type=int, default=6,
+                    help="candidates per batched chunk; keep the live GPU set "
+                         "well under VRAM (4GB WDDM cards page-thrash at the top)")
     ap.add_argument("--dtype", choices=["float64", "float32"], default="float32")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
@@ -503,7 +511,8 @@ def main():
                 size = {a: 0 for a in args.arms}
                 for k, tidx in enumerate(ti):
                     p_by_arm = eng.predict_point_batched(
-                        [feats[v][0][tidx] for v in views])
+                        [feats[v][0][tidx] for v in views],
+                        y_chunk=args.y_chunk)
                     for a in args.arms:
                         inset = p_by_arm[a] > args.alpha
                         cov[a] += bool(inset[y_test_col[k]])
@@ -511,11 +520,10 @@ def main():
                 n = len(ti)
                 for a in args.arms:
                     per_arm[a].append((cov[a] / n, size[a] / n))
-                if t == 0:
-                    print(f"  [{split} cal={cal}] trial 1/{args.n_trials}: "
-                          f"{(time.time()-t0):.0f}s, "
-                          + "  ".join(f"{a}: cov {cov[a]/n:.3f} sz {size[a]/n:.2f}"
-                                      for a in args.arms))
+                print(f"  [{split} cal={cal}] trial {t+1}/{args.n_trials} "
+                      f"({(time.time()-t0):.0f}s elapsed): "
+                      + "  ".join(f"{a}: cov {cov[a]/n:.3f} sz {size[a]/n:.2f}"
+                                  for a in args.arms), flush=True)
             key = f"{split}_cal{cal}"
             results[key] = {}
             print(f"\n== FULL-CP {key}  ({args.n_trials} trials x {args.n_test} test, "
