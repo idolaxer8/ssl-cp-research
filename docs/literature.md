@@ -92,6 +92,80 @@ The Silva-Rodriguez et al. trilogy is the nearest neighbour to our work: transdu
 
 ---
 
+## 9. Pool-Fit Unsupervised Projections — the "fit stage on unlabeled data" lineage (sweep 2026-07-06)
+
+Citation architecture for rationalizing the transform stage (PCA-d'/whitening fit on
+the unlabeled pool). Full annotated sweep in memory `pca-rationalization-audit`;
+verified via web search 2026-07-06.
+
+**Framing ("unlabeled data defines the geometry, labels only calibrate"):**
+- Belkin & Niyogi, NIPS 2002 (partially-labeled manifold classification) — basis fit on
+  unlabeled points, labels fit only expansion coefficients; structurally our pipeline.
+- Castelli & Cover 1995/96 — once the mixture geometry is known from unlabeled data,
+  labels only "name components" (exponential value). Our cal set fits ONE threshold.
+- Belkin/Niyogi/Sindhwani JMLR 2006 (manifold regularization); Cai/He/Han ICCV 2007
+  (SDA — unlabeled data stabilizes the projection LDA overfits, mirrors our LDA kill);
+  Zhang/Zhou/Chen SDM 2007 (SSDR).
+
+**Method ancestry (few-shot frozen-feature transforms fit on auxiliary data):**
+- SimpleShot (Wang et al. 1911.04623) — center-by-base-mean + L2-norm before NN;
+  the canonical "the transform, not the classifier, is the win".
+- **TAFSSL (Lichtenstein et al., ECCV 2020, 2003.06670) — PCA/ICA fit on task-adjacent
+  UNLABELED data before prototype classification; the single closest few-shot match.**
+- PT-MAP (Hu et al. 2006.03806), Distribution Calibration (Yang et al., ICLR 2021) —
+  label-free reshaping / borrowed second-order statistics (= our LW-whitening logic).
+- Mensink et al. TPAMI 2013 (NCM + transferable Mahalanobis metric); Tian et al. ECCV
+  2020 ("good embedding is all you need"); Chen et al. 2010.02430 (no base labels).
+
+**Theory (when unlabeled fitting provably helps — and when not):**
+- Positive: Saunshi/Arora ICML 2019 (contrastive theory guarantees the MEAN classifier
+  — exactly our prototype rules); HaoChen et al. NeurIPS 2021 (SSL features ~ spectral
+  embedding of the augmentation graph -> our PCA = second spectral truncation); Lee et
+  al. NeurIPS 2021 (reconstruction pretexts).
+- Negative/conditional: Ben-David/Lu/Pal COLT 2008; Singh/Nowak/Zhu NeurIPS 2008
+  ("now it helps, now it doesn't") — maps 1:1 onto our cifar-vs-aircraft inversion.
+  Paper framing: **validity assumption-free, efficiency assumption-dependent.**
+
+**Pool-only d'-selection (closes the "why 128?" hole):**
+- Gavish & Donoho IEEE-TIT 2014 (optimal hard threshold; sigma-unknown form = 2.858 x
+  median singular value — pure pool statistic); Marchenko-Pastur eigenvalue clipping;
+  Dobriban & Owen JRSS-B 2019 (deflated parallel analysis) + Hong et al. 2012.02985
+  (signflip PA) — assumption-light. KEY: G-D/MP assume a spiked spectrum + noise bulk
+  — holds on cifar/mini, PROVABLY inapplicable on aircraft's collapsed fat-tail
+  spectrum -> the three-regime map becomes "truncate where the spiked model holds;
+  where it fails, truncation is undefined and full-rank decorrelation (Ledoit-Wolf
+  2004) is the remaining lever".
+- Participation ratio formalized: Litwin-Kumar et al. Neuron 2017; Gao et al. 2017
+  (bioRxiv). Finite-sample bias caveat for small pools: arXiv:2509.26560.
+- Intrinsic dim (Levina-Bickel 2004; TwoNN, Facco 2017) with the Ansuini et al.
+  NeurIPS 2019 caveat (deep reps low-ID but CURVED -> local ID != linear rank).
+
+**Decorrelation as first-class operation (supports the aircraft/LW finding):**
+- W-MSE (Ermolov ICML 2021, hard whitening), Barlow Twins (2103.03230), VICReg
+  (2105.04906); Hua et al. ICCV 2021 (decorrelation prevents dimensional collapse);
+  Kalapos & Gyires-Toth 2408.07519 (ZCA on frozen SSL features improves kNN 1-5%).
+
+**CP-side recent (2024-26), beyond the trilogy/SemiCP/SSCP:**
+- Correia & Louizos, NeurIPS 2025 (2507.10425) — unlabeled data for shift-robust
+  thresholds (they spend unlabeled on threshold robustness; we spend it on score
+  efficiency). [Resolves the pending §8 fold from the 2026-06 archive note.]
+- Flechsig & Pilz 2509.10321 — CP with zero labeled calibration (1-alpha-beta
+  guarantee); brackets the label-budget axis.
+- CONFIDE 2604.08885 — kNN scores on LM representations with PCA/Mahalanobis/metric
+  GRID SEARCH; closest concurrent analogue; our pool-spectrum selection is the delta.
+- Fadnavis 2602.12693 (leverage-weighted CP) — notes full-rank whitening ~ identity
+  for Mahalanobis scores while TRUNCATION changes geometry (independent corroboration
+  of our probe attribution). Also: COMPASS 2509.22240, Contrastive Conformal Sets
+  2603.26261, Katsios COPA 2024 (Mahalanobis NCM).
+
+**NEGATIVE FINDING (novelty slot):** no published work fits a projection/metric on an
+INDEPENDENT unlabeled pool and runs full/transductive CP with distance/prototype NCMs
+on the projected features. Nearest relatives are cal+test transductive adapters
+(SCA-T, Conf-OT) and score-level unlabeled uses (SemiCP, Flechsig, Correia). The
+pool-fit-transform-for-FCP slot appears open.
+
+---
+
 ## Reading Priority
 
 **Read first — closest setting (FM-embedding + transductive + set size):**
@@ -122,4 +196,4 @@ The Silva-Rodriguez et al. trilogy is the nearest neighbour to our work: transdu
 
 ---
 
-*Last updated: 2026-06-07.*
+*Last updated: 2026-07-06 (added §9 pool-fit unsupervised projection lineage).*
