@@ -213,7 +213,16 @@ floor guarantee) as the primary novelty pilot, unmerged on
 ## Open Questions
 
 - Pool-only surrogate for the banded-1NN profile (the one labels-dependent
-  diagnostic): banded cluster-structure statistics are the obvious candidate.
+  diagnostic): banded cluster-structure statistics are the obvious candidate —
+  and TAFSSL (ECCV 2020) suggests a sharper one: rank directions by
+  NON-GAUSSIANITY (negentropy/kurtosis) instead of variance. Their per-dim
+  mixture model (dim = rho_n*N(mu_n,sigma_n) + rho_s*N(mu_s,sigma_s)) implies
+  signal-carrying dims are non-Gaussian mixtures regardless of variance — so
+  an ICA/negentropy-ranked pool-fit subspace could find aircraft's tail
+  signal label-free, potentially giving the collapsed regime a compact
+  subspace (fixing the prototype degeneracy) instead of full-rank whitening.
+  Untested; the natural next pilot arm ("ica_d": pool LW-whiten -> FastICA ->
+  keep top-d by negentropy).
   Until then the heuristic map rests on PR / top-band variance share as flags.
 - The 'auto' arm (pool-PR transform selection, implemented + smoke-tested) is
   PARKED by user decision (2026-07-06) until the per-regime picture is fully
