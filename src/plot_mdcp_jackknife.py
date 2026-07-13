@@ -2,13 +2,14 @@
 Figure for the authors'-JK+ vs our-MDCP comparison
 (src/mdcp_jackknife_compare.py results JSON, incl. pilot-D fcp overlays).
 
-Layout 2x3:
-  (0,0)/(1,0) mean set size vs cal (balanced / random), log y
-  (0,1)/(1,1) coverage vs cal, target 0.9 + JK+ 1-2alpha floor 0.8
-  (0,2)      measured JK+ wall time vs m (both splits) + O(m(m+n)K) guide
-  (1,2)      analytic JK+ memory map: 9*m*n_test*K bytes vs m for several
-             n_test, 16GB laptop / 48GB cluster ceilings, authors' regime
-             (m=9000, n=6000) and our grid marked
+Layout (rows = splits) x 3:
+  col 0  mean set size vs cal, log y
+  col 1  coverage vs cal, target 0.9 + JK+ 1-2alpha floor 0.8
+  col 2  row 0: measured wall time per arm (ours dratio2 vs theirs jk2 vs
+                shared dim-score cost; optional full-CP probe hline via
+                --fcp_sec_per_trial)
+         row 1 (if present): analytic JK+ memory map, 16GB/48GB ceilings,
+                authors' regime (m=9000, n=6000) marked
 
 python src/plot_mdcp_jackknife.py --results <...>/mdcp_jackknife_compare_results.json
 """
@@ -19,34 +20,25 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-ARMS = [
-    ("raw1_proto128", "1-D split CP (proto@pca128)", "0.5", "--", "o"),
-    ("dratio2_proto", "OURS split-style pool D-ratio (pilot B)", "tab:blue", "-", "s"),
-    ("jk2", "THEIRS Jackknife+ multi-score, H=2 (Alg B.1)", "tab:red", "-", "^"),
-    ("jk1", "THEIRS Jackknife+, H=1", "tab:orange", "--", "v"),
-]
-FCP_ARM = ("fcp_bag", "OURS full-CP MDCP bag (pilot D, exact)", "tab:green", "-", "D")
+STYLES = {
+    "dratio2": ("OURS split-style pool D-ratio (pilot B)", "tab:blue", "-", "s"),
+    "jk2": ("THEIRS Jackknife+ multi-score (Alg B.1)", "tab:red", "-", "^"),
+    "jk1": ("THEIRS Jackknife+, H=1", "tab:orange", "--", "v"),
+    "jk2_rank": ("THEIRS JK+ in rank space (control)", "tab:purple", ":", "^"),
+    "fcp_bag": ("OURS full-CP MDCP bag (pilot D, exact)", "tab:green", "-", "D"),
+}
+RAW_COLORS = ["0.45", "0.7"]
 
 
-def series(results, split, cals, arm):
+def series(results, split, cals, arm, field=0):
     xs, mu, se = [], [], []
+    key_mu, key_se = ("size", "size_se") if field == 0 else ("cov", "cov_se")
     for c in cals:
         key = f"{split}_cal{c}"
         if key in results and arm in results[key]:
             xs.append(c)
-            mu.append(results[key][arm]["size"])
-            se.append(results[key][arm]["size_se"])
-    return xs, mu, se
-
-
-def series_cov(results, split, cals, arm):
-    xs, mu, se = [], [], []
-    for c in cals:
-        key = f"{split}_cal{c}"
-        if key in results and arm in results[key]:
-            xs.append(c)
-            mu.append(results[key][arm]["cov"])
-            se.append(results[key][arm]["cov_se"])
+            mu.append(results[key][arm][key_mu])
+            se.append(results[key][arm][key_se])
     return xs, mu, se
 
 
@@ -54,6 +46,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--fcp_sec_per_trial", type=float, default=None,
+                    help="measured full-CP seconds per trial (probe) for the "
+                         "time panel annotation")
+    ap.add_argument("--no_mem_panel", action="store_true")
     args = ap.parse_args()
 
     with open(args.results) as f:
@@ -62,23 +58,38 @@ def main():
     cfg = data["config"]
     cals = sorted(cfg["cal_sizes"])
     splits = cfg["splits"]
+    dim_labels = data.get("dim_labels", [])
     fcp = data.get("fcp_overlays", {})
 
-    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    arm_order = [f"raw1_{l}" for l in dim_labels] + \
+                ["dratio2", "jk2", "jk1", "jk2_rank"]
+    present = [a for a in arm_order
+               if any(a in res[k] for k in res)]
+
+    n_rows = len(splits)
+    fig, axes = plt.subplots(n_rows, 3, figsize=(16, 4.7 * n_rows),
+                             squeeze=False)
     for row, split in enumerate(splits):
         ax_s, ax_c = axes[row, 0], axes[row, 1]
-        for arm, label, color, ls, mk in ARMS:
-            xs, mu, se = series(res, split, cals, arm)
+        raw_i = 0
+        for arm in present:
+            if arm.startswith("raw1_"):
+                label = f"1-D split CP ({arm[5:]})"
+                color, ls, mk = RAW_COLORS[min(raw_i, 1)], "--", "o"
+                raw_i += 1
+            else:
+                label, color, ls, mk = STYLES[arm]
+            xs, mu, se = series(res, split, cals, arm, 0)
             ax_s.errorbar(xs, mu, yerr=se, color=color, ls=ls, marker=mk,
                           capsize=3, label=label)
-            xs, mu, se = series_cov(res, split, cals, arm)
+            xs, mu, se = series(res, split, cals, arm, 1)
             ax_c.errorbar(xs, mu, yerr=se, color=color, ls=ls, marker=mk,
                           capsize=3, label=label)
         if split in fcp:
-            arm, label, color, ls, mk = FCP_ARM
+            label, color, ls, mk = STYLES["fcp_bag"]
             xs, mu, se, cv, cvse = [], [], [], [], []
             for c in sorted(fcp[split], key=lambda x: int(x)):
-                d = fcp[split][c].get(arm)
+                d = fcp[split][c].get("fcp_bag")
                 if d:
                     xs.append(int(c)); mu.append(d["size"]); se.append(d["size_se"])
                     cv.append(d["cov"]); cvse.append(d["cov_se"])
@@ -99,59 +110,66 @@ def main():
         if row == 0:
             ax_c.legend(fontsize=7, loc="lower right")
 
-    # --- feasibility: measured time ---
+    # --- wall time per arm ---
     ax_t = axes[0, 2]
-    for split, color in zip(splits, ("tab:blue", "tab:purple")):
+    for arm, color, label in (("scores", "0.6", "shared dim scores (all arms)"),
+                              ("dratio2", "tab:blue", "OURS dratio2 adds"),
+                              ("jk2", "tab:red", "THEIRS jk2 adds"),
+                              ("jk2_rank", "tab:purple", "THEIRS jk2 (rank space)")):
         xs, secs = [], []
         for c in cals:
-            key = f"{split}_cal{c}"
-            if key in res and "_jk2_meta" in res[key]:
-                xs.append(c); secs.append(res[key]["_jk2_meta"]["sec_mean"])
-        ax_t.plot(xs, secs, "o-", color=color, label=f"jk2 measured ({split})")
-    if xs and secs:
-        n_cap = cfg.get("test_cap", 500)
-        guide = [secs[-1] * (m * (m + n_cap)) / (xs[-1] * (xs[-1] + n_cap))
-                 for m in xs]
-        ax_t.plot(xs, guide, "k:", label="O(m(m+n)K) guide")
-    ax_t.set_xlabel("cal size m"); ax_t.set_ylabel("JK+ seconds / trial")
-    ax_t.set_title(f"JK+ wall time (n_test={cfg.get('test_cap')}, K=100, CPU)")
-    ax_t.grid(alpha=0.3); ax_t.legend(fontsize=8)
+            key = f"{splits[0]}_cal{c}"
+            if key in res and arm in res[key].get("_arm_sec", {}):
+                xs.append(c); secs.append(res[key]["_arm_sec"][arm])
+        if xs:
+            ax_t.plot(xs, secs, "o-", color=color, label=label)
+    if args.fcp_sec_per_trial:
+        ax_t.axhline(args.fcp_sec_per_trial, color="tab:green", ls="--", lw=1)
+        ax_t.text(cals[0], args.fcp_sec_per_trial * 1.15,
+                  f"OURS full CP: ~{args.fcp_sec_per_trial:.0f}s/trial "
+                  f"(measured probe, {cfg.get('test_cap')} test pts)",
+                  fontsize=7, color="tab:green")
+    ax_t.set_yscale("log")
+    ax_t.set_xlabel("cal size m"); ax_t.set_ylabel("seconds / trial (log)")
+    ax_t.set_title(f"wall time per arm ({splits[0]}, "
+                   f"n_test={cfg.get('test_cap')}, CPU)")
+    ax_t.grid(alpha=0.3, which="both"); ax_t.legend(fontsize=7)
 
-    # --- feasibility: analytic memory map ---
-    ax_m = axes[1, 2]
-    K = 100
-    m_grid = np.logspace(2, 4.2, 100)
-    for n_test, color in ((500, "tab:blue"), (1000, "tab:cyan"),
-                          (6000, "tab:orange"), (10000, "tab:red")):
-        gb = 9.0 * m_grid * n_test * K / 1e9   # int64 attribution + bool votes
-        ax_m.plot(m_grid, gb, color=color, label=f"n_test={n_test}")
-    ax_m.axhline(16, color="k", ls="--", lw=0.8)
-    ax_m.text(120, 17, "16GB laptop", fontsize=7)
-    ax_m.axhline(48, color="k", ls=":", lw=0.8)
-    ax_m.text(120, 52, "48GB cluster", fontsize=7)
-    ax_m.plot([9000], [9.0 * 9000 * 6000 * K / 1e9], "r*", ms=14,
-              label="authors' regime (m=9000, n=6000)")
-    ax_m.plot([200, 400, 800], [9.0 * m * 500 * K / 1e9 for m in (200, 400, 800)],
-              "ks", ms=5, label="this run")
-    ax_m.set_xscale("log"); ax_m.set_yscale("log")
-    ax_m.set_xlabel("cal size m"); ax_m.set_ylabel("attribution memory (GB)")
-    ax_m.set_title("JK+ memory = 9*m*n_test*K bytes (K=100)")
-    ax_m.grid(alpha=0.3, which="both"); ax_m.legend(fontsize=7, loc="upper left")
+    # --- analytic JK+ memory map ---
+    if n_rows > 1 and not args.no_mem_panel:
+        ax_m = axes[1, 2]
+        K = 100
+        m_grid = np.logspace(2, 4.2, 100)
+        for n_test, color in ((500, "tab:blue"), (1000, "tab:cyan"),
+                              (6000, "tab:orange"), (10000, "tab:red")):
+            gb = 9.0 * m_grid * n_test * K / 1e9
+            ax_m.plot(m_grid, gb, color=color, label=f"n_test={n_test}")
+        ax_m.axhline(16, color="k", ls="--", lw=0.8)
+        ax_m.text(120, 17, "16GB laptop", fontsize=7)
+        ax_m.axhline(48, color="k", ls=":", lw=0.8)
+        ax_m.text(120, 52, "48GB cluster", fontsize=7)
+        ax_m.plot([9000], [9.0 * 9000 * 6000 * K / 1e9], "r*", ms=14,
+                  label="authors' regime (m=9000, n=6000)")
+        ax_m.plot(cals, [9.0 * m * cfg.get("test_cap", 500) * K / 1e9
+                         for m in cals], "ks", ms=5, label="this run")
+        ax_m.set_xscale("log"); ax_m.set_yscale("log")
+        ax_m.set_xlabel("cal size m"); ax_m.set_ylabel("attribution memory (GB)")
+        ax_m.set_title("JK+ memory = 9*m*n_test*K bytes (K=100)")
+        ax_m.grid(alpha=0.3, which="both"); ax_m.legend(fontsize=7, loc="upper left")
+    elif n_rows == 1:
+        pass
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    h2, l2 = axes[0, 1].get_legend_handles_labels()
-    for h, l in zip(h2, l2):
-        if l not in labels:
-            handles.append(h); labels.append(l)
     fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=9,
                frameon=False)
+    ds = os.path.basename(cfg["embeddings_path"]).replace("embeddings_", "") \
+        .replace(".pt", "")
     fig.suptitle(
         "Authors' Jackknife+ Multi-Score CP (verbatim Alg B.1) vs our MDCP arms -- "
-        f"CIFAR-100, dims {' x '.join('proto:' + v for v in cfg['dims_views'])}, "
-        f"{cfg['n_trials']} trials, alpha={cfg['alpha']} "
-        "(note: JK+ force-includes one label in empty sets)",
+        f"{ds}, dims {' x '.join(cfg['dims'])}, {cfg['n_trials']} trials, "
+        f"alpha={cfg['alpha']} (JK+ force-includes one label in empty sets)",
         fontsize=11)
-    fig.tight_layout(rect=(0, 0.08, 1, 0.96))
+    fig.tight_layout(rect=(0, 0.12 / n_rows, 1, 0.95))
     out = args.out or os.path.join(os.path.dirname(args.results),
                                    "fig_jackknife_compare.png")
     fig.savefig(out, dpi=150)
