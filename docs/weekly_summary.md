@@ -11,339 +11,164 @@ All experiments: CIFAR-100, DINOv2 embeddings, exchangeable pipeline
 
 ## Week ending 2026-07-13 (work on 07-05 to 07-13)
 
-One main thread, one parallel thread. **(A) MDCP** — we adapted **Multi-Dimensional
-Conformal Prediction** (Tawachi & Laufer-Goldshtein, ICLR 2025, TAU) to our
-label-free SSL+FCP stack in four pilot rounds (score-space engine -> dimension
-choice -> layer views -> exact full-CP version), plus a line-by-line faithfulness
-audit against the authors' code and a same-dims head-to-head against their
-vendored JK+ algorithm (section 9). **(B) PCA rationalization audit** — the "why
-PCA-128?" hole is now a pool-only decision rule with a three-regime map. Code on
-branches `worktree-mdcp-pool-pilot` / `worktree-pca-pilots` (NOT merged); results
-archived in the main checkout under `output/mdcp_pool_pilot/` and
-`output/pca_pilots/`. Defaults as in the header; MDCP numbers are 20-trial local
-(cluster confirmation pending — see status, section 11).
+Main thread: adapting **Multi-Dimensional Conformal Prediction** (MDCP; Tawachi &
+Laufer-Goldshtein, ICLR 2025, TAU) to our label-free SSL+FCP stack. Parallel
+thread: the PCA rationalization audit. Code on branches `worktree-mdcp-pool-pilot`
+/ `worktree-pca-pilots` (NOT merged); results archived under
+`output/mdcp_pool_pilot/` and `output/pca_pilots/` (figs in
+`output/mdcp_pool_pilot/figs/` unless a fuller path is given). All MDCP numbers:
+20-trial local, alpha=0.1, CIFAR-100 dims = prototype@PCA-128 x prototype@PCA-32
+unless noted; 50-trial cluster confirmation still pending (section 7).
 
-### 1. MDCP — what it is, and how we implemented + adapted it [MAIN THREAD]
+### 1. MDCP in one paragraph, and our adaptation
 
-**Their method in one paragraph.** Ordinary CP compresses "how strange is label y
-for input x" into ONE score. MDCP keeps SEVERAL scores at once. Think of each score
-function as a *judge*: classic CP thresholds a single judge; MDCP seats a panel.
-Concretely: train n diverse classifier heads, stack their scores into a vector
-s(x,y) = (s_1(x,y), ..., s_n(x,y)) — a point in an n-dimensional "opinion space".
-Then learn where TRUE labels usually land in that space: half the calibration set
-donates its true-label vectors s(X_i, Y_i) as centers of a Voronoi partition, and
-every cell gets a purity score D = (F+T)/T, where T / F count the true-label /
-wrong-label vectors falling in that cell (low D = "mostly true labels land here").
-Finally, plain CP on the other half of cal selects the smallest union of purest
-cells holding >= 1-alpha of the true labels; test label y is predicted iff s(x,y)
-lands in that union. Net effect: a per-REGION referee between score functions —
-in one region judge 1 is trusted, in another judge 2, learned from data.
+Ordinary CP compresses "how strange is label y for input x" into ONE score; MDCP
+keeps several: stack n scores into a vector s(x,y) = (s_1(x,y), ..., s_n(x,y)) —
+a point in "score space" — and ask where TRUE labels usually land in that space.
+The paper's own validity proof (Prop 2) collapses the machinery to ordinary 1-D
+CP on one scalar: the purity D of the score-space region where (x,y) lands. So
+MDCP is really a recipe for FUSING several NCMs into one new NCM — and every
+ingredient can be swapped for a label-free part of our stack: their n trained
+heads -> our frozen NCMs at different feature views (geodesic / prototype x
+PCA-32/128 / LW-768 / ViT layer taps); their burned 50% of cal -> the unlabeled
+pool. A line-by-line audit against the authors' code (their repo, branch
+`paper-version`; default main is broken) confirms our quantile rule is exactly
+their eq-8 re-calibration and pins every deviation; one naming rule: never cite
+our full-CP arm as "their jackknife" (ours = exact bag p-value, theirs =
+1-2alpha vote).
 
-**Why this fits us.** We have several good label-free NCMs (geodesic ratio,
-prototype-softmax) whose relative strength flips across datasets and regions — and
-no labels to spare for picking between them. An automatic, label-free arbiter is
-exactly the missing piece.
+We calibrated the purity score three ways, ordered below from the most naive
+(their algorithm, untouched) to the most engineered (our pool version) — same
+dimensions, same trial seeds. One-glance ladder, set size (coverage):
 
-**The reduction that unlocked the adaptation.** The paper's own validity proof
-(Prop 2) shows the whole construction collapses to ordinary **1-D CP on one
-scalar**: D(s(x,y)) = "how impure is the score-space neighborhood where (x,y)
-landed". Seen that way, MDCP is a *recipe for fusing several NCMs into one new
-NCM* — and every ingredient can be swapped for the label-free version in our
-stack (the 07-13 audit confirms our quantile rule is exactly their eq-8
-re-calibration):
-
-| paper's ingredient | our replacement | why |
-|---|---|---|
-| n trained heads (needs train labels) | frozen label-free NCMs at chosen feature "views": geodesic@PCA-128, prototype@PCA-32, geodesic@LW-768, prototype@layer-09, ... | zero label cost — the whole budget goes to calibration |
-| half of cal burned on the cell map | the pseudo-labeled UNLABELED POOL as the score cloud | no cal split; the pool is free |
-| Voronoi cells + raw counts (F+T)/T | smoothed kNN distance-RATIO D (below) | raw counts cap-collapse on pseudo-label clouds; the ratio is our geodesic NN-ratio structure transplanted into score space |
-| other half of cal for the threshold | ALL of cal | tighter quantile |
-| exact guarantee only in the split version; their JK+ variant gives 1-2alpha | Pilot D: full-CP version — exact 1-alpha with NO cal split (section 7) | the open corner their paper leaves; our home turf |
-
-**The adapted score, end to end** (`src/mdcp_pool_pilot.py`):
-
-```
-dimensions   s_1..s_n(x,y) = our frozen NCM scores, each rank-normalized by its
-             pool ECDF (so the axes are comparable)
-score cloud  pseudo-label each pool point u:  yhat(u) = nearest cal prototype
-             TRUE cloud  = { s(u, yhat(u))             : u in pool }
-             FALSE cloud = { s(u, y') for y' != yhat(u): u in pool }
-purity       D(x,y) = dist_to_kth_NN(s(x,y), TRUE) / dist_to_kth_NN(s(x,y), FALSE)
-             (k_d = 10; small D = "you landed where true labels live")
-CP           ordinary 1-D conformal on D over the FULL cal set -> qhat
-             prediction set = { y : D(x,y) <= qhat }
-```
-
-Validity status of this pilot arm: split-style / empirical (dimensions anchored on
-cal — same convention as our SCP-geodesic control); measured coverage ~0.90
-everywhere, tight on the random split. The exact-guarantee formulation is Pilot D
-(section 7).
-
-### 2. Pilot B results — the fused score "never loses"; decorrelation predicts wins
-
-- **Never loses:** the 2-D purity score (geodesic asym + prototype LAC) always ~=
-  the better single dimension — automatic per-region NCM selection — even when one
-  dimension fully degenerates (aircraft prototype at sz=100; CIFAR random-200).
-- **Wins where the judges disagree:** aircraft bal-400 26.4 vs geodesic 29.8
-  (−11%), random-400 −7 to −9%. NO gain on CIFAR-100 balanced mid-cal — and the
-  cheap screen predicts this: false-label Spearman correlation between the dims is
-  0.92 on CIFAR (clones) vs 0.59 on aircraft (genuine second opinion).
-- Coverage valid in every arm. Comparison fig (new 07-13)
-  `output/mdcp_pool_pilot/figs/fig_pilotb_vs_1d_cifar100.png`.
-
-### 3. The starved-corner discovery — pseudo-label accuracy is a dead lever
-
-Target: random-split small cal (raw geodesic sz 85.9 at cal=200). Expected lever:
-better pseudo-labels. **False** — an oracle labeler restricted to classes present
-in cal (88.7% accurate) fails exactly like a 65% one (both sz ~88; qhat explodes
-38 -> 5e4). Mechanism: true labels of cal-missing/singleton classes land in a
-pixel-thin **analytic** stratum of score space (s_geo = pi/d_other and s_LAC = 1
-exactly — a consequence of the score conventions, not the data), and no
-pseudo-labeler can put true mass there (it can only name classes it has seen), so
-those cal points get astronomical D and the quantile explodes. Because the stratum
-is analytic we can **synthesize** it: as-if-missing TRUE vectors for pool points,
-dosed at the Good-Turing singleton fraction N1/n_cal (self-disables when nothing
-is starved; no harm on any balanced config). Result, CIFAR-100 random-200: **sz
-21.5 @ cov 0.900 (−75%)** — beats even the oracle-labeled cloud (31.1); a 4x dose
-trades to sz ~11.8 for ~1pp coverage. Mechanism 3-panel
-`figs/fig_mechanism_cifar100.png`; lever bars `figs/fig_yhat_lever_*.png`.
-
-### 4. Choosing dimensions — multi-resolution pair = first balanced win; 3-D dies of dilution
-
-- **The screen** (`src/mdcp_dim_screen.py`): Spearman correlation of FALSE-label
-  scores between candidate dims — label-free, cheap, run before any CP. Full-rank
-  re-whitenings are clones (.93+); **prototype@PCA-32 vs @PCA-128 = .669** — a
-  coarse "superclass-resolution" axis (the MA-CS/MS-CS intuition reborn as a score
-  dimension instead of a penalty).
-- **CIFAR-100 pair proto@128 x proto@32 (20 trials): first combination win on the
-  balanced default** — cal=200 sz **5.93 vs 7.05** best-solo (−16%; oracle-yhat
-  ceiling 5.24); exact ties at 400/800 (oracle ties too — fine+coarse pays
-  precisely when the fine view is label-starved). Random-200 pair + GT corner aug:
-  **15.4 @ 0.902** (beats the geo+proto pair's 21.5).
-  `figs/fig_size_cifar100_multiview_balanced_both.png`.
-- **3-D kill:** adding geo@128 (corr .92 with proto@128) as a third axis ERASES
-  the balanced win (7.18 vs 5.93; oracle too) — a redundant axis adds kNN volume
-  without discrimination and amplifies pseudo-label noise.
-- **Rules extracted:** every new axis must pass the pairwise false-corr screen
-  against ALL existing axes; stay 2-D unless yhat is strong; and solo strength
-  matters as much as decorrelation — tradeoff map from the layer round (sec 6):
-  corr .92 + strong = tie; corr .67 + 1.6x-weaker = WIN; corr .32 + 10x-weaker =
-  LOSE.
-- **miniImageNet transfer (ran 07-13):** balanced = tie at every cal (sets
-  ~1-1.8; DINOv2 saturates mini, so the fine view is never label-starved and the
-  rule above predicts no gain — confirmed; oracle headroom only at cal=200, 1.56
-  vs 1.81). The corner story REPLICATES: at random-200 both solo dims degenerate
-  (sz ~97) while GT-aug lands **14.2 @ cov 0.911** (matching the oracle cloud);
-  random-400 GT costs again (2.9 vs 1.1) — the parked N1 gate remains the fix.
-  Results `output/mdcp_pool_pilot/mini_multires/`.
-
-### 5. Aircraft — the right VIEW beats any combination; still, a champion pair (07-13)
-
-Porting the PCA-audit transform (full-rank `lw_cluster` whitening, section 10) gave
-a new solo champion before any fusion; MDCP then adds a real but small margin only
-when BOTH dims are strong. Balanced, 20 trials, set size @ cal 200/400/800:
-
-| arm | 200 | 400 | 800 |
+| rung | guarantee | CIFAR bal-200 | CIFAR random-200 |
 |---|---|---|---|
-| old champion geo@pca128_cw | 51.1 | 29.8 | 18.8 |
-| **geo@lw768 solo (new view champion)** | **29.0** | 21.6 | 16.2 |
-| proto@pca128_cw solo | ~100 (degenerate) | — | 13.9 |
-| **2-D geo@lw768 x proto@pca128 (07-13 champion pair)** | 29.5 (tie) | **20.4** (−5.6%) | **13.6** (−2.2%) |
+| best single NCM (no fusion) | ~0.90 empirical | 7.05 | 85.9 |
+| 1. authors' JK+, verbatim | 1-2alpha | 6.44 (.951) | 3.25 (**.792 — INVALID**) |
+| 2. our full-CP MDCP | **exact 1-alpha** | 25.1 (.95) | 51 (.907) |
+| 3. pool D-ratio (+GT aug) | ~0.90 empirical | **5.93** | **21.5** (.900) |
 
-The deployable pair ~= its oracle everywhere (yhat accuracy .28–.43 suffices with
-two strong dims), whereas the earlier 3-D arm with weak members FAILED outright
-(61.5 at bal-200 — the one "never-loses" violation, from 3-D cloud noise + a weak
-yhat anchor). **Lesson, twice now: features >> score combination** — fusion pays
-only when a genuinely decorrelated second STRONG view exists and the fine view is
-starved. Results `output/mdcp_pool_pilot/aircraft_lw_proto2d/`, grid
-`figs/fig_aircraft_combos.png`.
+### 2. Rung 1 — the authors' Jackknife+, unchanged, on our dimensions
 
-**Robustness (07-13 challenger sweep):** the champion pair survives 3 screened
-challengers — geo@pca512 x proto loses at small cal (geo@pca512's solo strength
-is cal-DEPENDENT: ties lw768 @800 but 2x worse @200 -> the screen's solo-strength
-gate must be evaluated at the TARGET cal); the two-geodesic pair lw768 x pca512
-(corr .71, equal solos) loses to lw768 solo at every cal (same-family,
-same-source pairs have no combinable signal even when rank-decorrelated); and a
-fully-screened strong 3-D dilutes again (14.9 vs 13.6 @800) -> the n=2 rule is
-hard at aircraft yhat levels — pairwise screening is necessary but NOT
-sufficient for 3-D. Dirs
-`output/mdcp_pool_pilot/{air_pca512_proto,air_lw_pca512,air_3d_strong}/`.
+The paper's own no-split variant (Alg B.1: leave-one-out votes over cal-centered
+score-space cells, guarantee 1-2alpha), vendored byte-verbatim
+(`src/yams_jacknife_vendored.py`) and simply fed our dimension scores — zero
+adaptation. It already fuses usefully: bal-200 6.44 beats the best single dim
+(7.05). Three reasons it is not enough: (a) **the 1-2alpha weakness is real
+where we care** — random-200 coverage .792, because the vote structurally writes
+off cal-missing classes (~13% of test); (b) on aircraft (geo@lw768 x
+proto@pca128) it **never wins** (+13% @400, +31% @800): its raw-Euclidean cells
+break on heterogeneous dims — rank-normalizing the axes (our pool-ECDF layer,
+absent from their method) recovers 17.8 -> 14.0; (c) cost grows ~m^2 (0.3 -> 4.3
+s/trial by m=800; the authors' own m=9000 regime needs ~49GB). Figs
+`output/mdcp_pool_pilot/jackknife_compare{,_aircraft}/fig_jackknife_compare.png`.
 
-### 6. Layer-tap dimensions (instructor's pointer) — most decorrelated, too weak solo
+### 3. Rung 2 — our full-CP MDCP: the exact guarantee, from cal alone
 
-Instructor sent CAO (Odonnat et al., ICLR 2026 "Layer by Layer, Module by Module",
-`docs/CAO-ICLR2026-...pdf`): intermediate ViT layers are OOD-robust probes ->
-candidate MDCP views. Built resumable intermediate-layer extraction
-(`src/extract_intermediate_features.py`, taps at layers 3/6/9/12 + final; run on
-the cluster for cifar100 / aircraft / miniimagenet + the FIRST Stanford Cars
-embeddings, `output/from_cluster/embeddings/*_layers.pt`); pilot views generalized
-to `<ncm>:<source>__<transform>`. Screens: layer-12 = clone of final (.95–.99);
-layers 3–9 = the most decorrelated dims we have ever screened (false-corr .12–.32)
-BUT 5–50x weaker solo. 2-D grids: CIFAR = KILL (bal-200 9.64 vs 7.20 solo — oracle
-too); aircraft shows real complementarity among WEAK dims (bal-400 46.7 vs 73.9
-best member, −37%) but pairing a layer with the champion view adds nothing (oracle
-22.5 vs lw768 solo 21.6). CAO's OOD-layers hope does NOT transfer here: aircraft
-difficulty is task hardness, not input shift — the fine-grained signal sits at the
-top of the network. Results `output/mdcp_pool_pilot/{cifar100_layers2d,
-aircraft_layers2d,aircraft_lw_layer2d}/`.
+Replace the vote with the honest transductive construction (`src/mdcp_full_cp.py`;
+matches the instructor's full-CP sketch): for each candidate label y form the bag
+cal + {(x,y)}; the TRUE cloud is the bag ITSELF, leave-one-out; score every bag
+point; p-value = rank/(m+1). Bag-symmetric by construction (engine == brute-force
+symmetric oracle to 1e-10), so coverage >= 1-alpha holds EXACTLY, with no cal
+split and no extra data — what neither the paper's split version (half the
+budget) nor its JK+ (1-2alpha) offers. Measured price of exactness: balanced
+25.1 / 2.15 / 1.41 @ cal 200/400/800 = **+6-16% over rung 3 at cal>=400, but a
+4x starvation tax at cal=200** — the bag-TRUE cloud has only m+1 points and
+k_d=10 digs too deep (k_d(m) schedule = the open knob). At random-200 the
+missing-class corner SELF-HEALS (bag singletons populate it): 51 @ .907, exact,
+zero augmentation. Two side questions settled: within full CP the pool adds
+nothing beyond the feature transform (bag arm >= pool arm everywhere), and the
+faithful Voronoi-count purity is dominated — the kNN-ratio smoothing is
+load-bearing. Compute is the extreme end: ~1.0-1.3 s per TEST POINT at m=200
+(4GB GPU), 200-2000x the other rungs. Fig `figs/fig_fullcp_balanced.png`.
 
-### 7. Pilot D — full-CP MDCP: the exact guarantee, and the measured price of exactness
+### 4. Rung 3 — pseudo-labeled pool cloud: best sets, and WHY pseudo-labels work
 
-The instructor's full-CP sketch (label-switch on the test point -> new center +
-local F-count change) matches the engine we built. `src/mdcp_full_cp.py`: for each
-candidate label y form the bag B_y = cal ∪ {(x,y)}; the TRUE cloud is **the bag
-itself**, leave-one-out (bag-symmetric — no pseudo-labels, no pool); compute D for
-every bag point; p-value(y) = rank of the test D / (m+1). Symmetry oracle tests:
-engine == brute-force symmetric reference to 1e-10 (all arms, missing-class
-included) + bit-exact batched fast path. So coverage >= 1-alpha holds **exactly,
-with no cal split** — vs the paper's 50% split (exact but half the budget) and
-their JK+ variant (all of cal but only 1-2alpha). Cluster ladder (20 trials x 150
-test, proto128 x proto32 plane), CIFAR-100 balanced set size:
+Rung 2's starvation names the real bottleneck: the purity map needs a DENSE
+true/false score cloud, and cal alone cannot provide one. The unlabeled pool can
+— if we pseudo-label it: yhat(u) = nearest cal prototype; u's score vector at
+yhat joins the TRUE cloud, at every other label the FALSE cloud; purity D(x,y) =
+dist-to-kth-TRUE / dist-to-kth-FALSE (k_d=10, pool-ECDF rank axes); ordinary 1-D
+CP on ALL of cal (`src/mdcp_pool_pilot.py`). Validity here is
+split-style/empirical — measured ~0.90 everywhere, tight on the random split.
 
-| arm | cal=200 | cal=400 | cal=800 |
-|---|---|---|---|
-| full-CP bag (EXACT) | 25.1 (cov .95) | 2.15 | 1.41 (cov .91) |
-| pilot-B split-style (empirical, sec 4) | 5.93 | 1.85 | 1.32 |
+**Why pseudo-labels help although ~35% are wrong:** the map only needs the
+COARSE geometry of where true scores concentrate; a mislabeled pool point still
+lands in roughly the right score-space region, and the FALSE cloud (K-1 wrong
+labels per point) is barely perturbed. Measured directly: a 65%-accurate labeler
+and an 88.7% oracle-on-present-classes perform IDENTICALLY — accuracy is a dead
+lever (`figs/fig_yhat_lever_cifar100.png`). The one real failure is analytic,
+not statistical: true labels of cal-missing/singleton classes land in a
+pixel-thin stratum (s_geo = pi/d_other and s_LAC = 1 exactly — score
+conventions, not data) that NO labeler can populate, since it can only name
+classes present in cal — so the quantile explodes (qhat 38 -> 5e4). The fix is
+to SYNTHESIZE the stratum: as-if-missing true vectors, dosed at the Good-Turing
+singleton fraction N1/n_cal (self-disabling when nothing is starved). Mechanism
+3-panel: `figs/fig_mechanism_cifar100.png`.
 
-- **Exactness costs +6–16% set size at cal>=400** — a fair price for the exact
-  guarantee. At cal=200 there is a 4x starvation tax: the bag-TRUE cloud has only
-  m+1 points and k_d=10 digs too deep — a k_d(m) schedule is the open knob.
-- **Random-200: sz 51 @ cov .907, exact, with ZERO augmentation or pseudo-labels**
-  — the starved corner **self-heals** inside full CP (bag singletons populate the
-  analytic stratum): −41% vs raw geodesic 85.9 and vs pilot-B-no-aug 88.5. The
-  GT-augmented empirical arm (21.5, sec 3) stays overall champion. Random-400 is
-  noisier (12.3 +− 4.2, bimodal starved trials, vs pilot-B 2.05).
-- **Inside full CP the unlabeled pool adds NOTHING beyond the feature transform**
-  (bag arm >= pool arm everywhere) — closing the pool-contribution question for
-  this method. The faithful count/Voronoi arm is dominated everywhere — the
-  kNN-ratio smoothing is load-bearing.
-- Ops lesson: the 4GB-WDDM VRAM ceiling causes a silent paging collapse ("runs for
-  hours, no progress"); fixed with memory-budget auto-chunking + measure-before-
-  launch. Fig `output/mdcp_pool_pilot/figs/fig_fullcp_balanced.png`.
+**Results.** Never loses to the best single dimension (automatic per-region NCM
+selection, even through a fully degenerate dim); random-200 **21.5 @ .900**
+(−75% vs 85.9, beats even the oracle-labeled cloud, 31.1); balanced-200
+**5.93 vs 7.05** (−16%, the first balanced-split combination win, via the
+multi-resolution pair; exact ties at cal>=400 — fusion pays precisely when the
+fine view is label-starved). Headline figs `figs/fig_pilotb_vs_1d_cifar100.png`,
+`figs/fig_size_cifar100_multiview_balanced_both.png`.
 
-### 8. Faithfulness audit vs the authors' code (07-13)
+### 5. Which dimensions to fuse — screening rules
 
-Cloned `yamtawa/Multi-CP` (local `../mdcp`); reference of record = branch
-`paper-version` (their default `main` is broken — self-labeled "not working").
-Verdicts: (1) the Pilot-B reduction claim is TRUE — our scalar quantile rule is
-exactly their eq-8 re-calibration; all deviations (pool cloud, no cal split, ECDF
-ranks, kNN-ratio D, cal-anchored dims) are documented and the guarantee is
-correctly downgraded to empirical there. (2) Pilot B's `count` mode had an
-overclaiming docstring — fixed-k kNN over a combined cloud is NOT their Voronoi
-purity; Pilot D's count arm IS the faithful eq-7 construction (oracle-tested).
-(3) Pilot D is NOT their jackknife (Alg B.1): ours is a full-CP bag p-value (exact
-1-alpha), theirs a JK+ vote (1-2alpha) — never cite `fcp_bag` as "their JK+".
-(4) Their code has quirks we deliberately do not inherit: secant re-calibration to
-raw 1-alpha (missing the finite-sample ceil correction -> anti-conservative
-O(1/r)), forced non-empty sets, deterministic cal split. Bonus find: their
-standalone JK+ runner consumes plain [H, m, C] score arrays — it can take OUR
-dimension scores directly as an Alg-B.1 baseline. We ran exactly that the same
-day — section 9.
+- **Screen before any CP** (`src/mdcp_dim_screen.py`): Spearman correlation of
+  FALSE-label scores, label-free. Full-rank re-whitenings are clones (.93+);
+  proto@32 vs proto@128 = .669 — a coarse superclass-resolution axis (the
+  MA-CS/MS-CS intuition as a score dimension instead of a penalty).
+- **Hard n=2.** A third axis dilutes even when fully screened (CIFAR 7.18 vs
+  5.93; aircraft 14.9 vs 13.6): redundant kNN volume + pseudo-label noise. Solo
+  strength matters as much as decorrelation (corr .92 + strong = tie; .67 +
+  1.6x-weaker = WIN; .32 + 10x-weaker = LOSE — the intermediate-layer taps from
+  the instructor's CAO pointer are the most decorrelated dims ever screened,
+  .12-.32, but 5-50x weaker solo -> KILL) and must be judged at the TARGET cal.
+- **Aircraft: the right VIEW beats any combination.** Full-rank lw_cluster
+  whitening (section 6) makes geo@lw768 solo the new champion (29.0/21.6/16.2 @
+  200/400/800 vs old 51/30/19); fusion adds a small margin only when BOTH dims
+  are strong — champion pair geo@lw768 x proto@pca128: 20.4 @400 (−5.6%) / 13.6
+  @800 (−2.2%), survives 3 screened challengers
+  (`figs/fig_aircraft_combos.png`, `output/mdcp_pool_pilot/aircraft_lw_proto2d/`).
+- **miniImageNet transfer:** balanced = ties (saturated, so the fine view is
+  never starved — as the rule predicts); the random-200 corner replicates
+  (GT-aug 14.2 @ .911 vs ~97 solo). `output/mdcp_pool_pilot/mini_multires/`.
 
-### 9. JK+ head-to-head — the authors' own algorithm, run on OUR dimensions (07-13)
+### 6. Parallel thread — PCA rationalization audit: "why PCA-128?" is now a rule
 
-Follow-up to the audit's bonus find: we vendored the authors' Jackknife+
-(Alg B.1) **byte-verbatim** (`src/yams_jacknife_vendored.py`, their
-`jackknife_standalone` blob) and fed it the SAME dimension scores and trial
-seeds as our arms (`src/mdcp_jackknife_compare.py`) — the cleanest possible
-"their machinery vs ours" comparison. 20 trials, alpha=0.1, set size (coverage):
+PCA-128 is not ad hoc: PCA-truncate + cluster-whiten IS the NCM's metric — a
+pool-fit, low-rank regularized Mahalanobis; d' is the regularization knob.
+Controls: JL random projection at d'=128 is 2-3x WORSE than raw (the win is
+adaptive subspace selection, not mere reduction); full-rank Ledoit-Wolf
+shrinkage loses to truncation on separable data. Aircraft INVERTS: PCA alone is
+a no-op while full-rank lw_cluster BEATS pca128_cw at every cal (22.0 vs 29.4
+@800) — pool participation ratio PR=16 vs ~240: the signal is thinly spread
+through the low-variance tail that truncation discards. Pool-only decision rule:
+PR~240 -> pca128 + fine-k cluster whiten (cifar/mini); PR~58 -> pca512_cw
+(CUB-200); PR~16 -> no truncation + full-matrix lw_cluster, coarse k (k_opt ~=
+PR/2..PR). Killed: AE-on-low-PR (nonlinearity is not the missing ingredient),
+ICA/negentropy selection (few-way-only criterion). Lit folded into
+`literature.md` §9 — the pool-fit-metric + full-CP novelty slot is OPEN.
+Results `output/pca_pilots/`.
 
-| config (same dims, same seeds) | best 1-D | ours (pool D-ratio) | authors' JK+ |
-|---|---|---|---|
-| CIFAR-100 bal-200 (proto128 x proto32) | 7.05 | **5.93** | 6.44 (.951) |
-| CIFAR-100 random-200 | 85.9 | GT-aug **21.5** @ .900; fcp_bag 51 @ .903 (exact) | 3.25 @ **.792 — INVALID** |
-| aircraft bal-400 (geo@lw768 x proto@pca128) | 21.6 | **20.4** | 23.0 (+13%) |
-| aircraft bal-800 | 13.9 | **13.6** | 17.8 (+31%) |
+### 7. Status — in progress / incomplete
 
-- **CIFAR balanced: JK+ lands BETWEEN the best single dim and our pool D-ratio**
-  (6.44 at cal=200; ties from cal=400).
-- **The 1-2alpha weakness is real, and it bites exactly in our headline regime:**
-  at random-200 JK+ posts tiny sets (3.25) at coverage **0.792** — the vote
-  structurally writes off cal-missing classes (~13.4% of test points); random-400
-  is still 2pp under (.880). Our full-CP bag arm stays exact there (51 @ .903).
-- **Aircraft: JK+ never wins** — tie @200 (30.1 vs 29.5), +13% @400, +31% @800.
-  A control isolates why: feeding their vote our pool-ECDF RANK space recovers
-  the @800 17.8 to 14.0 — their raw-Euclidean cell geometry breaks on
-  heterogeneous dims (their method has no normalization layer). The same hybrid
-  (`jk2_rank`) nominally edges us on CIFAR bal-200 (5.34 vs 5.93) but is
-  pool-dependent via the ECDF and inherits JK+'s random-200 invalidity.
-- **Cost ladder, now measured (not guessed):** ours is ~flat in m
-  (pool-dominated, 0.5–3.3 s/trial); JK+ scales ~m^2 (0.3 -> 4.3 s/trial),
-  crossover m ~600–800; JK+ memory is 9*m*n_test*K bytes -> the authors' own
-  m=9000 / n=6000 regime needs ~49GB (their Tab D.12 flags it as intensive)
-  while m<=800 is trivial. Full CP (pilot D) is the expensive extreme:
-  ~1.0–1.3 s per TEST POINT at m=200 on the 4GB GPU = 200–2000x the
-  split-style/JK+ cost.
-
-**Takeaway for the paper:** on our dimensions the authors' JK+ neither beats our
-empirical D-ratio on efficiency nor provides validity where we need it (random
-small cal, missing classes) — while costing more compute from m~600 up. Results
-`output/mdcp_pool_pilot/{jackknife_compare,jackknife_compare_aircraft}/`
-(`fig_jackknife_compare.png` + JSONs); commits `216d250` + `0819013`.
-
-### 10. Parallel thread — PCA rationalization audit: "why PCA-128?" is now a rule
-
-(`worktree-pca-pilots`; results `output/pca_pilots/`; full detail in the worktree
-THEORY.md.) The worry: PCA-128 delivers the efficiency win but looks ad hoc in the
-paper. Resolution = a reframe plus controls:
-
-- **Reframe:** PCA-truncate + cluster-whiten IS the NCM's metric — a pool-fit,
-  low-rank regularized Mahalanobis (unsupervised metric learning, not
-  "preprocessing"); d' is the regularization knob; the U-shape in d' is
-  bias-variance in metric estimation.
-- **Controls (CIFAR-100/mini):** JL random projection to 128 is 2–3x WORSE than
-  raw — the win is 100% adaptive subspace selection, not "mere reduction";
-  whitening pays only inside the signal subspace; full-rank Ledoit-Wolf shrinkage
-  beats raw but loses to truncation on separable data (hard truncation is
-  load-bearing). Coverage ~0.90 in all arms — validity never moves.
-- **Aircraft INVERTS the attribution:** PCA alone is a no-op; full-rank
-  `lw_cluster` whitening BEATS pca128_cw geodesic at every cal (22.0 vs 29.4
-  @800). Pool participation ratio PR=16 (vs ~240 cifar/mini): the fine-grained
-  signal is thinly spread through the low-variance tail that truncation discards
-  (the ICA/negentropy pilot confirmed no 128-dim cut can collect it).
-- **The three-regime map** (pool-only, label-free flags -> transform):
-  PR~240 / top-band var 15–17% -> pca128 + fine-k cluster whiten (cifar, mini);
-  PR~58 -> pca512_cw (CUB-200, replicated end-to-end);
-  PR~16 / top-band 75% -> NO truncation + full-matrix lw_cluster, coarse k
-  (aircraft). Whiten-k heuristic: k_opt ~= PR/2..PR. New aircraft bests from the
-  k-sweep: lw_cluster+geodesic k10 @800 = 18.8 (−53% vs raw); pca128_cw+proto
-  k10 = 12.4.
-- **Kills:** AE-on-low-PR (nonlinearity is not the missing ingredient —
-  decorrelation is); ICA/negentropy selection (TAFSSL's criterion is few-way-only:
-  at K=100 each dim's class mixture is ~Gaussian by CLT, so negentropy chases
-  rogue dims instead of class signal). Lit sweep folded into `literature.md` §9 —
-  the pool-fit-metric + full-CP novelty slot is OPEN (nearest: SCA-T/Conf-OT,
-  CONFIDE).
-
-### 11. Status — in progress / incomplete
-
-- [ ] **50-trial cluster confirmation** of the MDCP headlines (CIFAR bal-200 5.93;
-  aircraft lw768 solo + champion pair) — all MDCP numbers above are 20-trial local.
-- [ ] **k_d(m) schedule** in full-CP (rescue the cal=200 starvation tax); hybrid
-  bag + dosed-pool TRUE cloud if cal=200 must be rescued.
-- [x] **miniImageNet transfer** of the multi-resolution pair — ✔ DONE 07-13
-  (section 4): balanced ties everywhere (mini saturates, as the rule predicts);
-  random-200 GT-aug 14.2 @ .911 replicates the corner win.
-- [ ] **yhat-anchor fix** (deployable arm's anchor = "first proto dim" heuristic
-  broke on lw768 x layer09; should be the strongest dim / dedicated classifier) —
-  required before further multi-dim runs.
-- [x] **JK+ (Alg B.1) baseline** on our dimension scores — ✔ DONE 07-13
-  (section 9): never wins on our dims; under-covers at random-200 (cov .792).
-- [ ] **PCA-audit hardening:** aircraft numbers are 10-trial local; the regime map
-  needs held-out validation (Stanford Cars / Flowers) + high-trial cluster runs.
-- Parked (user decisions): N1/alpha gate for GT dosing (random-split subject);
-  direction 1 backbone-diversity dims (CLIP/BEiTv2 embeddings need re-extraction);
-  aircraft prototype-T sensitivity; the PCA `auto` PR-switch arm.
-
-### Maintenance
-
-- Embeddings reorganized into `output/from_cluster/embeddings/` (all .pt files);
-  intermediate-layer files added for 4 datasets incl. the first Stanford Cars
-  embeddings (8144 labeled + 8041 unlabeled).
-- Bi-weekly repo cleanup ran locally 07-10 (branch `routine/repo-cleanup-2026-07-10`):
-  4 stale scripts flagged ARCHIVE-CANDIDATE (review 2026-07-24), CLAUDE.md
-  active-scripts list synced.
-- Cluster shm bus-error fixed (DataLoader `num_workers=0`).
+- [ ] 50-trial cluster confirmation of the MDCP headlines (CIFAR bal-200 5.93;
+  aircraft lw768 + champion pair) — all MDCP numbers above are 20-trial local.
+- [ ] k_d(m) schedule in full CP (the cal=200 starvation tax); hybrid bag +
+  dosed-pool TRUE cloud if cal=200 must be rescued.
+- [ ] yhat-anchor fix (deployable arm's anchor should be the strongest dim, not
+  "first proto dim") — required before further multi-dim runs.
+- [ ] PCA-audit hardening: aircraft numbers are 10-trial local; the regime map
+  needs held-out validation (Stanford Cars / Flowers) + cluster high-trial.
+- Parked (user decisions): N1/alpha gate for GT dosing; backbone-diversity dims
+  (CLIP/BEiTv2 need re-extraction); aircraft proto-T sensitivity; PCA auto arm.
+- Maintenance: embeddings reorganized to `output/from_cluster/embeddings/`
+  (+ new intermediate-layer files incl. first Stanford Cars); bi-weekly cleanup
+  ran 07-10 (branch `routine/repo-cleanup-2026-07-10`); cluster shm bus-error
+  fixed (`num_workers=0`).
 
 ---
 
