@@ -142,10 +142,13 @@ PCA-128 is not ad hoc: PCA-truncate + cluster-whiten IS the NCM's metric — a
 pool-fit, low-rank regularized Mahalanobis; d' is the regularization knob.
 Controls: JL random projection at d'=128 is 2-3x WORSE than raw (the win is
 adaptive subspace selection, not mere reduction); full-rank Ledoit-Wolf
-shrinkage loses to truncation on separable data. Aircraft INVERTS: PCA alone is
-a no-op while full-rank lw_cluster BEATS pca128_cw at every cal (22.0 vs 29.4
-@800) — pool participation ratio PR=16 vs ~240: the signal is thinly spread
-through the low-variance tail that truncation discards. Pool-only decision rule:
+shrinkage loses to truncation on separable data. **Aircraft INVERTS: PCA-128 is
+REDUNDANT there** — truncation alone is a no-op, and the champion transform
+keeps ALL 768 dimensions, whitened full-rank with a per-cluster full-matrix
+Ledoit-Wolf (`lw_cluster768`, the geo@LW-768 view of section 5): it beats
+pca128_cw at every cal (22.0 vs 29.4 @800) — pool participation ratio PR=16 vs
+~240: the fine-grained signal is thinly spread through the low-variance tail
+that truncation discards, so any 128-dim cut loses it. Pool-only decision rule:
 PR~240 -> pca128 + fine-k cluster whiten (cifar/mini); PR~58 -> pca512_cw
 (CUB-200); PR~16 -> no truncation + full-matrix lw_cluster, coarse k (k_opt ~=
 PR/2..PR). Killed: AE-on-low-PR (nonlinearity is not the missing ingredient),
