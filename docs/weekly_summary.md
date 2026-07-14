@@ -15,12 +15,13 @@ One main thread, one parallel thread. **(A) MDCP** — we adapted **Multi-Dimens
 Conformal Prediction** (Tawachi & Laufer-Goldshtein, ICLR 2025, TAU) to our
 label-free SSL+FCP stack in four pilot rounds (score-space engine -> dimension
 choice -> layer views -> exact full-CP version), plus a line-by-line faithfulness
-audit against the authors' code. **(B) PCA rationalization audit** — the "why
+audit against the authors' code and a same-dims head-to-head against their
+vendored JK+ algorithm (section 9). **(B) PCA rationalization audit** — the "why
 PCA-128?" hole is now a pool-only decision rule with a three-regime map. Code on
 branches `worktree-mdcp-pool-pilot` / `worktree-pca-pilots` (NOT merged); results
 archived in the main checkout under `output/mdcp_pool_pilot/` and
 `output/pca_pilots/`. Defaults as in the header; MDCP numbers are 20-trial local
-(cluster confirmation pending — see status, section 10).
+(cluster confirmation pending — see status, section 11).
 
 ### 1. MDCP — what it is, and how we implemented + adapted it [MAIN THREAD]
 
@@ -128,10 +129,17 @@ trades to sz ~11.8 for ~1pp coverage. Mechanism 3-panel
   matters as much as decorrelation — tradeoff map from the layer round (sec 6):
   corr .92 + strong = tie; corr .67 + 1.6x-weaker = WIN; corr .32 + 10x-weaker =
   LOSE.
+- **miniImageNet transfer (ran 07-13):** balanced = tie at every cal (sets
+  ~1-1.8; DINOv2 saturates mini, so the fine view is never label-starved and the
+  rule above predicts no gain — confirmed; oracle headroom only at cal=200, 1.56
+  vs 1.81). The corner story REPLICATES: at random-200 both solo dims degenerate
+  (sz ~97) while GT-aug lands **14.2 @ cov 0.911** (matching the oracle cloud);
+  random-400 GT costs again (2.9 vs 1.1) — the parked N1 gate remains the fix.
+  Results `output/mdcp_pool_pilot/mini_multires/`.
 
 ### 5. Aircraft — the right VIEW beats any combination; still, a champion pair (07-13)
 
-Porting the PCA-audit transform (full-rank `lw_cluster` whitening, section 9) gave
+Porting the PCA-audit transform (full-rank `lw_cluster` whitening, section 10) gave
 a new solo champion before any fusion; MDCP then adds a real but small margin only
 when BOTH dims are strong. Balanced, 20 trials, set size @ cal 200/400/800:
 
@@ -149,6 +157,17 @@ yhat anchor). **Lesson, twice now: features >> score combination** — fusion pa
 only when a genuinely decorrelated second STRONG view exists and the fine view is
 starved. Results `output/mdcp_pool_pilot/aircraft_lw_proto2d/`, grid
 `figs/fig_aircraft_combos.png`.
+
+**Robustness (07-13 challenger sweep):** the champion pair survives 3 screened
+challengers — geo@pca512 x proto loses at small cal (geo@pca512's solo strength
+is cal-DEPENDENT: ties lw768 @800 but 2x worse @200 -> the screen's solo-strength
+gate must be evaluated at the TARGET cal); the two-geodesic pair lw768 x pca512
+(corr .71, equal solos) loses to lw768 solo at every cal (same-family,
+same-source pairs have no combinable signal even when rank-decorrelated); and a
+fully-screened strong 3-D dilutes again (14.9 vs 13.6 @800) -> the n=2 rule is
+hard at aircraft yhat levels — pairwise screening is necessary but NOT
+sufficient for 3-D. Dirs
+`output/mdcp_pool_pilot/{air_pca512_proto,air_lw_pca512,air_3d_strong}/`.
 
 ### 6. Layer-tap dimensions (instructor's pointer) — most decorrelated, too weak solo
 
@@ -218,9 +237,51 @@ purity; Pilot D's count arm IS the faithful eq-7 construction (oracle-tested).
 raw 1-alpha (missing the finite-sample ceil correction -> anti-conservative
 O(1/r)), forced non-empty sets, deterministic cal split. Bonus find: their
 standalone JK+ runner consumes plain [H, m, C] score arrays — it can take OUR
-dimension scores directly as an Alg-B.1 baseline (queued, sec 10).
+dimension scores directly as an Alg-B.1 baseline. We ran exactly that the same
+day — section 9.
 
-### 9. Parallel thread — PCA rationalization audit: "why PCA-128?" is now a rule
+### 9. JK+ head-to-head — the authors' own algorithm, run on OUR dimensions (07-13)
+
+Follow-up to the audit's bonus find: we vendored the authors' Jackknife+
+(Alg B.1) **byte-verbatim** (`src/yams_jacknife_vendored.py`, their
+`jackknife_standalone` blob) and fed it the SAME dimension scores and trial
+seeds as our arms (`src/mdcp_jackknife_compare.py`) — the cleanest possible
+"their machinery vs ours" comparison. 20 trials, alpha=0.1, set size (coverage):
+
+| config (same dims, same seeds) | best 1-D | ours (pool D-ratio) | authors' JK+ |
+|---|---|---|---|
+| CIFAR-100 bal-200 (proto128 x proto32) | 7.05 | **5.93** | 6.44 (.951) |
+| CIFAR-100 random-200 | 85.9 | GT-aug **21.5** @ .900; fcp_bag 51 @ .903 (exact) | 3.25 @ **.792 — INVALID** |
+| aircraft bal-400 (geo@lw768 x proto@pca128) | 21.6 | **20.4** | 23.0 (+13%) |
+| aircraft bal-800 | 13.9 | **13.6** | 17.8 (+31%) |
+
+- **CIFAR balanced: JK+ lands BETWEEN the best single dim and our pool D-ratio**
+  (6.44 at cal=200; ties from cal=400).
+- **The 1-2alpha weakness is real, and it bites exactly in our headline regime:**
+  at random-200 JK+ posts tiny sets (3.25) at coverage **0.792** — the vote
+  structurally writes off cal-missing classes (~13.4% of test points); random-400
+  is still 2pp under (.880). Our full-CP bag arm stays exact there (51 @ .903).
+- **Aircraft: JK+ never wins** — tie @200 (30.1 vs 29.5), +13% @400, +31% @800.
+  A control isolates why: feeding their vote our pool-ECDF RANK space recovers
+  the @800 17.8 to 14.0 — their raw-Euclidean cell geometry breaks on
+  heterogeneous dims (their method has no normalization layer). The same hybrid
+  (`jk2_rank`) nominally edges us on CIFAR bal-200 (5.34 vs 5.93) but is
+  pool-dependent via the ECDF and inherits JK+'s random-200 invalidity.
+- **Cost ladder, now measured (not guessed):** ours is ~flat in m
+  (pool-dominated, 0.5–3.3 s/trial); JK+ scales ~m^2 (0.3 -> 4.3 s/trial),
+  crossover m ~600–800; JK+ memory is 9*m*n_test*K bytes -> the authors' own
+  m=9000 / n=6000 regime needs ~49GB (their Tab D.12 flags it as intensive)
+  while m<=800 is trivial. Full CP (pilot D) is the expensive extreme:
+  ~1.0–1.3 s per TEST POINT at m=200 on the 4GB GPU = 200–2000x the
+  split-style/JK+ cost.
+
+**Takeaway for the paper:** on our dimensions the authors' JK+ neither beats our
+empirical D-ratio on efficiency nor provides validity where we need it (random
+small cal, missing classes) — while costing more compute from m~600 up. Results
+`output/mdcp_pool_pilot/{jackknife_compare,jackknife_compare_aircraft}/`
+(`fig_jackknife_compare.png` + JSONs); commits `216d250` + `0819013`.
+
+### 10. Parallel thread — PCA rationalization audit: "why PCA-128?" is now a rule
 
 (`worktree-pca-pilots`; results `output/pca_pilots/`; full detail in the worktree
 THEORY.md.) The worry: PCA-128 delivers the efficiency win but looks ad hoc in the
@@ -254,19 +315,20 @@ paper. Resolution = a reframe plus controls:
   the pool-fit-metric + full-CP novelty slot is OPEN (nearest: SCA-T/Conf-OT,
   CONFIDE).
 
-### 10. Status — in progress / incomplete
+### 11. Status — in progress / incomplete
 
 - [ ] **50-trial cluster confirmation** of the MDCP headlines (CIFAR bal-200 5.93;
   aircraft lw768 solo + champion pair) — all MDCP numbers above are 20-trial local.
 - [ ] **k_d(m) schedule** in full-CP (rescue the cal=200 starvation tax); hybrid
   bag + dosed-pool TRUE cloud if cal=200 must be rescued.
-- [ ] **miniImageNet transfer** of the multi-resolution pair (PR~240 -> expect
-  cifar-like behavior).
+- [x] **miniImageNet transfer** of the multi-resolution pair — ✔ DONE 07-13
+  (section 4): balanced ties everywhere (mini saturates, as the rule predicts);
+  random-200 GT-aug 14.2 @ .911 replicates the corner win.
 - [ ] **yhat-anchor fix** (deployable arm's anchor = "first proto dim" heuristic
   broke on lw768 x layer09; should be the strongest dim / dedicated classifier) —
   required before further multi-dim runs.
-- [ ] **JK+ (Alg B.1) baseline** via the authors' standalone runner on our
-  dimension scores.
+- [x] **JK+ (Alg B.1) baseline** on our dimension scores — ✔ DONE 07-13
+  (section 9): never wins on our dims; under-covers at random-200 (cov .792).
 - [ ] **PCA-audit hardening:** aircraft numbers are 10-trial local; the regime map
   needs held-out validation (Stanford Cars / Flowers) + high-trial cluster runs.
 - Parked (user decisions): N1/alpha gate for GT dosing (random-split subject);
