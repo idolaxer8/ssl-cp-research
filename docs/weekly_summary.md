@@ -9,6 +9,57 @@ All experiments: CIFAR-100, DINOv2 embeddings, exchangeable pipeline
 
 ---
 
+## Goals — week 07-27 to 07-31 (planned)
+
+Forward-looking plan, not results. Two threads, both on the MDCP line: rewind
+the method to its native high-data regime, and mine a neighboring
+similarity-aggregation paper for the adaptivity angle.
+
+### 1. Vanilla MDCP in the high-data regime — the paper's split-CP version
+
+**Why.** Every pilot so far ran MDCP OUTSIDE its comfort zone: label-starved cal
+(200–800), with the authors' burned half of cal replaced by our pseudo-labeled
+pool. Before pushing the pool variant further, rewind to the EASY case — the
+authors' own split formulation, untouched, where labeled data is plentiful.
+Working hypothesis from the pilots (balanced-split fusion ties at cal>=400):
+with dense data the marginal-size win vanishes, so if vanilla MDCP earns its
+keep anywhere in this regime it must be on ADAPTIVITY, not average set size.
+- Implement the verbatim split version: cal split 50/50 — first half builds the
+  score-space TRUE/FALSE clouds (no pool, no pseudo-labels), second half
+  calibrates the 1-D purity quantile. Reuse the audited eq-8 quantile rule from
+  `src/mdcp_pool_pilot.py`; this is a new naive arm, not new machinery.
+- High-data regime: cal 2000–8000 on CIFAR-100 / miniImageNet (10k / 50k labeled
+  available), balanced default pair proto@pca32 x proto@pca128; aircraft
+  champion pair (geo@lw768 x proto@pca128) as the hard-case control.
+- Judge on ADAPTIVITY, not just mean size: class-conditional CovGap, coverage
+  floor, size-stratified coverage, singleton-hit ratio — does the fused purity
+  score adapt set size to difficulty better than the best single NCM at the
+  same (halved) budget? Also report the honest cost: burning 50% of cal vs
+  giving the single NCM all of it.
+
+### 2. SNAPS (arXiv 2405.14303, NeurIPS 2024) — dig in, check for adaptability
+
+**Why.** SNAPS ("Similarity-Navigated Conformal Prediction for Graph Neural
+Networks", Song et al.) aggregates the nonconformity scores of feature-similar
+and graph-adjacent nodes into a corrected score — smaller sets + higher
+singleton-hit ratio with valid coverage. That is exactly the family where we
+have two opposite verdicts already: naive label-free score smoothing DESTROYED
+class discrimination (abandoned), while KL-anchored posterior smoothing WORKED
+(LATA adaptation, −20% @ cal-200). We have no given graph, but a kNN graph over
+SSL embeddings (or the unlabeled pool) is a label-free stand-in.
+- Read for the mechanism: WHAT is aggregated (scores vs posteriors), over WHICH
+  neighbors with what weights, and what keeps coverage valid — is the
+  aggregation symmetric / exchangeability-preserving, or split-CP-only?
+- Check the adaptivity claims specifically: singleton-hit ratio + conditional
+  coverage — which metric do they actually win on, and does the gain survive
+  without graph structure (feature-similarity-only ablation, if reported)?
+- Deliverable = a verdict: (a) adaptation candidate for our stack (pool-kNN
+  score aggregation as a smoothing stage or new NCM layer), (b) placement-only
+  vs LATA / SemiCP-NNM (whose NNM augmentation was NEUTRAL) in
+  `literature.md`, or (c) kill with a reason.
+
+---
+
 ## Week ending 2026-07-13 (work on 07-05 to 07-13)
 
 Main thread: adapting **Multi-Dimensional Conformal Prediction** (MDCP; Tawachi &
