@@ -47,12 +47,31 @@ Three load-bearing claims, each now backed by experiments in
    percent on top. MA-CS (true superclass labels) remains the strongest
    penalty (~23% at cal=600); label-free MS-CS lands within 2-4pp of it.
 
+4. **Post-hoc score correction toward external pool anchors is the live
+   add-on lever; score fusion is not.** The MDCP line closed with a negative:
+   multi-NCM fusion adds ~nothing once the features are right (the paper's
+   self-ensemble gain dissolves into adaptive-score slack; at high budgets a
+   trained softmax head overtakes the distance NCMs — "no-train-split NCM
+   wins" is a small-budget theorem, which is fine because small budget is our
+   regime). By contrast, the SNAPS-style pool-kNN correction — pull each
+   score toward the mean score of its unlabeled-pool neighbors at the same
+   label — is a new best-known on CIFAR-100 at every cal, and it survives
+   *exact* full-CP wrapping at zero efficiency cost, unlike LATA's collective
+   smoothing (a symmetric bag shift cancels in p-value ranks; an external
+   anchor moves them). Two structural lessons came with it: any cal-fit NCM
+   plus *local* neighbor score aggregation self-leaks (the ego's neighbors
+   sit inside its own prototype region, deflating the quantile — repaired by
+   LOO re-prototyping), and the whole effect rides on pool-neighbor label
+   homophily: gain above roughly 0.7 (mini .92, cifar .8), harm below (cars
+   .45, aircraft .25). The harmful regime must be excluded label-free for the
+   method to be deployable.
+
 The lead pipeline is therefore: DINOv2 embeddings -> pool-fit PCA-128 +
-cluster-whiten -> unwhitened geodesic top-k NCM -> FCP (GPU fast path) ->
-optional MS-CS penalty. Everything in that chain is exactly exchangeable, so
-coverage sits at the theoretical target 1 - floor(alpha(n+1))/(n+1) ~ 0.90 at
-every cal size — confirmed to be Monte-Carlo-tight by the 100-trial
-diagnostic.
+cluster-whiten -> unwhitened geodesic or prototype NCM -> FCP (GPU fast
+path) -> optional MS-CS penalty and, where homophily allows, the SNAPS pool
+correction. Everything in that chain is exactly exchangeable, so coverage
+sits at the theoretical target 1 - floor(alpha(n+1))/(n+1) ~ 0.90 at every
+cal size — confirmed to be Monte-Carlo-tight by the 100-trial diagnostic.
 
 ## Strategy
 
@@ -62,6 +81,20 @@ defaults to `whiten=False`; every cal-fit variant routes through
 `warn_nonexchangeable` and requires `allow_nonexchangeable=True`. This turns
 a theory requirement into an API affordance — new experiments are valid
 unless someone explicitly opts out.
+
+The current campaign hardens the two live levers into method components
+rather than lucky points. (a) The SNAPS pool correction: show the gain is a
+surface, not a point — eta x k x neighbor-weighting sweeps across datasets,
+extend the homophily map with CUB-200 (the missing mid point) and CIFAR-10,
+and build the label-free homophily gate (margin-tail / pool
+self-consistency proxies) so the low-homophily harm regime switches itself
+off; that turns the aircraft/cars scope limit from a caveat into a method
+component. (b) The transform stage, reframed by the PCA audit as pool-fit
+metric learning: extend the menu beyond {PCA truncation, whitening} along
+the two known failure axes — nonlinearity (kernel PCA, AE encoder + RBF
+NCM) and local structure (per-cluster PCA, pool-graph spectral embeddings)
+— with the label-free CP-native selector choosing per-dataset (margin-tail
+solves high-PR, a regime fallback covers low-PR, mid-PR still open).
 
 The codebase now mirrors that theory split. `src/conformal_prediction.py` is
 the transductive core (NCMs, `FullConformalPredictor` + GPU path, CV+, split
@@ -106,16 +139,40 @@ them would silently change experiment semantics.
   sample count.
 - **ClusterCP degenerates to plain SplitCP in our regime** (cal/K <= 8), so
   FCP+PCA+MS-CS also wins class-conditional CovGap, not just marginal size.
+- **Aircraft inverted the PCA story and produced the regime rule**: on
+  fine-grained data the class signal lives in the low-variance tail, so PCA
+  truncation is a no-op and full-rank Ledoit-Wolf cluster-whitening wins;
+  the pool participation ratio (16 vs ~240) predicts which regime holds —
+  the transform is metric learning, not compression.
+- **MDCP closed as a fusion method, paid off as an audit**: its purity-map
+  re-calibration gave the first genuine adaptivity win (same set size,
+  CIFAR CovGap 9 -> 5.6), and dissecting the paper's self-ensemble showed
+  the gain was adaptive-score slack, not fusion machinery.
+- **SNAPS self-leak**: a cal-fit NCM plus local neighbor aggregation biases
+  cal scores only (cov 0.74 at cal-200, scales 1/n_c) — validity of
+  published neighbor-aggregation methods silently rides on a separately
+  trained score model. The LOO repair restores exact validity, and the
+  corrected method keeps its full gain inside exact full CP (no LATA-style
+  cancellation).
 
 ## Open Questions
 
-- The cal=600 over-coverage (92.5%) under stratified splits: explained as
-  balanced-cal conservatism + ceiling quantile + trial variance, but the
-  planned stratified-vs-random ablation should settle it quantitatively.
-- `geodesic_topk_asym` (the efficiency-best NCM) has not been re-confirmed on
-  the cluster matched-518 setup, nor through the SCP-geodesic equivalence.
+- **The label-free homophily gate is THE deployability blocker** for the
+  SNAPS correction: kNN label homophily (the dial) needs labels; candidate
+  proxies are margin-tail and pool self-consistency. Without it the method
+  ships with a caveat instead of a switch.
+- Is the headline arm (eta=0.5, k=10) genuinely robust, or does the optimal
+  arm drift with homophily and cal? The cars k=10-vs-20 ordering hints harm
+  grows with neighborhood size; the sweep will tell.
+- The label-free transform selector has no answer at mid-PR (CUB-200), and
+  it is unknown whether PR keeps selecting correctly once the menu grows
+  beyond linear projections.
+- Neither SNAPS nor geometry-Mondrian moves *class*-conditional coverage
+  (CovGap flat, worst-class floor slightly worse under correction) — the
+  hardest classes are exactly the low-local-homophily ones. The class axis
+  needs class-level machinery (class-Mondrian at cal >= 9K, or ClusterCP
+  groups on corrected scores).
 - Multi-dataset breadth for the penalty story (MA-CS/MS-CS on CUB-200,
-  miniImageNet) and the very-small-cal regime (cal/K = 2-8) are the main
-  unproven legs of the paper's headline table. The MA-CS-vs-MS-CS
-  head-to-head driver on the exchangeable engine is
-  `src/mscs_vs_macs_experiment.py` (results in `output/mscs_vs_macs{,_pca}/`).
+  miniImageNet) and the very-small-cal regime (cal/K = 2-8) remain the
+  unproven legs of the paper's headline table
+  (`src/mscs_vs_macs_experiment.py`, `output/mscs_vs_macs{,_pca}/`).
