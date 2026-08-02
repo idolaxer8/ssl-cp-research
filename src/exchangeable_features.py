@@ -86,9 +86,14 @@ class UnlabeledTransform:
 
     def __init__(self, pca_dim=None, whiten="cluster", n_clusters=20,
                  reg=1e-4, random_state=42, n_init=10,
-                 projection="pca", rp_seed=None):
+                 projection="pca", rp_seed=None, spectral_filter=None):
         assert whiten in ("cluster", "global", "lw_global", "lw_cluster", None)
-        assert projection in ("pca", "pca_tail", "random", "center", None)
+        assert projection in ("pca", "pca_tail", "random", "center", "spectral",
+                              None)
+        if projection == "spectral":
+            assert spectral_filter is not None, \
+                "projection='spectral' needs spectral_filter={'mu','V','s'}"
+        self.spectral_filter = spectral_filter
         self.pca_dim = pca_dim
         self.whiten = whiten
         self.n_clusters = n_clusters
@@ -101,6 +106,8 @@ class UnlabeledTransform:
         self.pca_ = None
         self.rp_ = None                  # JL matrix (D x d), 'random' projection
         self.tail_basis_ = None          # (D-r, D) tail eigenbasis, 'pca_tail'
+        self.V_ = None                   # (D, D) eigenbasis columns, 'spectral'
+        self.s_ = None                   # (D,) learned per-dim scales, 'spectral'
         self.center_ = None              # pool mean (random/tail/center/lw paths)
         self.kmeans_ = None
         self.inv_std_ = None             # diagonal whitening ('cluster'/'global')
@@ -140,6 +147,18 @@ class UnlabeledTransform:
             self.center_ = full.mean_
             self.tail_basis_ = full.components_[self.pca_dim:]
             Xp = (X - self.center_) @ self.tail_basis_.T
+        elif self.projection == "spectral":
+            # Learned spectral filter (conformal metric learning): rotate to a
+            # pool eigenbasis and rescale eigendirection j by a learned
+            # s_j >= 0 (soft truncation + spectral reweighting in one map).
+            # mu/V/s are all functions of the pool alone, so Prop 2 applies to
+            # the composite exactly like the other pool-fit arms. Must precede
+            # the center/lw catch-all so spectral + lw_cluster projects first.
+            f = self.spectral_filter
+            self.center_ = np.asarray(f["mu"], dtype=np.float64)
+            self.V_ = np.asarray(f["V"], dtype=np.float64)
+            self.s_ = np.asarray(f["s"], dtype=np.float64)
+            Xp = ((X - self.center_) @ self.V_) * self.s_
         elif self.projection == "center" or self.whiten in ("lw_global",
                                                             "lw_cluster"):
             # full-rank arms: center by the pool mean (PCA parity)
@@ -226,6 +245,8 @@ class UnlabeledTransform:
             Xp = (Xp - self.center_) @ self.rp_
         elif self.tail_basis_ is not None:
             Xp = (Xp - self.center_) @ self.tail_basis_.T
+        elif self.V_ is not None:
+            Xp = ((Xp - self.center_) @ self.V_) * self.s_
         elif self.center_ is not None:
             Xp = Xp - self.center_
         if self.inv_std_ is not None:
@@ -246,8 +267,12 @@ class UnlabeledTransform:
         proj = "" if self.projection == "pca" else f", projection={self.projection!r}"
         lw = (f", lw_shrinkage={self.lw_shrinkage_:.4f}"
               if self.lw_shrinkage_ is not None else "")
+        spec = ""
+        if self.s_ is not None:
+            eff = float(self.s_.sum() ** 2 / (self.s_ ** 2).sum())
+            spec = f", s_eff_dim={eff:.1f}"
         return (f"UnlabeledTransform(pca_dim={self.pca_dim}, whiten={self.whiten!r}, "
-                f"n_clusters={self.n_clusters}{proj}{lw})")
+                f"n_clusters={self.n_clusters}{proj}{spec}{lw})")
 
 
 def make_transform(unlabeled=None, pca_dim=None, whiten="cluster",
