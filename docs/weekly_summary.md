@@ -9,7 +9,66 @@ All experiments: CIFAR-100, DINOv2 embeddings, exchangeable pipeline
 
 ---
 
-## Goals — week 07-27 to 07-31 (planned)
+## Goals — week 08-03 to 08-07 (planned)
+
+Forward-looking plan, not results. Two threads: harden the SNAPS pool-score
+correction from a promising add-on into a robust, generalizable contribution,
+and widen the pool-fit dimensionality-reduction toolbox beyond PCA.
+
+### 1. SNAPS add-on — robustness + generalization sweep
+
+**Why.** The pilot verdict (07-28/29) is strong but narrow: the pool-kNN score
+correction is a new best-known on CIFAR-100 at every cal, survives exact
+full-CP wrapping at zero efficiency cost, and its gain peaks exactly in the
+label-starved strict-alpha corner we position on. But every headline number
+rides ONE fixed arm (eta=0.5, k=10) chosen in the first pilot, and the
+correction HURTS strong bases on low-homophily data (aircraft +13-37%, cars
++21-83%). A robust contribution needs the gain shown stable across the knobs
+and the harmful regime excluded without labels.
+- Sweep the knobs: eta x k (num neighbors) grids per dataset, cal 200-800, on
+  the champion prototype+poolT base; add similarity-weighted vs uniform
+  neighbor averaging as the third axis (the paper weights by similarity; we
+  currently average). Deliverable: gain surfaces — is eta=.5/k=10 near-optimal
+  everywhere, or does the best arm drift with homophily/cal (k=10-vs-20 on
+  cars already hints the harm scales with neighborhood size)?
+- Generalize the homophily map: add CUB-200 (embeddings on disk; predicted
+  mid-homophily — the missing point between cars .45 and cifar .8) and
+  CIFAR-10 (high-homophily easy-regime sanity). Rerun headline arms under the
+  exact full-CP default; target = a 6-dataset table (cifar100/mini/cifar10
+  gain, cub boundary, cars/aircraft gated-off) for the writeup.
+- The deployability blocker: a label-free eta gate. Candidate proxies:
+  margin-tail / pool self-consistency (from the transform-selection pilot) +
+  pool-neighbor score agreement. Success = the gate keeps eta>0 where the
+  correction helps (mini/cifar) and switches it OFF on aircraft/cars, zero
+  labels, across the new datasets too — turning the scope limit into a
+  method component instead of a caveat.
+
+### 2. Pool-fit dimensionality reduction — beyond PCA
+
+**Why.** The PCA audit reframed the transform stage as pool-fit metric
+learning: on separable data the adaptive PCA subspace is the whole win, but
+aircraft INVERTS (PCA no-op; full-rank Ledoit-Wolf cluster-whitening wins
+because fine-grained signal lives in the low-variance tail), and the pool
+participation ratio (PR) predicts the regime. The label-free selector pilot
+solved high-PR (margin-tail, 0% regret) and low-PR (regime fallback), but
+mid-PR (CUB) is OPEN — and the transform menu itself is still only
+{PCA truncation, whitening variants}. Continue exploring what else the pool
+can buy us.
+- Extend the pool-fit menu along the two known failure axes: nonlinearity
+  (kernel PCA / AE encoder, paired with the RBF NCM per the earlier AE
+  finding) and local structure (per-cluster PCA, pool-kNN-graph spectral /
+  diffusion embedding). Every arm pool-fit only (exchangeable by
+  construction), benchmarked vs pca128_cw and lw_cluster768 on
+  cifar100 + aircraft + CUB.
+- Close the mid-PR hole: run the selector on CUB against the extended menu;
+  check whether PR (or a PR-band rule) still picks the right transform once
+  the menu grows beyond linear projections.
+- Housekeeping first: commit the uncommitted `worktree-transform-selection`
+  work — it is the selector baseline this thread builds on.
+
+---
+
+## Goals — week 07-27 to 07-31 (planned; both done 07-28/29, write-up pending)
 
 Forward-looking plan, not results. Two threads, both on the MDCP line: rewind
 the method to its native high-data regime, and mine a neighboring
