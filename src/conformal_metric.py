@@ -146,12 +146,19 @@ class PoolContext:
         self.Eb2 = (Xb2 - self.mu) @ self.V
         self.Xb1, self.Xb2 = Xb1, Xb2
 
-        # Pseudo-supervision (selector-pilot protocol): K-way k-means on raw
-        # L2 half A; halves B1/B2 get predicted labels.
+        # Pseudo-supervision (selector-pilot protocol): K'-way k-means on raw
+        # L2 half A; halves B1/B2 get predicted labels. pseudo_k_mult > 1 is
+        # the saturation mitigation (risk 2): K' = m*K subclusters make the
+        # pseudo-task harder so near-champion candidates de-saturate; the
+        # rehearsal cal budget scales by m to keep shots/pseudo-class fixed.
+        self.k_mult = int(cfg.get("pseudo_k_mult", 1) or 1)
+        self.k_task = K * self.k_mult
+        self.cal_budget_task = self.cal_budget * self.k_mult
         yb_all_src = np.vstack([Xb1, Xb2])
-        self.ya, yb_all, _ = pseudo_task(self.Xa, yb_all_src, K, seed)
+        self.ya, yb_all, _ = pseudo_task(self.Xa, yb_all_src, self.k_task,
+                                         seed)
         self.yb1, self.yb2 = yb_all[:len(Xb1)], yb_all[len(Xb1):]
-        self.Ma = class_means(self.Ea, self.ya, K)
+        self.Ma = class_means(self.Ea, self.ya, self.k_task)
 
         # Frozen whitening clusters for the fast surrogate: k-means in the
         # (unscaled) eigenbasis of A == k-means on centered raw A (rotation-
@@ -203,7 +210,7 @@ class PoolContext:
         D = centroid_dists(Zb, Mu)
         out = margin_stats(D)
         out["rehearsal_sz"], out["rehearsal_se"] = rehearsal_setsize(
-            D, yb, self.K, self.cal_budget, self.alpha,
+            D, yb, self.k_task, self.cal_budget_task, self.alpha,
             n_rep=n_rep or self.cfg["n_rep"], seed=self.cfg["seed"] + seed_off)
         return out
 
@@ -220,8 +227,8 @@ class PoolContext:
         Xb = self.Xb2 if half == "B2" else self.Xb1
         yb = self.yb2 if half == "B2" else self.yb1
         Zb = t.transform(Xb)
-        return objective_on_half(Za, Zb, self.ya, yb, self.K,
-                                 self.cal_budget, self.alpha,
+        return objective_on_half(Za, Zb, self.ya, yb, self.k_task,
+                                 self.cal_budget_task, self.alpha,
                                  n_rep=self.cfg["n_rep"],
                                  seed=self.cfg["seed"] + 1)
 
@@ -341,9 +348,9 @@ def rung2_fit(ctx, s_init, device="cuda", verbose=True):
     Ma = torch.tensor(ctx.Ma, dtype=torch.float32, device=dev)
     w_var = torch.tensor(ctx.w_var, dtype=torch.float32, device=dev)
     yb1 = torch.tensor(ctx.yb1, dtype=torch.long, device=dev)
-    K, alpha = ctx.K, ctx.alpha
+    K, alpha = ctx.k_task, ctx.alpha
     n = len(ctx.yb1)
-    m_cal = max(1, ctx.cal_budget // K)
+    m_cal = max(1, ctx.cal_budget_task // K)
 
     # Pre-generated balanced pseudo-cal splits of B1, cycled per step.
     rng = np.random.default_rng(cfg["seed"] + 7)
@@ -457,8 +464,8 @@ def bake(Xu, s, whiten, cfg, ctx=None):
         # Stability: does the A-basis objective survive the full-pool basis?
         Za = t.transform(ctx.Xa)
         Zb2 = t.transform(ctx.Xb2)
-        full = objective_on_half(Za, Zb2, ctx.ya, ctx.yb2, ctx.K,
-                                 ctx.cal_budget, ctx.alpha,
+        full = objective_on_half(Za, Zb2, ctx.ya, ctx.yb2, ctx.k_task,
+                                 ctx.cal_budget_task, ctx.alpha,
                                  n_rep=ctx.cfg["n_rep"],
                                  seed=ctx.cfg["seed"] + 2)
         stab = dict(full_basis_b2_sz=full["rehearsal_sz"])

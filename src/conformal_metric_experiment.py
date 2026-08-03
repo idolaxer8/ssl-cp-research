@@ -151,62 +151,85 @@ CORNERS = [  # champion-equivalent corners of the family, always probed
 
 
 def phase_landscape(ds, args):
+    for k_mult in (args.pseudo_k_mult or [1]):
+        _landscape_once(ds, args, k_mult)
+
+
+def _landscape_once(ds, args, k_mult):
     X, y, Xu, K, cal_sizes, gt_cal, gt_file = load_dataset(ds)
     allc = np.unique(y)
-    cfg = dict(CFG, seed=args.seed, cal_budget=gt_cal)
-    if args.pseudo_k_mult:
-        # mitigation arm: harder pseudo-task (K' = mult * K subclusters)
-        cfg["pseudo_k_mult"] = args.pseudo_k_mult
+    cfg = dict(CFG, seed=args.seed, cal_budget=gt_cal, pseudo_k_mult=k_mult)
     ctx = PoolContext(Xu, K, args.alpha, cfg)
+    tag = f"_kmult{k_mult}" if k_mult > 1 else ""
+    out_dir = os.path.join(OUT_ROOT, "landscape")
+    os.makedirs(out_dir, exist_ok=True)
 
-    # surrogate objective over the full rung-1 grid
-    from itertools import product as iproduct
     records = []
-    t0 = time.time()
-    for whiten in cfg["whiten_modes"]:
-        for j0, w, gamma in iproduct(cfg["grid_j0"], cfg["grid_w"],
-                                     cfg["grid_gamma"]):
-            s = gate_scales(j0, w, gamma, ctx.lam)
-            obj = ctx.eval_candidate(s, whiten, half="B1")
-            records.append(dict(j0=float(j0), w=float(w), gamma=float(gamma),
-                                whiten=whiten, tag="", **obj))
-    print(f"[{ds}] grid {len(records)} candidates in {time.time()-t0:.0f}s",
-          flush=True)
-
-    # probe selection: forced corners + objective-quantile-stratified picks
-    probes = [dict(c) for c in CORNERS]
-    for c in probes:
-        s = gate_scales(c["j0"], c["w"], c["gamma"], ctx.lam)
-        c.update(ctx.eval_candidate(s, c["whiten"], half="B1"))
-    ordered = sorted(records, key=lambda r: r["rehearsal_sz"])
-    want = max(args.n_probe - len(probes), 0)
-    qidx = np.unique(np.linspace(0, len(ordered) - 1, want).astype(int))
-    seen = {(p["j0"], p["w"], p["gamma"], p["whiten"]) for p in probes}
-    for i in qidx:
-        r = ordered[i]
-        key = (r["j0"], r["w"], r["gamma"], r["whiten"])
-        if key not in seen:
-            probes.append(dict(r))
-            seen.add(key)
-
-    # bake each probe on the FULL pool + true FCP at gt_cal (geodesic)
-    for i, p in enumerate(probes):
-        s = gate_scales(p["j0"], p["w"], p["gamma"], ctx.lam)
+    if args.reuse_true:
+        # Mitigation fast path: the probes' TRUE FCP sizes are pseudo-task-
+        # independent -- reuse them from the baseline (k_mult=1) landscape and
+        # recompute ONLY the surrogate objective under the harder pseudo-task.
+        base_path = os.path.join(out_dir, f"landscape_{ds}.json")
+        base = json.load(open(base_path))
+        probes = []
+        for p in base["probes"]:
+            q = {k: p[k] for k in ("j0", "w", "gamma", "whiten", "tag",
+                                   "true_sz", "true_cov", "true_sz_se")}
+            s = gate_scales(q["j0"], q["w"], q["gamma"], ctx.lam)
+            q.update(ctx.eval_candidate(s, q["whiten"], half="B1"))
+            probes.append(q)
+        print(f"[{ds}] k_mult={k_mult}: surrogates recomputed for "
+              f"{len(probes)} probes (true sizes reused)", flush=True)
+    else:
+        # surrogate objective over the full rung-1 grid
+        from itertools import product as iproduct
         t0 = time.time()
-        tf, _ = bake(Xu, s, p["whiten"], cfg)
-        row = measure_fcp(tf, X, y, allc, gt_cal, "balanced_both",
-                          "unwhitened_topk_mean", args.n_trials, args.alpha,
-                          args.device, args.seed)
-        p["true_sz"], p["true_cov"] = row["sz"], row["cov"]
-        p["true_sz_se"] = row["sz_se"]
-        print(f"  probe {i+1}/{len(probes)} j0={p['j0']:6.1f} w={p['w']:6.2f} "
-              f"gam={p['gamma']:+.2f} {p['whiten']:<10}{p['tag']:<15} "
-              f"surr={p['rehearsal_sz']:6.3f} true={p['true_sz']:6.2f} "
-              f"cov={p['true_cov']:.3f} ({time.time()-t0:.0f}s)", flush=True)
-        if args.device == "cuda":
-            torch.cuda.empty_cache()
+        for whiten in cfg["whiten_modes"]:
+            for j0, w, gamma in iproduct(cfg["grid_j0"], cfg["grid_w"],
+                                         cfg["grid_gamma"]):
+                s = gate_scales(j0, w, gamma, ctx.lam)
+                obj = ctx.eval_candidate(s, whiten, half="B1")
+                records.append(dict(j0=float(j0), w=float(w),
+                                    gamma=float(gamma), whiten=whiten,
+                                    tag="", **obj))
+        print(f"[{ds}] grid {len(records)} candidates in "
+              f"{time.time()-t0:.0f}s", flush=True)
 
-    # gate metrics
+        # probe selection: forced corners + objective-quantile-stratified
+        probes = [dict(c) for c in CORNERS]
+        for c in probes:
+            s = gate_scales(c["j0"], c["w"], c["gamma"], ctx.lam)
+            c.update(ctx.eval_candidate(s, c["whiten"], half="B1"))
+        ordered = sorted(records, key=lambda r: r["rehearsal_sz"])
+        want = max(args.n_probe - len(probes), 0)
+        qidx = np.unique(np.linspace(0, len(ordered) - 1, want).astype(int))
+        seen = {(p["j0"], p["w"], p["gamma"], p["whiten"]) for p in probes}
+        for i in qidx:
+            r = ordered[i]
+            key = (r["j0"], r["w"], r["gamma"], r["whiten"])
+            if key not in seen:
+                probes.append(dict(r))
+                seen.add(key)
+
+        # bake each probe on the FULL pool + true FCP at gt_cal (geodesic)
+        for i, p in enumerate(probes):
+            s = gate_scales(p["j0"], p["w"], p["gamma"], ctx.lam)
+            t0 = time.time()
+            tf, _ = bake(Xu, s, p["whiten"], cfg)
+            row = measure_fcp(tf, X, y, allc, gt_cal, "balanced_both",
+                              "unwhitened_topk_mean", args.n_trials,
+                              args.alpha, args.device, args.seed)
+            p["true_sz"], p["true_cov"] = row["sz"], row["cov"]
+            p["true_sz_se"] = row["sz_se"]
+            print(f"  probe {i+1}/{len(probes)} j0={p['j0']:6.1f} "
+                  f"w={p['w']:6.2f} gam={p['gamma']:+.2f} {p['whiten']:<10}"
+                  f"{p['tag']:<15} surr={p['rehearsal_sz']:6.3f} "
+                  f"true={p['true_sz']:6.2f} cov={p['true_cov']:.3f} "
+                  f"({time.time()-t0:.0f}s)", flush=True)
+            if args.device == "cuda":
+                torch.cuda.empty_cache()
+
+    # gate metrics (+ the pre-registered rehearsal-band/margin tie-break)
     from scipy.stats import spearmanr
     surr = np.array([p["rehearsal_sz"] for p in probes])
     true = np.array([p["true_sz"] for p in probes])
@@ -214,20 +237,24 @@ def phase_landscape(ds, args):
     argmin_true = float(true[np.argmin(surr)])
     regret = float(argmin_true / true.min() - 1)
     dyn = float(surr.max() / max(surr.min(), 1e-9))
-    gate = ("GO" if (rho >= 0.7 and regret <= 0.05)
+    se = np.array([p.get("rehearsal_se", 0.01) for p in probes])
+    band = surr <= surr.min() + 2 * float(np.median(se))
+    m90 = np.array([p["margin_q90"] for p in probes])
+    tb_idx = int(np.where(band)[0][np.argmin(m90[band])])
+    tb_regret = float(true[tb_idx] / true.min() - 1)
+    gate = ("GO" if (rho >= 0.7 and min(regret, tb_regret) <= 0.05)
             else ("NO-GO" if rho < 0.4 else "MARGINAL"))
-    print(f"[{ds}] Spearman={rho:+.3f} argmin-regret={regret:+.1%} "
-          f"dyn-range={dyn:.2f} -> {gate}", flush=True)
+    print(f"[{ds}{tag}] Spearman={rho:+.3f} argmin-regret={regret:+.1%} "
+          f"tiebreak-regret={tb_regret:+.1%} dyn-range={dyn:.2f} -> {gate}",
+          flush=True)
 
-    tag = (f"_kmult{'-'.join(map(str, args.pseudo_k_mult))}"
-           if args.pseudo_k_mult else "")
-    out_dir = os.path.join(OUT_ROOT, "landscape")
-    os.makedirs(out_dir, exist_ok=True)
     out = dict(dataset=ds, alpha=args.alpha, gt_cal=gt_cal,
                n_trials=args.n_trials, cfg_hash=cml.cfg_hash(cfg),
+               pseudo_k_mult=k_mult,
                pool_pr=pool_participation_ratio(Xu, seed=args.seed),
-               spearman=rho, argmin_regret=regret, dynamic_range=dyn,
-               gate=gate, probes=probes, grid=records)
+               spearman=rho, argmin_regret=regret,
+               tiebreak_regret=tb_regret, tiebreak_band_n=int(band.sum()),
+               dynamic_range=dyn, gate=gate, probes=probes, grid=records)
     path = os.path.join(out_dir, f"landscape_{ds}{tag}.json")
     json.dump(out, open(path, "w"), indent=1)
     print(f"saved -> {path}", flush=True)
@@ -506,7 +533,11 @@ def main():
     ap.add_argument("--n_probe", type=int, default=24)
     ap.add_argument("--n_perm", type=int, default=200)
     ap.add_argument("--pseudo_k_mult", type=int, nargs="+", default=None,
-                    help="landscape mitigation: harder pseudo-tasks K'=m*K")
+                    help="landscape mitigation: harder pseudo-tasks K'=m*K "
+                         "(one landscape JSON per multiplier)")
+    ap.add_argument("--reuse_true", action="store_true",
+                    help="landscape: reuse baseline probes' true FCP sizes "
+                         "(pseudo-task-independent), recompute surrogates only")
     ap.add_argument("--proto_T", type=float, default=0.06)
     ap.add_argument("--ablation", action="store_true",
                     help="benchmark: add stage/factor ablation arms "
