@@ -41,7 +41,10 @@ from conformal_metric import (PoolContext, gate_scales, bake,  # noqa: E402
                               fit_conformal_metric, CFG)
 from pool_objective import objective_on_half  # noqa: E402
 
-MAIN_REPO = r"C:\Users\IDO\Desktop\Ido_student\Msc\ssl-cp-research"
+# Repo root holding output/ + embeddings. Overridable for the cluster:
+#   export SSL_CP_MAIN=/storage/ido/ssl-cp/ssl-cp-research
+MAIN_REPO = os.environ.get(
+    "SSL_CP_MAIN", r"C:\Users\IDO\Desktop\Ido_student\Msc\ssl-cp-research")
 OUT_ROOT = os.path.join(MAIN_REPO, "output", "conformal_metric")
 
 DATASETS = {
