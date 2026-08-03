@@ -336,8 +336,22 @@ Side observation for follow-up: prototype + pca512_cw @ cal 800 on
 aircraft = 14.90 (cov 0.912) — the best aircraft cell in the run,
 against the standing "prototype bloats on fine-grained" scope limit.
 
-**Round 1.5 (running):** qe on miniimagenet (homophily 0.92 — predicted
-largest gain) + qe under the champion asym NCM on cifar100/cub200.
+**Round 1.5 verdict (2026-08-03, 10 trials, `*_confirm` / `*_asym` JSONs):
+qe CONFIRMED on both axes it was questioned on.**
+- miniimagenet (homophily 0.92, the predicted-max-gain point): qe beats
+  pca128_cw on BOTH NCMs at every cal — prototype 1.19+-0.02 vs 1.35+-0.06
+  @200 (then saturation, sets ~1); geodesic 1.11 vs 1.32 @200. Direction
+  confirmed at high homophily; magnitude capped by saturation.
+- Champion asym NCM: the round-1 "gain is prototype-only" worry dies.
+  cifar100 asym: qe 6.68 / 1.90 / 1.53 vs 7.59 / 2.31 / 1.65 (-18% @400,
+  -7% @800). cub200 asym: qe 5.61 / 1.65 / 1.31 vs pca128_cw
+  5.60 / 1.94 / 1.39 (-15% @800, -6% @1600, > 2 SE) — and under asym there
+  is NO high-cal crossover on CUB (unlike prototype, where pca512_cw 1.23
+  keeps the 1600 crown). The asymmetric 1-NN-numerator score benefits from
+  denoised neighbors where the symmetric mean variant did not.
+- Standing qe scorecard: wins on 4/4 datasets with homophily >= mid
+  (cifar100, mini, CUB, incl. the champion NCM), harms aircraft (hom .25)
+  at cal >= 400 — the gate boundary is the same as SNAPS's.
 **Round 2 (replanned):** graph-based nonlinear arms (diffusion maps) are
 DEPRIORITIZED — they share the graph-trust failure axis lpp just exposed;
 the productive successors are (a) the shared label-free homophily gate,
