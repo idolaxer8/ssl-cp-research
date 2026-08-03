@@ -61,7 +61,12 @@ class UnlabeledTransform:
                      default), 'global' (total per-dim variance), 'lw_global' /
                      'lw_cluster' (FULL-matrix ZCA whitening from a Ledoit-Wolf
                      shrunk covariance -- the continuous, truncation-free
-                     alternative to PCA; use with pca_dim=None), or None.
+                     alternative to PCA; use with pca_dim=None),
+                     'lw_cluster_soft' (PER-CLUSTER LW ZCA whiteners blended by
+                     soft k-means responsibilities -- a local-metric field; the
+                     k-means/Ledoit-Wolf instantiation of MPPCA (Tipping &
+                     Bishop 1999), cluster-conditional-Mahalanobis precedent on
+                     SSL features: SSD, Sehwag et al. ICLR 2021), or None.
         n_clusters:  k-means clusters (whitening pseudo-labels + MS-CS). Coarse
                      (20) -> looser whitening; fine (~n_classes) -> tighter.
         reg:         whitening regularisation floor (matches GeodesicTopKMeanNCM).
@@ -72,23 +77,52 @@ class UnlabeledTransform:
                      the top pca_dim principal directions, keep the D - pca_dim
                      tail -- the mirror image of PCA truncation, for the
                      signal-in-the-tail probe on collapsed-spectrum data),
+                     'lpp' (Locality Preserving Projection, He & Niyogi NIPS
+                     2003 -- linear approximation of Laplacian eigenmaps: the
+                     pca_dim generalized eigenvectors of (Xc^T L Xc) f =
+                     lam (Xc^T D Xc) f with smallest lam, L/D from a binary
+                     symmetrized pool kNN graph. Variance-BLIND reduction:
+                     keeps low-variance directions in which graph neighbors
+                     stay close, drops high-variance directions that scatter
+                     them -- built for the collapsed-spectrum regime),
                      'center' (subtract the pool mean only, no reduction), or
                      None.
         rp_seed:     seed for the random projection matrix (default random_state).
+        pre:         optional pre-stage applied BEFORE the projection; the rest
+                     of the pipeline is refit on the pre-transformed pool:
+                     'yj'  per-dim Yeo-Johnson marginal Gaussianization (MLE
+                           lambda per dim on the pool) + per-dim standardize +
+                           row re-L2-normalization (Distribution Calibration
+                           lineage, Yang et al. ICLR 2021, arXiv 2101.06395);
+                     'qe'  alpha-query-expansion pool-neighbor smoothing
+                           (Radenovic, Tolias & Chum, TPAMI 2019): x ->
+                           L2norm(x + sum_i s_i^alpha u_i) over the qe_k
+                           nearest pool points u_i, s_i = max(cos(x,u_i),0)
+                           -- label-free local manifold denoising;
+                     None (default).
+        qe_k, qe_alpha: neighbor count / similarity power for pre='qe'
+                     (retrieval-canonical 10 / 3.0).
+        lpp_graph_k: pool kNN-graph degree for projection='lpp' (binary,
+                     symmetrized; default 15).
 
     Every variant remains a function of the unlabeled pool alone (the JL matrix
     is not even that -- a fixed random matrix), so Proposition 2 (theory.md sec 2)
     applies verbatim: the transform is a fixed map w.r.t. the cal/test bag and
-    exchangeability is preserved exactly.
+    exchangeability is preserved exactly. The 'qe' pre-stage evaluates each
+    point against the FROZEN pool only -- cal and test points never enter each
+    other's smoothing -- so it too is a fixed per-point map.
     """
 
     has_clusters = True
 
     def __init__(self, pca_dim=None, whiten="cluster", n_clusters=20,
                  reg=1e-4, random_state=42, n_init=10,
-                 projection="pca", rp_seed=None):
-        assert whiten in ("cluster", "global", "lw_global", "lw_cluster", None)
-        assert projection in ("pca", "pca_tail", "random", "center", None)
+                 projection="pca", rp_seed=None,
+                 pre=None, qe_k=10, qe_alpha=3.0, lpp_graph_k=15):
+        assert whiten in ("cluster", "global", "lw_global", "lw_cluster",
+                          "lw_cluster_soft", None)
+        assert projection in ("pca", "pca_tail", "random", "lpp", "center", None)
+        assert pre in (None, "yj", "qe")
         self.pca_dim = pca_dim
         self.whiten = whiten
         self.n_clusters = n_clusters
@@ -97,10 +131,15 @@ class UnlabeledTransform:
         self.n_init = n_init
         self.projection = projection
         self.rp_seed = random_state if rp_seed is None else rp_seed
+        self.pre = pre
+        self.qe_k = qe_k
+        self.qe_alpha = qe_alpha
+        self.lpp_graph_k = lpp_graph_k
         # fitted state
         self.pca_ = None
         self.rp_ = None                  # JL matrix (D x d), 'random' projection
         self.tail_basis_ = None          # (D-r, D) tail eigenbasis, 'pca_tail'
+        self.lpp_basis_ = None           # (D, d) LPP eigenbasis, 'lpp'
         self.center_ = None              # pool mean (random/tail/center/lw paths)
         self.kmeans_ = None
         self.inv_std_ = None             # diagonal whitening ('cluster'/'global')
@@ -108,10 +147,25 @@ class UnlabeledTransform:
         self.lw_shrinkage_ = None        # fitted Ledoit-Wolf shrinkage intensity
         self.cluster_centroids_ = None   # in transformed (post-whiten) space
         self.cluster_dists_ = None
+        self.yj_lambdas_ = None          # per-dim YJ lambda ('yj' pre)
+        self.yj_mean_ = None
+        self.yj_std_ = None
+        self.qe_pool_ = None             # L2-normed raw pool ('qe' pre)
+        self.soft_mus_ = None            # (C, d) cluster means ('lw_cluster_soft')
+        self.soft_As_ = None             # (C, d, d) per-cluster ZCA whiteners
+        self.soft_tau2_ = None           # responsibility scale (pool statistic)
 
     # -- fit on the unlabeled pool only -------------------------------------
     def fit(self, X_unlabeled):
         X = np.asarray(X_unlabeled, dtype=np.float64)
+
+        # 0) optional pre-stage; everything downstream is refit on pre(pool)
+        if self.pre == "yj":
+            X = self._fit_apply_yj(X)
+        elif self.pre == "qe":
+            self.qe_pool_ = X / (np.linalg.norm(X, axis=1,
+                                                keepdims=True) + 1e-12)
+            X = self._qe_smooth(X, fitting_pool=True)
 
         # 1) projection (fit on unlabeled)
         reduce = self.pca_dim is not None and self.pca_dim < X.shape[1]
@@ -140,8 +194,17 @@ class UnlabeledTransform:
             self.center_ = full.mean_
             self.tail_basis_ = full.components_[self.pca_dim:]
             Xp = (X - self.center_) @ self.tail_basis_.T
+        elif self.projection == "lpp" and reduce:
+            # Locality Preserving Projection (He & Niyogi 2003): generalized
+            # eigenvectors of the pool kNN-graph Laplacian quadratic forms.
+            # Graph built on COSINE neighbors of the (pre-transformed) pool;
+            # eigenproblem on centered features.
+            self.center_ = X.mean(axis=0)
+            self.lpp_basis_ = self._fit_lpp(X, self.center_)
+            Xp = (X - self.center_) @ self.lpp_basis_
         elif self.projection == "center" or self.whiten in ("lw_global",
-                                                            "lw_cluster"):
+                                                            "lw_cluster",
+                                                            "lw_cluster_soft"):
             # full-rank arms: center by the pool mean (PCA parity)
             self.center_ = X.mean(axis=0)
             Xp = X - self.center_
@@ -195,6 +258,39 @@ class UnlabeledTransform:
             # symmetric (ZCA) inverse square root: rotation-neutral whitening
             self.W_ = evecs @ np.diag(evals ** -0.5) @ evecs.T
 
+        if self.whiten == "lw_cluster_soft":
+            # PER-CLUSTER LW ZCA whiteners + soft responsibilities: a local
+            # metric field. T(x) = sum_c r_c(x) * A_c (x - mu_c),
+            # r_c(x) = softmax_c(-||x - mu_c||^2 / (2 tau^2)),
+            # tau^2 = mean squared distance of pool points to their NEAREST
+            # cluster mean (pool statistic -- no free knob). LW shrinkage
+            # handles n_c < d per cluster; degenerate clusters (<2 members)
+            # fall back to the identity metric.
+            from sklearn.covariance import LedoitWolf
+            d = Xp.shape[1]
+            mus, As, shrinks = [], [], []
+            for c in range(self.n_clusters):
+                m = labels == c
+                if m.sum() < 2:
+                    mus.append(Xp[m].mean(axis=0) if m.any()
+                               else np.zeros(d))
+                    As.append(np.eye(d))
+                    continue
+                mu_c = Xp[m].mean(axis=0)
+                lw = LedoitWolf(assume_centered=True).fit(Xp[m] - mu_c)
+                shrinks.append(float(lw.shrinkage_))
+                evals, evecs = np.linalg.eigh(lw.covariance_)
+                evals = np.maximum(evals, 1e-12)
+                mus.append(mu_c)
+                As.append(evecs @ np.diag(evals ** -0.5) @ evecs.T)
+            self.soft_mus_ = np.stack(mus)
+            self.soft_As_ = np.stack(As)
+            self.lw_shrinkage_ = float(np.mean(shrinks)) if shrinks else None
+            d2 = ((Xp ** 2).sum(1, keepdims=True)
+                  - 2 * Xp @ self.soft_mus_.T
+                  + (self.soft_mus_ ** 2).sum(1)[None, :])   # (N, C)
+            self.soft_tau2_ = float(np.maximum(d2, 0).min(axis=1).mean())
+
         # cluster centroids/dists in the FINAL (post-whiten) transformed space,
         # so MS-CS distances match the space the NCM scores in.
         cen = self.kmeans_.cluster_centers_
@@ -202,6 +298,8 @@ class UnlabeledTransform:
             cen = cen * self.inv_std_
         elif self.W_ is not None:
             cen = cen @ self.W_
+        elif self.soft_As_ is not None:
+            cen = self._soft_whiten(cen)
         self.cluster_centroids_ = cen
         from sklearn.metrics import euclidean_distances
         self.cluster_dists_ = euclidean_distances(cen, cen)
@@ -213,6 +311,8 @@ class UnlabeledTransform:
             self.Xu_transformed_ = Xp * self.inv_std_
         elif self.W_ is not None:
             self.Xu_transformed_ = Xp @ self.W_
+        elif self.soft_As_ is not None:
+            self.Xu_transformed_ = self._soft_whiten(Xp)
         else:
             self.Xu_transformed_ = Xp
         return self
@@ -220,19 +320,125 @@ class UnlabeledTransform:
     # -- apply to cal/test --------------------------------------------------
     def transform(self, X):
         Xp = np.asarray(X, dtype=np.float64)
+        if self.pre == "yj":
+            Xp = self._apply_yj(Xp)
+        elif self.pre == "qe":
+            Xp = self._qe_smooth(Xp, fitting_pool=False)
         if self.pca_ is not None:
             Xp = self.pca_.transform(Xp)
         elif self.rp_ is not None:
             Xp = (Xp - self.center_) @ self.rp_
         elif self.tail_basis_ is not None:
             Xp = (Xp - self.center_) @ self.tail_basis_.T
+        elif self.lpp_basis_ is not None:
+            Xp = (Xp - self.center_) @ self.lpp_basis_
         elif self.center_ is not None:
             Xp = Xp - self.center_
         if self.inv_std_ is not None:
             Xp = Xp * self.inv_std_
         elif self.W_ is not None:
             Xp = Xp @ self.W_
+        elif self.soft_As_ is not None:
+            Xp = self._soft_whiten(Xp)
         return Xp
+
+    # -- pre-stage / projection / whitening helpers (all pool-fit) ----------
+    def _fit_apply_yj(self, X):
+        """Per-dim Yeo-Johnson MLE on the pool, then per-dim standardize and
+        row re-L2-normalize (the NCMs are angular). Returns transformed pool."""
+        from scipy import stats
+        n_dim = X.shape[1]
+        lams = np.ones(n_dim)
+        Xt = np.empty_like(X)
+        for j in range(n_dim):
+            xj = X[:, j]
+            if xj.std() < 1e-12:
+                Xt[:, j] = xj
+            else:
+                Xt[:, j], lams[j] = stats.yeojohnson(xj)
+        self.yj_lambdas_ = lams
+        self.yj_mean_ = Xt.mean(axis=0)
+        self.yj_std_ = Xt.std(axis=0) + 1e-12
+        Xt = (Xt - self.yj_mean_) / self.yj_std_
+        return Xt / (np.linalg.norm(Xt, axis=1, keepdims=True) + 1e-12)
+
+    def _apply_yj(self, X):
+        from scipy import stats
+        Xt = np.empty_like(X)
+        for j in range(X.shape[1]):
+            Xt[:, j] = stats.yeojohnson(X[:, j], lmbda=self.yj_lambdas_[j])
+        Xt = (Xt - self.yj_mean_) / self.yj_std_
+        return Xt / (np.linalg.norm(Xt, axis=1, keepdims=True) + 1e-12)
+
+    def _qe_smooth(self, X, fitting_pool=False):
+        """alpha-QE smoothing against the frozen pool:
+        T(x) = L2norm( x + sum_{i in NN_k(x)} s_i^alpha * u_i ),
+        s_i = max(cos(x, u_i), 0). When smoothing the pool itself
+        (fitting_pool=True) each point's own entry is excluded."""
+        P = self.qe_pool_                      # (N, D) float64, L2-normed
+        k, a = self.qe_k, self.qe_alpha
+        Xn = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-12)
+        out = np.empty_like(X)
+        for i0 in range(0, len(Xn), 1024):
+            ch = Xn[i0:i0 + 1024]
+            S = ch @ P.T                       # (m, N)
+            if fitting_pool:
+                rows = np.arange(len(ch))
+                S[rows, i0 + rows] = -np.inf   # exclude self
+            idx = np.argpartition(-S, k, axis=1)[:, :k]
+            s = np.take_along_axis(S, idx, axis=1)
+            w = np.clip(s, 0.0, None) ** a     # (m, k)
+            nb = P[idx]                        # (m, k, D)
+            v = ch + (w[:, :, None] * nb).sum(axis=1)
+            out[i0:i0 + 1024] = v / (np.linalg.norm(v, axis=1,
+                                                    keepdims=True) + 1e-12)
+        return out
+
+    def _fit_lpp(self, X, mu):
+        """LPP eigenbasis from the pool: binary symmetrized cosine kNN graph
+        (degree g = lpp_graph_k), then the pca_dim generalized eigenvectors of
+        (Xc^T L Xc) f = lam (Xc^T D Xc + eps I) f with SMALLEST lam."""
+        import scipy.sparse as sp
+        from scipy.linalg import eigh
+        N, D = X.shape
+        g = self.lpp_graph_k
+        Xn = (X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-12)
+              ).astype(np.float32)
+        nb_idx = np.empty((N, g), dtype=np.int64)
+        for i0 in range(0, N, 1024):
+            S = Xn[i0:i0 + 1024] @ Xn.T
+            rows = np.arange(S.shape[0])
+            S[rows, i0 + rows] = -np.inf       # exclude self
+            nb_idx[i0:i0 + 1024] = np.argpartition(-S, g, axis=1)[:, :g]
+        rows = np.repeat(np.arange(N), g)
+        W = sp.coo_matrix((np.ones(N * g), (rows, nb_idx.ravel())),
+                          shape=(N, N)).tocsr()
+        W = W.maximum(W.T)                     # symmetrize (binary)
+        deg = np.asarray(W.sum(axis=1)).ravel()
+        Xc = X - mu
+        S1 = Xc.T @ (Xc * deg[:, None])        # Xc^T D Xc
+        S2 = Xc.T @ (W @ Xc)                   # Xc^T W Xc
+        A_mat = S1 - S2                        # Xc^T L Xc
+        A_mat = (A_mat + A_mat.T) / 2
+        B_mat = (S1 + S1.T) / 2
+        B_mat += (1e-4 * np.trace(B_mat) / D) * np.eye(D)
+        evals, evecs = eigh(A_mat, B_mat)
+        return evecs[:, :self.pca_dim]         # (D, d), ascending eigenvalues
+
+    def _soft_whiten(self, Xp):
+        """T(x) = sum_c r_c(x) A_c (x - mu_c), r = softmax(-d2 / (2 tau2))."""
+        Xp = np.asarray(Xp, dtype=np.float64)
+        out = np.zeros_like(Xp)
+        d2 = ((Xp ** 2).sum(1, keepdims=True)
+              - 2 * Xp @ self.soft_mus_.T
+              + (self.soft_mus_ ** 2).sum(1)[None, :])
+        logits = -d2 / (2 * self.soft_tau2_)
+        logits -= logits.max(axis=1, keepdims=True)
+        r = np.exp(logits)
+        r /= r.sum(axis=1, keepdims=True)
+        for c in range(len(self.soft_mus_)):
+            out += r[:, c:c + 1] * ((Xp - self.soft_mus_[c]) @ self.soft_As_[c])
+        return out
 
     def cluster_of(self, X_transformed):
         """Nearest-cluster index for already-transformed points (post-whiten
@@ -246,8 +452,9 @@ class UnlabeledTransform:
         proj = "" if self.projection == "pca" else f", projection={self.projection!r}"
         lw = (f", lw_shrinkage={self.lw_shrinkage_:.4f}"
               if self.lw_shrinkage_ is not None else "")
+        pre = "" if self.pre is None else f", pre={self.pre!r}"
         return (f"UnlabeledTransform(pca_dim={self.pca_dim}, whiten={self.whiten!r}, "
-                f"n_clusters={self.n_clusters}{proj}{lw})")
+                f"n_clusters={self.n_clusters}{proj}{pre}{lw})")
 
 
 def make_transform(unlabeled=None, pca_dim=None, whiten="cluster",

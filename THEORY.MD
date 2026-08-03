@@ -79,20 +79,45 @@ The campaign is "exchangeability-first": the exact-guarantee path is the
 `allow_nonexchangeable=True`). New experiments are valid unless someone
 explicitly opts out.
 
-The current thrust is hardening the paper's weakest rationalization — the
-transform — with controls that each sever one confound, all exchangeable by
-construction (`transform_control_experiment.py`):
+The transform-control campaign (JL / Ledoit-Wolf controls, geometry and
+spectral-band diagnostics, tail probes) closed with the three-regime map; its
+attempted successor — G1 conformal metric LEARNING (continuous spectral
+filter optimized against a label-free set-size surrogate, branch
+`worktree-conformal-metric`) — was REWOUND on 2026-08-03: the surrogate
+cannot rank candidates (landscape Spearman -0.45 aircraft / ~0 cifar100),
+and the repair path was accreting machinery. Its theory survives
+(`docs/conformal_metric_objective.md` there: E|C| = Beta-weighted separation
+functional; within-x/accuracy objectives structurally misaligned), and one
+corollary drives the new thrust: menu SELECTION and metric learning are the
+same problem at |Theta| finite vs continuous — ranking a continuum
+label-free failed, but ranking a small menu is easy and can even use a
+micro labeled fold with EXACT validity (A(pool, D_sel) measurability).
 
-- **JL random projection at d'=128** (+/- the same cluster whitening):
-  separates mere dimension reduction from PCA's data-adaptivity.
-- **Ledoit-Wolf full-matrix whitening at 768** (global / within-cluster): the
-  principled continuous alternative to hard truncation. If it loses, the rank
-  cut is empirically justified against the obvious "why not shrinkage?"
-  question; smoke + diagnostics already point that way.
-- **Geometry diagnostic figure** (`embedding_geometry_diagnostic.py`): hubness
-  skew, anisotropy, relative contrast, class contrast, 1-NN accuracy per
-  space — assigns credit to the right component (hubness reduction belongs to
-  whitening/scaling, not rotation, per Feldbauer & Flexer).
+The current thrust is therefore the instructor's simpler framing
+(week-08-03 goal 2): EXTEND the pool-fit menu with fixed, closed-form maps
+along the two failure axes, judged by true FCP only
+(`docs/pool_repr_menu_plan.md`, arms in `transform_control_experiment.py`):
+
+- **Nonlinearity axis, rung 0**: per-dim Yeo-Johnson Gaussianization
+  (`yj_*`; Distribution-Calibration lineage) — the cheap control; if it and
+  the local arms are no-ops, heavier nonlinear arms (diffusion maps,
+  RFF-kPCA) stay parked.
+- **Local axis, denoising**: alpha-QE pool-neighbor feature smoothing
+  (`qe_*`; Radenovic retrieval canon) — SNAPS's information source moved
+  from score level to feature level; doubles as a test of whether
+  low-homophily harm is mechanical or information-theoretic.
+- **Local axis, projection**: Locality Preserving Projection (`lpp*_cw`;
+  He & Niyogi 2003) — variance-BLIND linear reduction; the sharp bet for
+  the collapsed-spectrum regime where class signal hides in low-variance
+  locally-discriminative directions (aircraft mechanism).
+- **Local axis, metric field**: per-cluster soft LW whitening (`lwsoft768`;
+  MPPCA-lite, SSD precedent) — the mildest global nonlinearity: locally the
+  whitening we trust, metric varying over the manifold.
+
+Expected win region is aircraft/CUB (external evidence says nonlinear DR is
+regime-dependent and linear is near-optimal on isotropic spaces); a clean
+all-negative closes goal 2 with a completeness claim for the
+{truncate-top, whiten-all} menu plus the three-regime selector.
 
 Adjacent active workstreams (other sessions): Multi-Dimensional CP
 (Tawachi & Laufer-Goldshtein) as a possible full-CP extension of their

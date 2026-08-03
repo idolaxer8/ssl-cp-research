@@ -45,7 +45,9 @@ from exchangeable_features import UnlabeledTransform, IdentityTransform
 
 SOFTMAX_NCMS = {"prototype_softmax"}
 
-# arm -> UnlabeledTransform kwargs (None = IdentityTransform)
+# arm -> UnlabeledTransform kwargs (None = IdentityTransform); an arm spec may
+# override n_clusters (e.g. lwsoft768 wants coarse clusters so each local
+# covariance has ~N/C >= several hundred members at d=768).
 ARMS = {
     "raw768":        None,
     "rp128":         dict(pca_dim=128, whiten=None,         projection="random"),
@@ -61,6 +63,24 @@ ARMS = {
     "tail_r16":      dict(pca_dim=16, whiten=None,          projection="pca_tail"),
     "tailcw_r16":    dict(pca_dim=16, whiten="cluster",     projection="pca_tail"),
     "cw768":         dict(pca_dim=None, whiten="cluster",   projection="center"),
+    # --- pool-repr menu round 1 (2026-08-03, docs/pool_repr_menu_plan.md) ---
+    # E: per-dim Yeo-Johnson Gaussianization before the champion pipelines
+    "yj_pca128_cw":  dict(pre="yj", pca_dim=128, whiten="cluster",
+                          projection="pca"),
+    "yj_lw768":      dict(pre="yj", pca_dim=None, whiten="lw_cluster",
+                          projection=None),
+    # S: alpha-QE pool-neighbor feature smoothing before the champions
+    "qe_pca128_cw":  dict(pre="qe", pca_dim=128, whiten="cluster",
+                          projection="pca"),
+    "qe_lw768":      dict(pre="qe", pca_dim=None, whiten="lw_cluster",
+                          projection=None),
+    # L: Locality Preserving Projection (variance-blind linear reduction)
+    "lpp128_cw":     dict(pca_dim=128, whiten="cluster",    projection="lpp"),
+    "lpp512_cw":     dict(pca_dim=512, whiten="cluster",    projection="lpp"),
+    # M: per-cluster soft LW whitening (local metric field, MPPCA-lite);
+    # coarse C=20 so each cluster covariance sees ~N/20 members
+    "lwsoft768":     dict(pca_dim=None, whiten="lw_cluster_soft",
+                          projection=None, n_clusters=20),
 }
 
 
@@ -95,11 +115,12 @@ def build_arm_transforms(arm, Xu, args):
     spec = ARMS[arm]
     if spec is None:
         return [IdentityTransform().fit()]
-    if spec.get("projection") == "random":
-        return [UnlabeledTransform(n_clusters=args.n_clusters_whiten,
-                                   rp_seed=args.seed + 7919 * r, **spec).fit(Xu)
+    kw = dict(n_clusters=args.n_clusters_whiten)
+    kw.update(spec)                       # spec may override n_clusters
+    if kw.get("projection") == "random":
+        return [UnlabeledTransform(rp_seed=args.seed + 7919 * r, **kw).fit(Xu)
                 for r in range(args.rp_repeats)]
-    return [UnlabeledTransform(n_clusters=args.n_clusters_whiten, **spec).fit(Xu)]
+    return [UnlabeledTransform(**kw).fit(Xu)]
 
 
 def resolve_softmax_T(transform, X, y, allc, args):
