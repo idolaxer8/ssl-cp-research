@@ -419,8 +419,12 @@ def phase_benchmark(ds, args):
                     continue
                 for nm in ["unwhitened_topk_mean", "prototype_softmax"]:
                     if (split == "random" and nm in SOFTMAX_NCMS
-                            and cal < 800):
-                        continue  # known degenerate corner, CPU-slow
+                            and cal < max(800, 8 * K)):
+                        # Known degenerate corner: random split with expected
+                        # <8 shots/class leaves classes missing -> prototype
+                        # GPU path unusable -> ~20min/trial CPU fallback
+                        # (burned 3.5h/row on CUB K=200 at cal=800 twice).
+                        continue
                     t0 = time.time()
                     row = measure_fcp(tf, X, y, allc, cal, split, nm,
                                       args.n_trials, args.alpha, args.device,
