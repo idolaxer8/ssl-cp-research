@@ -281,3 +281,66 @@ Expected shape of a WIN: any arm beating lw_cluster768 on aircraft or
 pca512_cw on CUB by > 2 SE — that would be the first non-{PCA, whitening}
 member of the pool-fit menu and the first result attacking the regime where
 the current menu is weakest.
+
+---
+
+## 7. Round 1 verdict (2026-08-03, 10 trials, balanced, k_whiten=100; JSONs + figs `output/pool_repr_menu/`)
+
+Baseline sanity: incumbents replicate history (cifar proto pca128_cw 1.30
+@800 ~ rung-3 1.27-1.30; CUB geodesic pca512_cw 1.51 @1600 = the recorded
+champion number). Aircraft incumbent here (topk_mean, k_whiten=100) is
+weaker than the true champion config (asym, coarse k) — internal
+comparisons only on that dataset.
+
+**qe = the round-1 discovery — a small-cal lever with the SNAPS homophily
+fingerprint.**
+- cifar100 prototype: qe_pca128_cw 2.34+-0.11 / 1.44+-0.04 / 1.23+-0.03 @
+  cal 200/400/800 vs incumbent 4.17 / 1.64 / 1.30 (-44% / -12% / -5%),
+  coverage 0.90-0.93. At cal 200 this is BELOW the SNAPS-corrected
+  best-known (2.57, eta x k sweep 08-02) — achieved by a pure exchangeable
+  TRANSFORM, i.e. potentially stackable with the SNAPS score correction.
+- cub200 prototype: 2.77+-0.22 @400 (incumbent 5.62) and 1.66+-0.04 @800,
+  but WORSE @1600 (1.42 vs 1.23) — gain shrinks and reverses as cal grows.
+- aircraft: qe_lw768 ties the incumbent at cal 200 (28.2 vs 29.0,
+  geodesic) then HURTS at 400/800 (+8% / +12%); qe_pca128_cw hurts badly.
+- Pattern: help at homophily ~0.8 (cifar), help-then-crossover at mid
+  homophily (CUB), harm at 0.25 (aircraft) == the SNAPS regime map. One
+  label-free homophily gate should serve BOTH levers (goal 1's blocker and
+  this one are the same component). Also NCM-specific: the benefit
+  concentrates in prototype/centroid scores (denoised class means); the
+  geodesic kNN-ratio is ~unchanged on cifar and hurt on aircraft.
+
+**yj = clean no-op everywhere** (every cell within noise of its parent).
+The cheap nonlinearity rung dies; no round-1 signal triggers the heavier
+nonlinear round-2 arms.
+
+**lpp = KILL, with a mechanism.** Catastrophic exactly where it was aimed:
+aircraft geodesic 79.9 / 71.2 / 63.1 vs incumbent 29.0 / 24.6 / 22.0;
+lpp512 is terrible at small cal on every dataset (kept noise dims dominate
+the whitened metric); lpp128 only ever ties. Mechanism: LPP maximizes
+fidelity to the pool kNN GRAPH; on collapsed-spectrum data that graph has
+label homophily ~0.25, so locality preservation faithfully preserves
+wrong-class adjacency. Same failure axis as SNAPS/qe, now at the projection
+level. Map update: on low-PR data, pool NEIGHBORHOOD structure is
+unreliable — only pool second-order statistics are; full-rank whitening
+remains the only trustworthy lever there.
+
+**lwsoft = dropped by the pre-registered rule** (beats an incumbent > 2 SE
+at one budget only: CUB proto 4.53 @400 vs 5.62). Ties-to-slightly-beats
+its parent lw_cluster768 on cifar/CUB small cal, loses on aircraft
+(37.0 vs 29.0) — where the aircraft pool (3333 / 20 clusters ~ 167 pts per
+cluster at d=768) makes the local covariances shrinkage-dominated. Noted,
+not pursued.
+
+Side observation for follow-up: prototype + pca512_cw @ cal 800 on
+aircraft = 14.90 (cov 0.912) — the best aircraft cell in the run,
+against the standing "prototype bloats on fine-grained" scope limit.
+
+**Round 1.5 (running):** qe on miniimagenet (homophily 0.92 — predicted
+largest gain) + qe under the champion asym NCM on cifar100/cub200.
+**Round 2 (replanned):** graph-based nonlinear arms (diffusion maps) are
+DEPRIORITIZED — they share the graph-trust failure axis lpp just exposed;
+the productive successors are (a) the shared label-free homophily gate,
+(b) qe knob robustness (k, alpha) + qe x SNAPS stacking (feature-level +
+score-level neighbor information), (c) the aircraft prototype+pca512
+anomaly.

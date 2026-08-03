@@ -114,10 +114,27 @@ along the two failure axes, judged by true FCP only
   MPPCA-lite, SSD precedent) — the mildest global nonlinearity: locally the
   whitening we trust, metric varying over the manifold.
 
-Expected win region is aircraft/CUB (external evidence says nonlinear DR is
-regime-dependent and linear is near-optimal on isotropic spaces); a clean
-all-negative closes goal 2 with a completeness claim for the
-{truncate-top, whiten-all} menu plus the three-regime selector.
+Round-1 verdict (2026-08-03, 10-trial pilot, `output/pool_repr_menu/`,
+sec 7 of the plan doc): the win came from the axis predicted to be safest,
+not the one aimed at the hard regime. **alpha-QE pool-neighbor smoothing is
+the first non-{PCA, whitening} menu member** — cifar100 prototype
+2.34/1.44/1.23 @ cal 200/400/800 (incumbent 4.17/1.64/1.30; the cal-200
+cell undercuts even the SNAPS-corrected best-known 2.57, via a pure
+exchangeable transform), CUB 2.77 @400 with a high-cal crossover, aircraft
+harmed. Its gain/harm pattern reproduces the SNAPS homophily map at the
+feature level — so score-level and feature-level pool-neighbor levers share
+one regime dial and should share one label-free gate. YJ Gaussianization
+was a clean no-op (marginal nonlinearity is not a lever). LPP was killed
+WITH a mechanism that sharpens the three-regime map: it preserves the pool
+kNN graph faithfully, and on collapsed-spectrum data that graph is
+majority wrong-class — pool neighborhood structure is unreliable at low
+PR, only pool second-order statistics are; this also deprioritizes
+diffusion-map-style round-2 arms (same graph-trust axis). lwsoft dropped
+by the pre-registered rule (one-budget win only). Open follow-ups: qe
+under the champion asym NCM + miniimagenet (running), qe x SNAPS stacking,
+the shared homophily gate, and the aircraft prototype+pca512 @800 anomaly
+(14.90, best cell in the run, vs the "prototype bloats on fine-grained"
+scope limit).
 
 Adjacent active workstreams (other sessions): Multi-Dimensional CP
 (Tawachi & Laufer-Goldshtein) as a possible full-CP extension of their
