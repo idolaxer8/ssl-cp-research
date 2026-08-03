@@ -306,6 +306,48 @@ def build_menu_transform(arm, Xu, n_clusters_whiten=100):
     return UnlabeledTransform(n_clusters=n_clusters_whiten, **spec).fit(Xu)
 
 
+def build_ablation_arms(ds, Xu, cfg=None):
+    """Stage/factor ablation of the learned composite (all pool-fit):
+      g1_s_only     learned s, NO stage-2 whitening
+      g1_gate_only  best rung-1 grid member with gamma = 0 (gate factor alone)
+      g1_power_only best grid member with j0=768, w=128 (power factor alone)
+    (cw768 / lw_cluster768 give the s=1 'stage 2 alone' rows.)
+    Returns (arms dict, info dict recording which grid members were picked)."""
+    cfg = cfg or CFG
+    rep_path = os.path.join(OUT_ROOT, "rung1", f"fit_{ds}.json")
+    if not os.path.exists(rep_path):
+        return {}, {}
+    rep = json.load(open(rep_path))
+    s_final = np.asarray(rep["s_final"], dtype=np.float64)
+    Xu64 = np.asarray(Xu, dtype=np.float64)
+    mu_f, V_f, lam_f = cml.pool_eigenbasis(Xu64)
+
+    def spectral_tf(s, whiten):
+        return UnlabeledTransform(
+            projection="spectral",
+            spectral_filter={"mu": mu_f, "V": V_f, "s": s},
+            pca_dim=None, whiten=whiten,
+            n_clusters=cfg["n_clusters_whiten"], random_state=42).fit(Xu64)
+
+    arms = {"g1_s_only": spectral_tf(s_final, None)}
+    info = {"g1_s_only": {"whiten": None}}
+    grid = rep.get("rung1", {}).get("grid", [])
+    slices = {
+        "g1_gate_only": [r for r in grid if r["gamma"] == 0.0],
+        "g1_power_only": [r for r in grid
+                          if r["j0"] == 768.0 and r["w"] == 128.0],
+    }
+    for name, rows in slices.items():
+        if not rows:
+            continue
+        best = min(rows, key=lambda r: r["rehearsal_sz"])
+        s = gate_scales(best["j0"], best["w"], best["gamma"], lam_f)
+        arms[name] = spectral_tf(s, best["whiten"])
+        info[name] = {k: best[k] for k in ("j0", "w", "gamma", "whiten",
+                                           "rehearsal_sz")}
+    return arms, info
+
+
 def phase_benchmark(ds, args):
     X, y, Xu, K, cal_sizes, gt_cal, gt_file = load_dataset(ds)
     allc = np.unique(y)
@@ -322,6 +364,11 @@ def phase_benchmark(ds, args):
         tf = load_g1_transform(ds, Xu, rung)
         if tf is not None:
             arm_tfs[f"g1_r{rung}"] = tf
+    ablation_info = {}
+    if args.ablation:
+        arm_tfs["cw768"] = build_menu_transform("cw768", Xu)
+        abl, ablation_info = build_ablation_arms(ds, Xu)
+        arm_tfs.update(abl)
     if args.contaminated:
         # positive control: transform refit on pool + ALL labeled data (every
         # future test point leaks into the fit). Routed through the g1 spec.
@@ -363,7 +410,7 @@ def phase_benchmark(ds, args):
     out = dict(dataset=ds, alpha=args.alpha, n_trials=args.n_trials,
                pool_pr=pool_pr, proto_T=args.proto_T,
                selector_margin_pick=pick, selector_regime_pick=regime,
-               gt_geodesic=gt, rows=rows)
+               ablation_info=ablation_info, gt_geodesic=gt, rows=rows)
     path = os.path.join(out_dir, f"results_{ds}.json")
     json.dump(out, open(path, "w"), indent=1)
     print(f"\nsaved -> {path}", flush=True)
@@ -458,6 +505,9 @@ def main():
     ap.add_argument("--pseudo_k_mult", type=int, nargs="+", default=None,
                     help="landscape mitigation: harder pseudo-tasks K'=m*K")
     ap.add_argument("--proto_T", type=float, default=0.06)
+    ap.add_argument("--ablation", action="store_true",
+                    help="benchmark: add stage/factor ablation arms "
+                         "(g1_s_only, g1_gate_only, g1_power_only, cw768)")
     ap.add_argument("--contaminated", action="store_true")
     ap.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
     ap.add_argument("--seed", type=int, default=0)
