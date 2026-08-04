@@ -446,6 +446,56 @@ CANNIBALIZATION — qe subsumes SNAPS.**
   (regret <= 7.3% everywhere); the remaining regret is captured by a
   pool-statistic k rule (shrink k when pool shots/class or estimated
   homophily is low) — one more job for the same label-free gate.
+
+**Harm-removal sweep (2026-08-04, `qe_harm/`, aircraft geodesic
+qe_lw768 variants vs no-qe 29.01 / 24.61 / 22.03):**
+- **beta = 0.3 (explicit self-mix, k=5, a=3) REMOVES the residual harm:
+  27.45 / 24.32 / 22.27 — a > 2 SE win at 200, ties at 400/800.** The
+  classic alphaQE formula's implicit neighbor mass (~0.5-0.7 at
+  aircraft similarities) was the harm mechanism; capping it at 0.3
+  keeps the denoising and drops the boundary blur. The b=0.1 @400 cell
+  (25.65) is a non-monotone MC-noise outlier (10 trials), not
+  mechanism.
+- Micro-k CANNOT clear cal-800 (k=1..3 all remain +1 SE-2 SE harmful
+  there): shrinking k bounds harm only in the k->0 limit where the
+  gain dies too. beta, not k, is the harm dial.
+- **Reciprocal-neighbor gating: KILL on low homophily, with mechanism**
+  (34-36 / 30-31 / 28-29 — far worse than classic): mutual-kNN
+  filtering keeps the tightest local clique, which at homophily .25 is
+  a wrong-class micro-clump, and removes the diluting far neighbors —
+  the filter CONCENTRATES the bias it was meant to remove. beta=0.3
+  mostly rescues it (28.67/25.30/22.77) but never beats plain beta.
+- No-regression check of (5, 3, b=0.3) on the win regimes: cifar100
+  2.69 / 1.49 / 1.24 (mild -15% regret vs classic in the starved 200
+  cell only, ties elsewhere); cub200 2.97 / 1.62 / 1.30 — and the
+  cal-1600 crossover is CURED here too (1.30 ~ baseline 1.31; second
+  cure after alpha=5).
+- **Deploy story upgrade: (k=5, alpha=3, beta=0.3) is a SAFE universal
+  config — not worse than the no-qe incumbent in ANY of the 13
+  dataset x cal cells tested (wins 7, ties 6).** The label-free gate is
+  therefore no longer safety-critical: safe mode needs no gate at all;
+  the gate's job downgrades to performance tuning (switch to classic
+  beta=None, k=10-20 on high-homophily pools for the extra 10-15% at
+  starved cal).
+
+**Transform-order verdict (2026-08-04, `qe_order/`, qe-post =
+PCA/whiten fit on raw pool, smoothing in the whitened space, knobs
+(10,3)): SMOOTH-FIRST CONFIRMED, with the gap exactly where the
+noise-amplification argument put it.**
+- cifar100 (pca128, separable): order is a WASH — post 2.23 / 1.42 /
+  1.24 vs pre 2.34 / 1.44 / 1.23 (all within ~1 SE). Truncation to the
+  top spectrum amplifies little noise, so the post-graph is fine.
+- cub200: slight pre edge (post 2.87 / 1.73 / 1.43 vs pre 2.77 / 1.66 /
+  1.42; ~1 SE at 800).
+- **aircraft (full-rank LW whitening): post is CATASTROPHIC — 34.58 /
+  31.83 / 28.06 vs pre 28.23 / 26.59 / 24.63, worse than no qe at
+  all.** LW equalization amplifies the low-variance noise directions;
+  the post-hoc neighbor graph lives in that amplified-noise metric and
+  smoothing rides it. Sharpened rule: the qe graph must be built in the
+  raw (trusted, SSL-aligned) metric BEFORE any variance equalization;
+  the flatter the whitened spectrum, the more destructive
+  post-smoothing — order matters in proportion to how much the
+  transform amplifies the tail.
 **Round 2 (replanned):** graph-based nonlinear arms (diffusion maps) are
 DEPRIORITIZED — they share the graph-trust failure axis lpp just exposed;
 the productive successors are (a) the shared label-free homophily gate,
