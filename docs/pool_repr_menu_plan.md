@@ -352,6 +352,32 @@ qe CONFIRMED on both axes it was questioned on.**
 - Standing qe scorecard: wins on 4/4 datasets with homophily >= mid
   (cifar100, mini, CUB, incl. the champion NCM), harms aircraft (hom .25)
   at cal >= 400 — the gate boundary is the same as SNAPS's.
+
+**Coupling ablation verdict (2026-08-04, `*_qe_ablation` JSONs; A =
+smooth inputs only / B = smooth fit only / C = both, vs pca128_cw
+baseline, cifar100 + cub200, both NCMs, 10 trials): the mechanism is
+INPUT DENOISING, not the denoised metric.**
+- cub200, both NCMs: A ~= C exactly (asym: 4.99-5.61 / 1.65 / 1.31
+  identical to C), B ~= baseline. Input smoothing is the whole story.
+- cifar100 prototype: A captures ~90% of the cal-200 gain (2.51 vs C
+  2.34, baseline 4.17); B alone gets ~a third (3.54); halves are
+  sub-additive. asym: A ~= B ~= C at 200; C slightly best at 400 (1.90
+  vs 2.00/2.06).
+- The CUB high-cal harm localizes to the INPUT half: at 1600-prototype,
+  A 1.41 and C 1.42 vs baseline 1.31 while B is harm-free at 1.30. The
+  crossover is smoothing bias on the points, not a corrupted metric.
+- Revised clean story (replaces the "two coupled spectral filters"
+  hypothesis): qe is a per-point one-step diffusion DENOISER applied to
+  inputs in the trusted raw-cosine metric; the downstream PCA+whitening
+  is the standard metric stage, and refitting it on the smoothed pool is
+  a small consistency bonus (worth ~0.1-0.2 sets on separable data at
+  small cal, ~0 on CUB, never harmful). Why A >> B: at small cal the
+  binding noise sits in the 2-8-shot cal points and the test queries —
+  denoising them attacks it directly; the 10k-pool covariance is already
+  well-estimated, so smoothing barely moves the metric. Keep C as the
+  deploy default (never worse than A, sometimes better); note the
+  fit-only shortcut (no test-time kNN query) is NOT available — the
+  test-time pool query is load-bearing.
 **Round 2 (replanned):** graph-based nonlinear arms (diffusion maps) are
 DEPRIORITIZED — they share the graph-trust failure axis lpp just exposed;
 the productive successors are (a) the shared label-free homophily gate,
