@@ -378,6 +378,39 @@ INPUT DENOISING, not the denoised metric.**
   deploy default (never worse than A, sometimes better); note the
   fit-only shortcut (no test-time kNN query) is NOT available — the
   test-time pool query is load-bearing.
+
+**qe x SNAPS stacking verdict (2026-08-04, `output/pool_repr_menu/
+snaps_stack/`, 8 runs, 20 trials, eta {0,.1,.3,.5,.7} x k {10,20}, LOO
+SNAPS on the prototype+poolT champion; cifar100/mini/CUB-p128/CUB-p512):
+CANNIBALIZATION — qe subsumes SNAPS.**
+- 2x2 corners (base / SNAPS / qe / qe+SNAPS), cifar100: cal 200 =
+  4.64 / 2.73 / 2.51 / 2.34; cal 400 = 1.69 / 1.47 / 1.45 / 1.42;
+  cal 800 = 1.31 / 1.24 / 1.25 / 1.24. qe ALONE >= SNAPS alone
+  everywhere (beats it at 200), and SNAPS's marginal gain on top of qe
+  collapses: -41% -> -6.6% @200, -13% -> -2% @400, -5% -> -0.6% @800.
+  Same collapse on mini (-7% -> -1.6%) and CUB (p512 @400:
+  -24% -> -0.9%; p128 already ~0). Best standing cifar cal-200 cell =
+  2.34 (qe + eta .3 residual top-up).
+- The cannibalization signature predicted in advance is exactly what
+  shows: eta* shrinks post-qe (cifar-200 .7 -> .3; CUB-p512-400
+  .7 -> .1) — after feature denoising the score field is already
+  smooth, so the correction has nothing left to remove.
+- The super-additivity channel EXISTS but does not pay: qe raises
+  neighbor purity everywhere (cifar .81 -> .83, mini .92 -> .93, CUB
+  k10 .75 -> .79, k20 .64 -> .71), yet the improved graph feeds a
+  correction whose signal qe already harvested. Homophily lift is real;
+  the residual score-level information is not.
+- CUB high-cal crossover persists under both bases (qe +0.2-0.3% worse
+  at 1600) — the gate needs a cal axis, not just homophily.
+- Consequence for the stack: **the deployable pool-neighbor lever is qe,
+  not SNAPS** — simpler (no eta, no LOO repair, no O(1/n) soft gate;
+  exact by Prop 2), stronger at small cal, equal elsewhere. SNAPS
+  survives as (a) a ~-6% residual top-up in the most starved cell only,
+  (b) the score-level dual for the paper's analysis (its regime map,
+  full-CP wrap, and eta machinery become the foil that motivates the
+  feature-level lever). Caveats: aircraft (harm regime) excluded by
+  design; k grid {10,20}; split-style champion base as in all prior
+  SNAPS numbers.
 **Round 2 (replanned):** graph-based nonlinear arms (diffusion maps) are
 DEPRIORITIZED — they share the graph-trust failure axis lpp just exposed;
 the productive successors are (a) the shared label-free homophily gate,
