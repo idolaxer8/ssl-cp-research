@@ -411,6 +411,41 @@ CANNIBALIZATION — qe subsumes SNAPS.**
   feature-level lever). Caveats: aircraft (harm regime) excluded by
   design; k grid {10,20}; split-style champion base as in all prior
   SNAPS numbers.
+- Runtime accounting (`qe_snaps_runtime.py`, figure
+  `runtime_qe_vs_snaps.png`): SNAPS overhead = 174/252/410 ms PER
+  CALIBRATION DRAW at cal 200/400/800 (pool score matrix + pool kNN +
+  LOO loop) vs base scoring 6-19 ms; qe adds ZERO per-trial cost — its
+  price is one-time (+1.6 s transform fit) + 389 us per incoming point
+  (vs 9 us plain). Both cheap in absolute terms; the advantage is
+  architectural (no per-recalibration machinery, no eta/k tuning, no
+  validity gate).
+
+**qe knob sweep verdict (2026-08-04, k {5,10,20,50} x alpha {1,3,5},
+10 trials, `output/pool_repr_menu/qe_knobs/` + heatmaps):**
+- Separable data: surface is FLAT — cifar100 incumbent (10,3) regret
+  0 / 1.4 / 5.8% at cal 400/800/200, all within ~1 SE. The gain does not
+  ride the knob choice.
+- **k is the load-bearing knob and its optimum tracks the pool's
+  per-class budget + homophily**: flat on cifar (pool 100 shots/class),
+  k-opt = 5 on CUB (28/class) and aircraft (33/class, hom .25). Hard
+  failure boundary: k approaching pool-shots-per-class degenerates
+  (CUB k=50: sz 42 +- 25 at cal 400 — cross-class averaging collapses
+  prototypes). Rule: k << N_pool/K, small k on low-purity pools — the
+  SAME dial as the SNAPS k law, measurable from the pool.
+- alpha is secondary (1 ~= 3), EXCEPT: alpha=5 is protective exactly
+  where smoothing bias binds — **CUB cal-1600 crossover is CURED by
+  (k=5, alpha=5): 1.42 -> 1.32 vs baseline 1.31 (parity)** — and
+  harmful in the starved cifar-200 cell (2.34 -> 2.91; over-
+  concentration throws away denoising).
+- **Aircraft harm is PARTIALLY TUNABLE (unlike SNAPS's)**: (5,3) at
+  cal 200 = 27.12 vs no-qe incumbent 29.01 — the first qe WIN on
+  aircraft (> 2 SE); cal 400 neutral (+1.5%); cal 800 residual harm
+  (+5.0%). Monotone k-gradient (23.1 -> 31.1 across k at cal 800)
+  confirms the homophily mechanism.
+- Deploy guidance: (10,3) stays an acceptable universal default
+  (regret <= 7.3% everywhere); the remaining regret is captured by a
+  pool-statistic k rule (shrink k when pool shots/class or estimated
+  homophily is low) — one more job for the same label-free gate.
 **Round 2 (replanned):** graph-based nonlinear arms (diffusion maps) are
 DEPRIORITIZED — they share the graph-trust failure axis lpp just exposed;
 the productive successors are (a) the shared label-free homophily gate,
