@@ -81,6 +81,13 @@ ARMS = {
     # coarse C=20 so each cluster covariance sees ~N/20 members
     "lwsoft768":     dict(pca_dim=None, whiten="lw_cluster_soft",
                           projection=None, n_clusters=20),
+    # qe coupling ablation (plan sec 7): where does the qe mechanism live --
+    # denoised INPUTS (A), denoised covariance METRIC (B), or the coupling (C
+    # = qe_pca128_cw above)?
+    "qeA_pca128_cw": dict(pre="qe", qe_mode="apply_only", pca_dim=128,
+                          whiten="cluster", projection="pca"),
+    "qeB_pca128_cw": dict(pre="qe", qe_mode="fit_only", pca_dim=128,
+                          whiten="cluster", projection="pca"),
 }
 
 

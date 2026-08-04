@@ -102,6 +102,16 @@ class UnlabeledTransform:
                      None (default).
         qe_k, qe_alpha: neighbor count / similarity power for pre='qe'
                      (retrieval-canonical 10 / 3.0).
+        qe_mode:     which half of the qe coupling is active (ablation dial,
+                     docs/pool_repr_menu_plan.md sec 7):
+                     'both' (default)  smooth the pool before downstream fits
+                                       AND smooth cal/test at transform time;
+                     'fit_only'        downstream stages fit on the smoothed
+                                       pool, cal/test enter RAW ("denoised
+                                       covariance metric" arm);
+                     'apply_only'      cal/test smoothed, downstream stages
+                                       fit on the RAW pool ("input denoising
+                                       only" arm).
         lpp_graph_k: pool kNN-graph degree for projection='lpp' (binary,
                      symmetrized; default 15).
 
@@ -118,11 +128,13 @@ class UnlabeledTransform:
     def __init__(self, pca_dim=None, whiten="cluster", n_clusters=20,
                  reg=1e-4, random_state=42, n_init=10,
                  projection="pca", rp_seed=None,
-                 pre=None, qe_k=10, qe_alpha=3.0, lpp_graph_k=15):
+                 pre=None, qe_k=10, qe_alpha=3.0, lpp_graph_k=15,
+                 qe_mode="both"):
         assert whiten in ("cluster", "global", "lw_global", "lw_cluster",
                           "lw_cluster_soft", None)
         assert projection in ("pca", "pca_tail", "random", "lpp", "center", None)
         assert pre in (None, "yj", "qe")
+        assert qe_mode in ("both", "fit_only", "apply_only")
         self.pca_dim = pca_dim
         self.whiten = whiten
         self.n_clusters = n_clusters
@@ -134,6 +146,7 @@ class UnlabeledTransform:
         self.pre = pre
         self.qe_k = qe_k
         self.qe_alpha = qe_alpha
+        self.qe_mode = qe_mode
         self.lpp_graph_k = lpp_graph_k
         # fitted state
         self.pca_ = None
@@ -165,7 +178,8 @@ class UnlabeledTransform:
         elif self.pre == "qe":
             self.qe_pool_ = X / (np.linalg.norm(X, axis=1,
                                                 keepdims=True) + 1e-12)
-            X = self._qe_smooth(X, fitting_pool=True)
+            if self.qe_mode in ("both", "fit_only"):
+                X = self._qe_smooth(X, fitting_pool=True)
 
         # 1) projection (fit on unlabeled)
         reduce = self.pca_dim is not None and self.pca_dim < X.shape[1]
@@ -322,7 +336,7 @@ class UnlabeledTransform:
         Xp = np.asarray(X, dtype=np.float64)
         if self.pre == "yj":
             Xp = self._apply_yj(Xp)
-        elif self.pre == "qe":
+        elif self.pre == "qe" and self.qe_mode in ("both", "apply_only"):
             Xp = self._qe_smooth(Xp, fitting_pool=False)
         if self.pca_ is not None:
             Xp = self.pca_.transform(Xp)
@@ -453,6 +467,8 @@ class UnlabeledTransform:
         lw = (f", lw_shrinkage={self.lw_shrinkage_:.4f}"
               if self.lw_shrinkage_ is not None else "")
         pre = "" if self.pre is None else f", pre={self.pre!r}"
+        if self.pre == "qe" and self.qe_mode != "both":
+            pre += f", qe_mode={self.qe_mode!r}"
         return (f"UnlabeledTransform(pca_dim={self.pca_dim}, whiten={self.whiten!r}, "
                 f"n_clusters={self.n_clusters}{proj}{pre}{lw})")
 
