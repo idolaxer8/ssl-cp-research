@@ -1,504 +1,278 @@
-# Pool-fit representation menu — plan (goal 2, week 08-03)
+# Pool-fit representation for conformal prediction: denoise -> project -> whiten
 
-**Status**: plan + pilot round 1 (2026-08-03). Successor to the G1
-conformal-metric attempt; this document states the rewind rationale, the new
-menu arms with full per-stage math, the benchmark protocol, and kill criteria.
-
----
-
-## 1. Rewind rationale — what G1 taught us, what we keep
-
-G1 tried to LEARN the pool transform (a continuous spectral filter) by
-minimizing a label-free surrogate of conformal set size. The landscape gate
-failed: the surrogate cannot rank candidate transforms (Spearman vs true FCP
-size: -0.45 aircraft, ~0 cifar100, 0.75 cub200 only). The postmortem
-(`docs/conformal_metric_objective.md` on `worktree-conformal-metric`)
-localizes the failure in the ESTIMATOR (pseudo-label contamination below
-homophily ~0.7 + quantile MC noise), not the functional.
-
-What we keep from G1:
-- The theory: E|C| = coverage + (K-1) * E_{U~Beta(k,n+1-k)}[R(U)] with
-  R(u) = F_false(F_true^{-1}(u)) — expected set size IS a two-population
-  separation functional; accuracy-style within-x objectives are structurally
-  blind to it (the formal account of the +89% accuracy-selection regret).
-- The corollary that matters here: **menu selection and metric learning are
-  the same problem at |Theta| finite vs continuous.** Ranking a continuum
-  label-free is what failed; ranking a MENU of ~10 qualitatively different
-  fixed transforms is a far easier statistical problem — and for a finite
-  menu we can even select WITH labels we already have, validly (sec 5).
-
-The rewind (= instructor goal 2 as written): extend the pool-fit transform
-menu along the two known failure axes — nonlinearity and local structure —
-with FIXED maps fit once on the unlabeled pool, benchmarked by TRUE FCP, no
-surrogate objective anywhere.
-
-## 2. Starting map (established, `transform_control_experiment.py`)
-
-Three regimes, tracked by pool participation ratio PR = (sum ev)^2 / sum ev^2:
-
-```
-cifar/mini   PR ~ 240   signal in top-128       -> pca128_cw  (truncate + diag cluster whiten, fine k)
-CUB-200      PR ~ 58    signal extends to 512   -> pca512_cw
-aircraft     PR ~ 16    top band nuisance,      -> lw_cluster768 (no truncation,
-                        signal at bands 129-512     full-cov LW whitening, coarse k)
-```
-
-Menu today = {truncate-top d', whiten (diag-cluster / LW-full), drop-top
-tail probes}. All linear, all global (one metric for the whole space).
-Known negatives already on file: AE bottleneck on low-PR (nonlinearity via a
-learned code is NOT the missing ingredient on aircraft), ICA/negentropy
-(killed), JL random projection (adaptivity is the lever, not reduction).
-
-The 2026-08-03 lit sweep (memory `litsweep-simple-poolfit-2026-08-03`) adds
-external evidence: nonlinear DR payoff on embeddings is regime-dependent
-(arXiv 2403.14001 — linear near-optimal on isotropic/contrastive spaces), 
-DINOv2 fine-grained structure is nonlinearly decodable (attentive > linear
-probing; arXiv 2302.00294 curvature), UMAP-family disqualified as a metric
-source (density distortion). So: expect new arms to matter on aircraft/CUB,
-not cifar — which is exactly where the menu is weakest.
-
-## 3. The four new arms (round 1) — per-stage math
-
-Notation: pool U = {u_1..u_N} in R^768 (DINOv2, L2-normalized), pool matrix
-X_U (N x 768). Every arm is a map T = A(U): R^768 -> R^d fit on U alone and
-applied identically to every cal/test point, so Proposition 2 (theory.md
-sec 2) gives EXACT coverage unchanged — the whole comparison is efficiency.
-Implementation: `exchangeable_features.UnlabeledTransform`, new stages
-`pre in {yj, qe}` (before projection), `projection = lpp`, and
-`whiten = lw_cluster_soft`.
-
-### Arm E — elementwise Yeo-Johnson Gaussianization (`pre='yj'`, nonlinearity axis, rung 0)
-
-Per dimension j, the Yeo-Johnson power transform (handles negative values,
-unlike Tukey's ladder used on post-ReLU features in the few-shot lit):
-
-```
-YJ(z; lam) =  ((z+1)^lam - 1) / lam                 z >= 0, lam != 0
-              log(z + 1)                            z >= 0, lam  = 0
-              -(((-z+1)^(2-lam) - 1) / (2-lam))     z <  0, lam != 2
-              -log(-z + 1)                          z <  0, lam  = 2
-```
-
-Fit: lam_j = argmax of the YJ profile log-likelihood on pool column j
-(scipy.stats.yeojohnson MLE; 768 one-dim fits on N pool values). Then
-standardize each transformed dim by its pool mean/sd (so downstream PCA is
-not dominated by scale artifacts of the power map), then re-L2-normalize
-rows (the NCMs are angular). Downstream stages (PCA/whiten/k-means) are
-refit on the TRANSFORMED pool.
-
-Parameter justification: lam_j per-dim by MLE = zero free knobs. The
-standardize + renorm steps restore the two invariances the rest of the
-pipeline assumes (per-dim scale comparability; unit-norm inputs).
-
-Why it could pay: whitening and Mahalanobis-style metrics are optimal for
-elliptical data; marginal Gaussianization is the cheapest move toward
-ellipticity. Lit: Yang et al., "Free Lunch for Few-Shot Learning:
-Distribution Calibration", ICLR 2021 (arXiv 2101.06395) — power-transformed
-deep features become near-Gaussian per class and improve prototype
-classifiers; Laparra et al. 2011 (RBIG) is the iterated version (parked —
-try the one-step map first). Honest prior: DINOv2 dims are already fairly
-symmetric post-L2; this is the control rung of the nonlinearity axis — if
-YJ is a no-op AND the heavier nonlinear arms also fail, the axis dies
-cheaply.
-
-### Arm S — pool-neighbor feature smoothing (`pre='qe'`, local axis, denoising)
-
-alpha-query-expansion / database-side augmentation, ported verbatim from
-retrieval (Radenovic, Tolias & Chum, TPAMI 2019, arXiv 1711.02512; DBA:
-Gordo et al., IJCV 2017; the de facto standard re-ranking pre-step for
-frozen-feature retrieval). For ANY point x (L2-normed), let
-NN_k(x) = its k nearest pool points by cosine (exact self-matches excluded),
-s_i = max(cos(x, u_i), 0):
-
-```
-T(x) = L2norm( (x + sum_{i=1..k} s_i^alpha * u_i) / (1 + sum_i s_i^alpha) )
-```
-
-Parameters k=10, alpha=3 — the retrieval-canonical values (Radenovic 2019);
-alpha concentrates weight on the closest neighbors (s^3 halves the weight of
-a neighbor at cos .8 vs one at cos .63), which is the built-in guard against
-wrong-class averaging. Pool points themselves are smoothed the same way
-(neighbors = their k nearest OTHER pool points) before downstream stages are
-refit on the smoothed pool.
-
-Mechanism: local manifold denoising — the average over a coherent
-neighborhood shrinks the noise component orthogonal to the local manifold by
-~1/sqrt(k) while preserving the tangential (class-relevant) position. This
-is SNAPS's information source (pool neighbors) moved from the SCORE level to
-the FEATURE level, where it composes with everything downstream and where
-the sim^alpha weighting is gentler than score averaging.
-
-Exchangeability: T is a deterministic function of (x, U) applied pointwise;
-cal and test points NEVER enter each other's smoothing (only pool vectors
-are averaged). A(U)-measurable fixed map -> Prop 2, exact.
-
-Honest risk: the SNAPS harm regime (homophily < ~0.7 on aircraft/cars) may
-reappear at the feature level. That is a FINDING either way: if feature-level
-smoothing survives where score-level failed, the axis matters; if both fail
-identically, low-homophily harm is information-theoretic, not mechanical.
-
-### Arm L — Locality Preserving Projection + cluster whitening (`projection='lpp'`, local axis, the sharp bet)
-
-He & Niyogi, "Locality Preserving Projections", NIPS 2003 — the linear
-approximation of Laplacian eigenmaps. Fit on the centered pool
-Xc = X_U - mu (mu = pool mean):
-
-1. kNN graph on U by cosine: W_ij = 1 if u_j in kNN_g(u_i) OR u_i in
-   kNN_g(u_j), else 0 (symmetrized binary; g = 15). Binary weights = zero
-   bandwidth knobs (the heat-kernel variant adds one; parked unless binary
-   shows signal).
-2. Degree D_deg = diag(sum_j W_ij), graph Laplacian L = D_deg - W.
-3. Generalized eigenproblem on 768 x 768 matrices:
-
-```
-   (Xc^T L Xc) f  =  lam * (Xc^T D_deg Xc + eps*I) f,    eps = 1e-4 * tr(Xc^T D_deg Xc)/768
-```
-
-4. F = [f_1 .. f_d'] = the d' eigenvectors with SMALLEST lam;
-   T(x) = F^T (x - mu). Then k-means + within-cluster diagonal whitening in
-   LPP space (existing machinery, unchanged).
-
-Objective being solved: min_F sum_ij W_ij ||F^T x_i - F^T x_j||^2 subject to
-F^T (Xc^T D_deg Xc) F = I — keep directions in which GRAPH NEIGHBORS stay
-close, normalized by degree-weighted variance. Contrast with PCA, which
-keeps directions of maximal GLOBAL variance. LPP is therefore
-variance-blind: a low-variance direction that separates local clumps is
-retained; a high-variance nuisance direction (pose/lighting) that scatters
-neighbors is discarded. This is a direct, closed-form attack on the aircraft
-mechanism ("top spectral band = nuisance, class signal at bands 129-512") —
-the one arm in round 1 built specifically for the low/mid-PR regimes.
-
-Parameters: g=15 (standard kNN-graph range; the graph is a smoothing
-parameter, not a resolution one — results are flat in g over 10..20 in the
-LPP lit), eps ridge = spectral-scale-relative 1e-4 (numerical only),
-d' in {128, 512} = the two truncation points the regime map already uses,
-giving arms lpp128_cw and lpp512_cw.
-
-Cost: one N x N cosine top-g query (chunked), two 768 x 768 Gram matrices
-(L is sparse: <= 2 g N entries), one generalized eigh(768) — seconds.
-
-### Arm M — per-cluster soft Ledoit-Wolf whitening (`whiten='lw_cluster_soft'`, local axis, metric field)
-
-The incumbent lw_cluster768 fits ONE pooled within-cluster covariance (a
-single global metric). This arm fits a LOCAL metric per cluster and
-interpolates — the k-means/Ledoit-Wolf instantiation of Mixtures of
-Probabilistic PCA (Tipping & Bishop, Neural Comp. 1999); published precedent
-for cluster-conditional Mahalanobis on SSL features: SSD (Sehwag et al.,
-ICLR 2021, arXiv 2103.12051).
-
-Fit (pool only):
-1. k-means, C clusters (existing stage; C = n_clusters_whiten).
-2. Per cluster c: mean mu_c; LW-shrunk covariance of its members
-   Sigma_c = (1-rho_c) S_c + rho_c (tr S_c / 768) I with rho_c analytic
-   (Ledoit & Wolf 2004 — handles n_c ~ N/C < 768); ZCA whitener
-   A_c = Sigma_c^{-1/2} via eigendecomposition.
-3. Softness scale: tau^2 = mean over pool points of their squared distance
-   to the NEAREST cluster center (a pool statistic — no knob).
-
-Transform:
-
-```
-r_c(x)  = softmax_c( -||x - mu_c||^2 / (2 tau^2) )        soft responsibilities
-T(x)    = sum_c r_c(x) * A_c (x - mu_c)
-```
-
-Smooth (softmax), piecewise-linear-in-the-limit, globally NONLINEAR map —
-the mildest possible nonlinearity: locally it is exactly the whitening we
-already trust, globally it lets the metric vary over the manifold.
-Parameter justification: C inherited from the existing whitening stage (not
-a new knob); tau from the pool assignment-distance scale (the natural unit
-making r_c neither one-hot nor uniform); LW shrinkage analytic.
-
-Risk: with C=100, n_c ~ 100 members per cluster at d=768 pushes LW toward
-heavy shrinkage -> A_c collapses toward isotropy and the arm degenerates to
-soft centering. If the pilot shows this, rerun with C=20 (coarse), which the
-aircraft k-sweep independently prefers.
-
-### Explicitly parked (round 2, only if round 1 shows the axis pays)
-- Diffusion maps + Nystrom out-of-sample (Coifman-Lafon 2006; the canonical
-  nonlinear+local arm; one real knob = kernel bandwidth) — heavier, ~100M
-  affinity entries.
-- RFF kernel-PCA whitening (cosine-Gaussian kernel; NeurIPS 2024 OOD-kPCA,
-  arXiv 2505.15284) — the global-nonlinear arm.
-- RBIG iterated Gaussianization (if YJ alone moves anything).
-- Hubness-corrected NCM scores (CSLS/MP/NNN) — user-deferred; NCM stage, not
-  transform stage.
-
-## 4. Benchmark protocol (pilot, local 4GB GPU)
-
-`transform_control_experiment.py` extended with the new arms; everything
-else inherited unchanged (exact FCP, missing-class fix, GPU fast path).
-
-```
-datasets   cifar100 (PR 235, high), cub200 (PR 58, mid), aircraft (PR 16, low)
-arms       raw768, pca128_cw, pca512_cw, lw_cluster768        (baselines/incumbents)
-           yj_pca128_cw, yj_lw768                             (E x champion)
-           qe_pca128_cw, qe_lw768                             (S x champion)
-           lpp128_cw, lpp512_cw                               (L)
-           lwsoft768                                          (M)
-split      balanced_both (default split policy; random arm deferred to the
-           confirm run — validity is settled by Prop 2, not at issue here)
-cal        cifar100/aircraft {200,400,800}; cub200 {400,800,1600} (m_cal>=2)
-ncm        unwhitened_topk_mean (geodesic) + prototype_softmax (T auto per arm)
-trials     10 (pilot; SE reported), n_clusters_whiten=100 (script default,
-           = prior transform-control setting; the k dial is a known second
-           knob — NOT re-swept here, noted as a caveat on lw arms)
-alpha      0.1
-output     output/pool_repr_menu/ (main repo)
-```
-
-Decision metric: mean set size at matched coverage (all arms exactly valid
-by construction; coverage col is a sanity check), CovGap secondary.
-
-## 5. Selection (stage C — after the menu settles)
-
-- Label-free: extend the existing selector (margin-tail + PR-band regime
-  fallback, `transform_selection_pilot.py`) over the grown menu; CUB is the
-  open mid-PR test.
-- The G1 salvage: for a FINITE menu, selection does not need the label-free
-  surrogate at all — a micro selection fold D_sel (m_sel ~ 100-200 labels
-  from budget B, disjoint from cal) ranks ~10 arms by empirical set size /
-  closed-form J_hat; conditional on (pool, D_sel) the chosen T is fixed, so
-  Prop 2 applies with A(pool, D_sel) and validity stays EXACT. Lit anchors:
-  Yang & Kuchibhotla (arXiv 2104.13871); Liang, Zhu & Barber (arXiv
-  2408.07066, same-cal selection with validity corrections) as the
-  no-extra-labels alternative.
-
-## 6. Kill criteria
-
-Per arm: DROP if it fails to beat the per-dataset incumbent by > 2 pooled SE
-at >= 2 cal budgets on >= 1 dataset (and is not the best on any dataset).
-Per axis: the nonlinearity axis dies if YJ ~ 0 everywhere AND round-2
-nonlinear arms are not triggered by any round-1 signal; the local axis dies
-if qe, lpp, AND lwsoft all fail on aircraft + CUB (the regimes they were
-built for).
-Program: if NO new arm beats incumbents anywhere, goal 2 closes with a
-defensible completeness claim — "{truncate-top, whiten-all} spans the useful
-pool-fit space; the three-regime map + selector is the contribution" — plus
-the negative-results section (AE, ICA, JL, and now these four).
-
-Expected shape of a WIN: any arm beating lw_cluster768 on aircraft or
-pca512_cw on CUB by > 2 SE — that would be the first non-{PCA, whitening}
-member of the pool-fit menu and the first result attacking the regime where
-the current menu is weakest.
+**What this document is.** A self-contained explanation of the QE line of
+work (2026-08-03/04): the theory that motivates it, the pipeline it produced,
+and the experiments behind every claim. Detailed derivations and the full
+lab-notebook history live elsewhere (references inline; raw results and
+figures under `output/pool_repr_menu/`, git history of this file for the
+per-round verdicts).
 
 ---
 
-## 7. Round 1 verdict (2026-08-03, 10 trials, balanced, k_whiten=100; JSONs + figs `output/pool_repr_menu/`)
+## 1. Setting and main claim
 
-Baseline sanity: incumbents replicate history (cifar proto pca128_cw 1.30
-@800 ~ rung-3 1.27-1.30; CUB geodesic pca512_cw 1.51 @1600 = the recorded
-champion number). Aircraft incumbent here (topk_mean, k_whiten=100) is
-weaker than the true champion config (asym, coarse k) — internal
-comparisons only on that dataset.
+We run full conformal prediction (FCP) for K-way classification (K >= 100)
+on frozen SSL embeddings (DINOv2, 768-d), with a tiny labeled calibration
+set (200-800 points) and a large UNLABELED pool (3-10k points). The question
+this work answers: **what is the most that the unlabeled pool can buy us,
+and where in the pipeline should it be spent?**
 
-**qe = the round-1 discovery — a small-cal lever with the SNAPS homophily
-fingerprint.**
-- cifar100 prototype: qe_pca128_cw 2.34+-0.11 / 1.44+-0.04 / 1.23+-0.03 @
-  cal 200/400/800 vs incumbent 4.17 / 1.64 / 1.30 (-44% / -12% / -5%),
-  coverage 0.90-0.93. At cal 200 this is BELOW the SNAPS-corrected
-  best-known (2.57, eta x k sweep 08-02) — achieved by a pure exchangeable
-  TRANSFORM, i.e. potentially stackable with the SNAPS score correction.
-- cub200 prototype: 2.77+-0.22 @400 (incumbent 5.62) and 1.66+-0.04 @800,
-  but WORSE @1600 (1.42 vs 1.23) — gain shrinks and reverses as cal grows.
-- aircraft: qe_lw768 ties the incumbent at cal 200 (28.2 vs 29.0,
-  geodesic) then HURTS at 400/800 (+8% / +12%); qe_pca128_cw hurts badly.
-- Pattern: help at homophily ~0.8 (cifar), help-then-crossover at mid
-  homophily (CUB), harm at 0.25 (aircraft) == the SNAPS regime map. One
-  label-free homophily gate should serve BOTH levers (goal 1's blocker and
-  this one are the same component). Also NCM-specific: the benefit
-  concentrates in prototype/centroid scores (denoised class means); the
-  geodesic kNN-ratio is ~unchanged on cifar and hurt on aircraft.
+Answer: spend all of it in the REPRESENTATION, before any label is touched.
+The result is a three-stage, fully label-free feature map, fit once on the
+pool:
 
-**yj = clean no-op everywhere** (every cell within noise of its parent).
-The cheap nonlinearity rung dies; no round-1 signal triggers the heavier
-nonlinear round-2 arms.
+```
+x  ->  qe-denoise(x)  ->  PCA-d' projection  ->  (cluster / Ledoit-Wolf) whitening  ->  NCM  ->  CP
+       stage 1             stage 2               stage 3
+```
 
-**lpp = KILL, with a mechanism.** Catastrophic exactly where it was aimed:
-aircraft geodesic 79.9 / 71.2 / 63.1 vs incumbent 29.0 / 24.6 / 22.0;
-lpp512 is terrible at small cal on every dataset (kept noise dims dominate
-the whitened metric); lpp128 only ever ties. Mechanism: LPP maximizes
-fidelity to the pool kNN GRAPH; on collapsed-spectrum data that graph has
-label homophily ~0.25, so locality preservation faithfully preserves
-wrong-class adjacency. Same failure axis as SNAPS/qe, now at the projection
-level. Map update: on low-PR data, pool NEIGHBORHOOD structure is
-unreliable — only pool second-order statistics are; full-rank whitening
-remains the only trustworthy lever there.
+- **Exact coverage for free** at every stage (sec 2 — this is the
+  architectural point, and the main novelty claim).
+- **Best known set sizes**: cifar100 @ cal 200 drops 4.17 -> 2.34 (below the
+  previous best-known 2.57 that needed a score-level correction); CUB-200
+  @ 400 drops 3.65 -> 2.77; miniImageNet @ 200 drops 1.35 -> 1.19.
+- **A "safe mode"** of stage 1 that is not-worse-than-incumbent on every
+  dataset x cal cell we tested, including the adversarial fine-grained
+  regime (aircraft) — so deployment needs no protective gate (sec 6).
 
-**lwsoft = dropped by the pre-registered rule** (beats an incumbent > 2 SE
-at one budget only: CUB proto 4.53 @400 vs 5.62). Ties-to-slightly-beats
-its parent lw_cluster768 on cifar/CUB small cal, loses on aircraft
-(37.0 vs 29.0) — where the aircraft pool (3333 / 20 clusters ~ 167 pts per
-cluster at d=768) makes the local covariances shrinkage-dominated. Noted,
-not pursued.
+Novelty position (lit sweep 2026-07-06 + 2026-08-03, `literature.md` sec 9):
+no published work fits a projection/metric/denoiser on an INDEPENDENT
+unlabeled pool and runs full/transductive CP with distance or prototype
+scores in that space. Existing uses of unlabeled data in CP act on the
+SCORES or the THRESHOLD (SemiCP, SNAPS, unsupervised calibration); the
+representation slot is empty — and sec 5 shows the representation-level use
+strictly subsumes the score-level one.
 
-Side observation for follow-up: prototype + pca512_cw @ cal 800 on
-aircraft = 14.90 (cov 0.912) — the best aircraft cell in the run,
-against the standing "prototype bloats on fine-grained" scope limit.
+## 2. Why the pool-fit phase gives exact validity (the one theory fact)
 
-**Round 1.5 verdict (2026-08-03, 10 trials, `*_confirm` / `*_asym` JSONs):
-qe CONFIRMED on both axes it was questioned on.**
-- miniimagenet (homophily 0.92, the predicted-max-gain point): qe beats
-  pca128_cw on BOTH NCMs at every cal — prototype 1.19+-0.02 vs 1.35+-0.06
-  @200 (then saturation, sets ~1); geodesic 1.11 vs 1.32 @200. Direction
-  confirmed at high homophily; magnitude capped by saturation.
-- Champion asym NCM: the round-1 "gain is prototype-only" worry dies.
-  cifar100 asym: qe 6.68 / 1.90 / 1.53 vs 7.59 / 2.31 / 1.65 (-18% @400,
-  -7% @800). cub200 asym: qe 5.61 / 1.65 / 1.31 vs pca128_cw
-  5.60 / 1.94 / 1.39 (-15% @800, -6% @1600, > 2 SE) — and under asym there
-  is NO high-cal crossover on CUB (unlike prototype, where pca512_cw 1.23
-  keeps the 1600 crown). The asymmetric 1-NN-numerator score benefits from
-  denoised neighbors where the symmetric mean variant did not.
-- Standing qe scorecard: wins on 4/4 datasets with homophily >= mid
-  (cifar100, mini, CUB, incl. the champion NCM), harms aircraft (hom .25)
-  at cal >= 400 — the gate boundary is the same as SNAPS's.
+CP's coverage guarantee needs the calibration + test scores to be
+exchangeable. Any transform fit ON the calibration set breaks that symmetry
+(the old cal-fit-whitening under-coverage). But a transform that is a fixed
+function of the POOL alone treats every cal and test point identically —
+formally, T = A(pool) is measurable w.r.t. data independent of the bag, so
+Proposition 2 (`docs/theory.md` sec 2) applies verbatim and coverage is
+exactly 1-alpha at ANY transform, however aggressive.
 
-**Coupling ablation verdict (2026-08-04, `*_qe_ablation` JSONs; A =
-smooth inputs only / B = smooth fit only / C = both, vs pca128_cw
-baseline, cifar100 + cub200, both NCMs, 10 trials): the mechanism is
-INPUT DENOISING, not the denoised metric.**
-- cub200, both NCMs: A ~= C exactly (asym: 4.99-5.61 / 1.65 / 1.31
-  identical to C), B ~= baseline. Input smoothing is the whole story.
-- cifar100 prototype: A captures ~90% of the cal-200 gain (2.51 vs C
-  2.34, baseline 4.17); B alone gets ~a third (3.54); halves are
-  sub-additive. asym: A ~= B ~= C at 200; C slightly best at 400 (1.90
-  vs 2.00/2.06).
-- The CUB high-cal harm localizes to the INPUT half: at 1600-prototype,
-  A 1.41 and C 1.42 vs baseline 1.31 while B is harm-free at 1.30. The
-  crossover is smoothing bias on the points, not a corrupted metric.
-- Revised clean story (replaces the "two coupled spectral filters"
-  hypothesis): qe is a per-point one-step diffusion DENOISER applied to
-  inputs in the trusted raw-cosine metric; the downstream PCA+whitening
-  is the standard metric stage, and refitting it on the smoothed pool is
-  a small consistency bonus (worth ~0.1-0.2 sets on separable data at
-  small cal, ~0 on CUB, never harmful). Why A >> B: at small cal the
-  binding noise sits in the 2-8-shot cal points and the test queries —
-  denoising them attacks it directly; the 10k-pool covariance is already
-  well-estimated, so smoothing barely moves the metric. Keep C as the
-  deploy default (never worse than A, sometimes better); note the
-  fit-only shortcut (no test-time kNN query) is NOT available — the
-  test-time pool query is load-bearing.
+Intuition: the pool is "frozen scenery". Whatever geometry we carve out of
+it, cal and test walk through the same carved landscape, so their ranks —
+the only thing CP consumes — stay exchangeable.
 
-**qe x SNAPS stacking verdict (2026-08-04, `output/pool_repr_menu/
-snaps_stack/`, 8 runs, 20 trials, eta {0,.1,.3,.5,.7} x k {10,20}, LOO
-SNAPS on the prototype+poolT champion; cifar100/mini/CUB-p128/CUB-p512):
-CANNIBALIZATION — qe subsumes SNAPS.**
-- 2x2 corners (base / SNAPS / qe / qe+SNAPS), cifar100: cal 200 =
-  4.64 / 2.73 / 2.51 / 2.34; cal 400 = 1.69 / 1.47 / 1.45 / 1.42;
-  cal 800 = 1.31 / 1.24 / 1.25 / 1.24. qe ALONE >= SNAPS alone
-  everywhere (beats it at 200), and SNAPS's marginal gain on top of qe
-  collapses: -41% -> -6.6% @200, -13% -> -2% @400, -5% -> -0.6% @800.
-  Same collapse on mini (-7% -> -1.6%) and CUB (p512 @400:
-  -24% -> -0.9%; p128 already ~0). Best standing cifar cal-200 cell =
-  2.34 (qe + eta .3 residual top-up).
-- The cannibalization signature predicted in advance is exactly what
-  shows: eta* shrinks post-qe (cifar-200 .7 -> .3; CUB-p512-400
-  .7 -> .1) — after feature denoising the score field is already
-  smooth, so the correction has nothing left to remove.
-- The super-additivity channel EXISTS but does not pay: qe raises
-  neighbor purity everywhere (cifar .81 -> .83, mini .92 -> .93, CUB
-  k10 .75 -> .79, k20 .64 -> .71), yet the improved graph feeds a
-  correction whose signal qe already harvested. Homophily lift is real;
-  the residual score-level information is not.
-- CUB high-cal crossover persists under both bases (qe +0.2-0.3% worse
-  at 1600) — the gate needs a cal axis, not just homophily.
-- Consequence for the stack: **the deployable pool-neighbor lever is qe,
-  not SNAPS** — simpler (no eta, no LOO repair, no O(1/n) soft gate;
-  exact by Prop 2), stronger at small cal, equal elsewhere. SNAPS
-  survives as (a) a ~-6% residual top-up in the most starved cell only,
-  (b) the score-level dual for the paper's analysis (its regime map,
-  full-CP wrap, and eta machinery become the foil that motivates the
-  feature-level lever). Caveats: aircraft (harm regime) excluded by
-  design; k grid {10,20}; split-style champion base as in all prior
-  SNAPS numbers.
-- Runtime accounting (`qe_snaps_runtime.py`, figure
-  `runtime_qe_vs_snaps.png`): SNAPS overhead = 174/252/410 ms PER
-  CALIBRATION DRAW at cal 200/400/800 (pool score matrix + pool kNN +
-  LOO loop) vs base scoring 6-19 ms; qe adds ZERO per-trial cost — its
-  price is one-time (+1.6 s transform fit) + 389 us per incoming point
-  (vs 9 us plain). Both cheap in absolute terms; the advantage is
-  architectural (no per-recalibration machinery, no eta/k tuning, no
-  validity gate).
+Two consequences worth stating to a reviewer:
 
-**qe knob sweep verdict (2026-08-04, k {5,10,20,50} x alpha {1,3,5},
-10 trials, `output/pool_repr_menu/qe_knobs/` + heatmaps):**
-- Separable data: surface is FLAT — cifar100 incumbent (10,3) regret
-  0 / 1.4 / 5.8% at cal 400/800/200, all within ~1 SE. The gain does not
-  ride the knob choice.
-- **k is the load-bearing knob and its optimum tracks the pool's
-  per-class budget + homophily**: flat on cifar (pool 100 shots/class),
-  k-opt = 5 on CUB (28/class) and aircraft (33/class, hom .25). Hard
-  failure boundary: k approaching pool-shots-per-class degenerates
-  (CUB k=50: sz 42 +- 25 at cal 400 — cross-class averaging collapses
-  prototypes). Rule: k << N_pool/K, small k on low-purity pools — the
-  SAME dial as the SNAPS k law, measurable from the pool.
-- alpha is secondary (1 ~= 3), EXCEPT: alpha=5 is protective exactly
-  where smoothing bias binds — **CUB cal-1600 crossover is CURED by
-  (k=5, alpha=5): 1.42 -> 1.32 vs baseline 1.31 (parity)** — and
-  harmful in the starved cifar-200 cell (2.34 -> 2.91; over-
-  concentration throws away denoising).
-- **Aircraft harm is PARTIALLY TUNABLE (unlike SNAPS's)**: (5,3) at
-  cal 200 = 27.12 vs no-qe incumbent 29.01 — the first qe WIN on
-  aircraft (> 2 SE); cal 400 neutral (+1.5%); cal 800 residual harm
-  (+5.0%). Monotone k-gradient (23.1 -> 31.1 across k at cal 800)
-  confirms the homophily mechanism.
-- Deploy guidance: (10,3) stays an acceptable universal default
-  (regret <= 7.3% everywhere); the remaining regret is captured by a
-  pool-statistic k rule (shrink k when pool shots/class or estimated
-  homophily is low) — one more job for the same label-free gate.
+1. **Validity never constrains the search, only the information set.** The
+   entire design question is efficiency (set size). We are free to try any
+   pool statistic; nothing can break coverage.
+2. **This is why the representation is the right place for pool
+   information.** The alternative — correcting SCORES with pool neighbors
+   (our SNAPS adaptation) — mixes pool quantities into a cal-fit score
+   function, which cost us a leak repair (LOO re-prototyping), an O(1/n)
+   validity gate, and a full-CP wrapping proof. The feature-level route gets
+   exactness with zero machinery.
 
-**Harm-removal sweep (2026-08-04, `qe_harm/`, aircraft geodesic
-qe_lw768 variants vs no-qe 29.01 / 24.61 / 22.03):**
-- **beta = 0.3 (explicit self-mix, k=5, a=3) REMOVES the residual harm:
-  27.45 / 24.32 / 22.27 — a > 2 SE win at 200, ties at 400/800.** The
-  classic alphaQE formula's implicit neighbor mass (~0.5-0.7 at
-  aircraft similarities) was the harm mechanism; capping it at 0.3
-  keeps the denoising and drops the boundary blur. The b=0.1 @400 cell
-  (25.65) is a non-monotone MC-noise outlier (10 trials), not
-  mechanism.
-- Micro-k CANNOT clear cal-800 (k=1..3 all remain +1 SE-2 SE harmful
-  there): shrinking k bounds harm only in the k->0 limit where the
-  gain dies too. beta, not k, is the harm dial.
-- **Reciprocal-neighbor gating: KILL on low homophily, with mechanism**
-  (34-36 / 30-31 / 28-29 — far worse than classic): mutual-kNN
-  filtering keeps the tightest local clique, which at homophily .25 is
-  a wrong-class micro-clump, and removes the diluting far neighbors —
-  the filter CONCENTRATES the bias it was meant to remove. beta=0.3
-  mostly rescues it (28.67/25.30/22.77) but never beats plain beta.
-- No-regression check of (5, 3, b=0.3) on the win regimes: cifar100
-  2.69 / 1.49 / 1.24 (mild -15% regret vs classic in the starved 200
-  cell only, ties elsewhere); cub200 2.97 / 1.62 / 1.30 — and the
-  cal-1600 crossover is CURED here too (1.30 ~ baseline 1.31; second
-  cure after alpha=5).
-- **Deploy story upgrade: (k=5, alpha=3, beta=0.3) is a SAFE universal
-  config — not worse than the no-qe incumbent in ANY of the 13
-  dataset x cal cells tested (wins 7, ties 6).** The label-free gate is
-  therefore no longer safety-critical: safe mode needs no gate at all;
-  the gate's job downgrades to performance tuning (switch to classic
-  beta=None, k=10-20 on high-homophily pools for the extra 10-15% at
-  starved cal).
+Why can a transform shrink sets at all? Expected set size is exactly a
+separation functional between the score distributions of true and false
+labels (`docs/conformal_metric_objective.md` sec 2 for the identity; that
+document also proves accuracy-style objectives are structurally the wrong
+surrogate, sec 5 — which is why every experiment below is judged by TRUE CP
+set size and nothing else).
 
-**Transform-order verdict (2026-08-04, `qe_order/`, qe-post =
-PCA/whiten fit on raw pool, smoothing in the whitened space, knobs
-(10,3)): SMOOTH-FIRST CONFIRMED, with the gap exactly where the
-noise-amplification argument put it.**
-- cifar100 (pca128, separable): order is a WASH — post 2.23 / 1.42 /
-  1.24 vs pre 2.34 / 1.44 / 1.23 (all within ~1 SE). Truncation to the
-  top spectrum amplifies little noise, so the post-graph is fine.
-- cub200: slight pre edge (post 2.87 / 1.73 / 1.43 vs pre 2.77 / 1.66 /
-  1.42; ~1 SE at 800).
-- **aircraft (full-rank LW whitening): post is CATASTROPHIC — 34.58 /
-  31.83 / 28.06 vs pre 28.23 / 26.59 / 24.63, worse than no qe at
-  all.** LW equalization amplifies the low-variance noise directions;
-  the post-hoc neighbor graph lives in that amplified-noise metric and
-  smoothing rides it. Sharpened rule: the qe graph must be built in the
-  raw (trusted, SSL-aligned) metric BEFORE any variance equalization;
-  the flatter the whitened spectrum, the more destructive
-  post-smoothing — order matters in proportion to how much the
-  transform amplifies the tail.
-**Round 2 (replanned):** graph-based nonlinear arms (diffusion maps) are
-DEPRIORITIZED — they share the graph-trust failure axis lpp just exposed;
-the productive successors are (a) the shared label-free homophily gate,
-(b) qe knob robustness (k, alpha) + qe x SNAPS stacking (feature-level +
-score-level neighbor information), (c) the aircraft prototype+pca512
-anomaly.
+## 3. The three stages and why each is justified
+
+### Stage 1 — qe denoising (the new ingredient)
+
+alpha-query-expansion, ported verbatim from image retrieval (Radenovic,
+Tolias & Chum, TPAMI 2019, arXiv 1711.02512 — method in their Sec 3.5,
+parameters and robustness argument in Sec 5.3; applying it to database
+points too is "database-side augmentation", Turcot & Lowe 2009 / Gordo et
+al. IJCV 2017). For any point x, with s_i = max(cos(x, u_i), 0) over its k
+nearest pool points u_i:
+
+```
+classic:    T(x) = L2norm( x + sum_i s_i^alpha * u_i )            k=10, alpha=3
+safe mode:  T(x) = L2norm( (1-b) x + b * weighted-neighbor-mean ) b=0.3, k=5
+```
+
+Intuition: average a point with its closest pool neighbors. The component of
+x orthogonal to its local manifold (noise) shrinks like 1/sqrt(k); the
+tangential, class-carrying position survives. The s^alpha weights make the
+effective neighborhood adaptive — far (likely wrong-class) neighbors get
+negligible weight — which is the paper's own robustness argument for
+alpha-QE over plain averaging.
+
+Where does its gain come from? A cut-the-pipeline ablation (smooth inputs
+only / refit metric only / both) localized the mechanism: **input
+denoising**. At 2-8 labeled shots per class, the binding noise is in the cal
+points and test queries themselves; denoising them is worth ~90% of the
+gain, refitting the downstream stages on the smoothed pool adds a small
+consistency bonus, and the metric alone adds little (the 10k-pool covariance
+was never the noisy part).
+
+Exchangeability: T is a fixed per-point function of (x, frozen pool); cal
+and test never enter each other's smoothing. Prop 2 applies unchanged.
+
+### Stage 2 — PCA truncation (established before this line; kept, justified)
+
+The pool spectrum tells us where class signal lives, and the participation
+ratio PR = (sum ev)^2 / sum ev^2 indexes the regime (three-regime map,
+transform-control campaign):
+
+```
+cifar/mini  PR ~ 240   signal in the top-128       -> project to 128
+CUB-200     PR ~ 58    signal extends to ~512      -> project to 512
+aircraft    PR ~ 16    top band is NUISANCE,       -> do NOT truncate
+                       signal in low-variance tail
+```
+
+Justification against the obvious alternatives was done by controls that
+each remove one ingredient: JL random projection (reduction alone: useless
+-> PCA's data-adaptivity is the lever), drop-top/tail probes (aircraft's
+signal really is in the tail), Ledoit-Wolf shrinkage (the continuous
+alternative; wins exactly where truncation is undefined). Pool-only
+d'-selection anchors: Gavish-Donoho / Marchenko-Pastur (valid where the
+spectrum is spiked — cifar/mini/CUB — provably inapplicable on aircraft's
+collapsed spectrum, which is why the regime map is needed at all).
+
+### Stage 3 — whitening (established; kept, justified)
+
+The NCMs are angular (cosine/geodesic). Without equalization, a few
+high-variance directions dominate every angle and wash out the
+discriminative low-variance ones. Whitening flattens the retained spectrum:
+within-cluster diagonal whitening on separable data (k-means pseudo-classes
+stand in for classes — the label-free version of within-class whitening),
+full-matrix Ledoit-Wolf ZCA on collapsed-spectrum data (per-cluster
+covariance is off-diagonal there; LW shrinkage keeps it well-conditioned).
+This is also the standard retrieval recipe (Jegou & Chum, ECCV 2012:
+centering + whitening as exploiting negative evidence / co-occurrence).
+
+### Why THIS order (denoise -> project -> whiten)
+
+Two arguments, one experiment:
+
+- The qe graph must be built in the raw cosine metric — the only metric we
+  trust a priori (the SSL training objective aligned it; whitened metrics
+  are downstream ESTIMATES).
+- Whitening AMPLIFIES low-variance directions, which is where the noise
+  sits. Denoise first and the equalizer amplifies cleaned directions;
+  equalize first and the neighbor graph lives in amplified noise.
+
+Order experiment (qe-post arm: fit PCA/whiten on the raw pool, smooth
+afterwards in the whitened space): a wash on cifar (truncation to the top
+spectrum amplifies almost nothing), **catastrophic on aircraft's full-rank
+whitening** — 34.6 / 31.8 / 28.1 vs smooth-first 28.2 / 26.6 / 24.6, worse
+than no qe at all. Rule: post-smoothing's damage scales with how much the
+transform amplifies the spectral tail. Smooth-first is confirmed, not
+assumed.
+
+## 4. Experiments, in order (what we tried, what died, what survived)
+
+All experiments: balanced splits, 10-20 trials, coverage verified ~0.90 in
+every cell (as sec 2 guarantees), judged on mean set size vs the
+per-dataset incumbent (cifar: pca128_cw, CUB: pca512_cw, aircraft:
+lw_cluster768). Figures referenced by path.
+
+**Round 1 — a pre-registered menu, not a cherry-pick.** Four candidate pool
+transforms with kill criteria fixed in advance, benchmarked on
+cifar100 + CUB + aircraft (`transform_controls_*_balanced_both.png`):
+
+- Yeo-Johnson per-dim Gaussianization: clean NO-OP everywhere -> killed
+  (marginal nonlinearity is not a lever).
+- LPP (locality-preserving projection): killed WITH a mechanism — it
+  faithfully preserves the pool kNN graph, and on low-PR data that graph is
+  majority wrong-class (label homophily .25), so preserving locality
+  preserves the noise. This also deprioritized diffusion-map-style arms
+  (same graph-trust axis) and taught us the low-PR rule: pool NEIGHBORHOOD
+  structure is unreliable there, only pool second-order statistics are.
+- Soft per-cluster LW whitening (MPPCA-lite): one-budget win only ->
+  dropped by the pre-registered rule.
+- **qe smoothing: the survivor.** cifar100 prototype 2.34 / 1.44 / 1.23 @
+  cal 200/400/800 vs incumbent 4.17 / 1.64 / 1.30; confirmed on the
+  champion asym NCM (cifar -18% @400; CUB -15% @800) and on miniImageNet
+  (1.19 vs 1.35 @200). Gains concentrate at small cal — exactly where the
+  method is positioned.
+
+**qe vs SNAPS (the score-level competitor)** — 2x2 {qe on/off} x {SNAPS
+on/off} with a full eta x k sweep, 4 bases
+(`snaps_stack/stack_corners.png`, `stack_mechanism.png`): qe alone matches
+or beats SNAPS alone everywhere, and SNAPS's marginal gain on top of qe
+collapses (-41% -> -6.6% at cifar-200, ~0 elsewhere) with its best mixing
+weight shrinking toward zero — the pre-registered cannibalization
+signature. Notably, qe RAISES the neighbor purity SNAPS depends on (CUB
+k=20: .64 -> .71) — the graph improves, but the correction has nothing left
+to harvest, because the same neighborhood information was already consumed
+at the feature level. Runtime (`snaps_stack/runtime_qe_vs_snaps.png`):
+SNAPS costs 174-410 ms of machinery PER recalibration (pool scores + kNN +
+LOO repair); qe costs +1.6 s once and 0.4 ms per point, with no
+recalibration cost and no validity machinery. **Verdict: the pool-neighbor
+lever belongs in the representation; SNAPS is subsumed** (kept only as the
+paper's score-level foil and a ~6% top-up in the single most starved cell).
+
+**Knob robustness** (`qe_knobs/qe_knob_heatmaps.png`): on separable data
+the surface is flat (pre-registered k=10/alpha=3 within ~1 SE of best
+everywhere). k is the one load-bearing knob and tracks the pool's per-class
+budget: k-opt = 5 on CUB/aircraft (28-33 pool shots/class), hard
+degeneration when k approaches shots-per-class (CUB k=50: size 42 +- 25 —
+cross-class averaging destroys prototypes).
+
+**Removing the last harm (aircraft).** Classic qe still harmed aircraft at
+cal >= 400 (+5-12%). Three candidate fixes, one winner:
+
+- micro-k (k=1..3): bounds the harm, cannot clear cal-800 — as k -> 0 the
+  gain dies with the harm. Not the right dial.
+- reciprocal-neighbor gating (keep neighbor u only if x falls in u's own
+  kNN radius): killed with a mechanism — at homophily .25 mutual-kNN keeps
+  the tightest local clique, which is a wrong-class micro-clump, and drops
+  the diluting far neighbors: it CONCENTRATES the bias.
+- **explicit self-mix beta = 0.3: the fix.** The classic formula's implicit
+  neighbor mass is ~0.5-0.7 at aircraft-level similarities — too
+  aggressive. Capping the neighbor share at 30% gives 27.45 / 24.32 / 22.27
+  vs no-qe 29.01 / 24.61 / 22.03: a > 2 SE WIN at 200 and statistical ties
+  after. The same setting also cures the one other harm cell (CUB @ 1600).
+
+## 5. The bottom line table
+
+Safe mode (k=5, alpha=3, beta=0.3) vs the per-dataset no-qe incumbent —
+**not worse in any of the 13 cells tested; 7 wins, 6 ties**:
+
+```
+                     cal 200      cal 400      cal 800      cal 1600
+cifar100 (proto)   4.17 -> 2.69  1.64 -> 1.49  1.30 -> 1.24      -
+cub200   (proto)        -        3.65 -> 2.97  1.73 -> 1.62  1.31 -> 1.30
+aircraft (geo)    29.01 -> 27.45 24.61 -> 24.32 22.03 -> 22.27     -
+(+ miniImageNet and champion-asym confirmations at classic knobs, sec 4)
+```
+
+Classic mode (k=10, alpha=3, no beta cap) buys an extra 10-15% in the
+starved high-homophily cells (cifar-200: 2.34) at the cost of the aircraft
+harm — which motivates the gate below.
+
+## 6. Deployment and the (performance-only) gate
+
+Because safe mode is never worse than the incumbent and validity is exact
+regardless, the gate is NOT safety-critical. Its only job is to decide when
+to switch from safe to classic for the extra efficiency:
+
+```
+inputs:  hom_hat  = label-free estimate of pool kNN label homophily   [the only estimated input]
+         S        = N_pool / K   (known),   n_cal (known)
+rule:    k    = 5 if hom_hat < ~0.75 else min(10, S/4);  never near S
+         beta = classic if (hom_hat >= ~0.75 and n_cal <= ~800) else 0.3
+```
+
+Default = safe; switch to classic only on high-confidence high-homophily
+evidence (the asymmetry: a wrong classic pick costs up to ~12%, a wrong
+safe pick only forgoes a bonus — so conservative thresholds make the costly
+error unreachable). Open item: the hom_hat estimator (candidate statistics
+and validation protocol in memory `litsweep-simple-poolfit-2026-08-03`; we
+hold a 6-dataset labeled homophily map to validate against).
+
+## 7. Status and remaining work
+
+- DONE: menu round + kills, qe discovery + NCM/dataset confirmations,
+  mechanism ablation, SNAPS subsumption + runtime, knob sweep, harm
+  removal, order experiment. All on branch `worktree-pool-repr-menu`;
+  results + figures in `output/pool_repr_menu/`.
+- OPEN: (a) the hom_hat estimator panel for the performance gate; (b)
+  50-trial cluster hardening of the headline cells before write-up; (c) a
+  side anomaly worth one look: prototype + pca512 @ aircraft cal-800 hit
+  14.90 (best aircraft cell ever), against the standing "prototype bloats
+  on fine-grained" scope limit.
