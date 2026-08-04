@@ -129,12 +129,14 @@ class UnlabeledTransform:
                  reg=1e-4, random_state=42, n_init=10,
                  projection="pca", rp_seed=None,
                  pre=None, qe_k=10, qe_alpha=3.0, lpp_graph_k=15,
-                 qe_mode="both"):
+                 qe_mode="both", qe_beta=None, qe_reciprocal=False,
+                 qe_stage="pre"):
         assert whiten in ("cluster", "global", "lw_global", "lw_cluster",
                           "lw_cluster_soft", None)
         assert projection in ("pca", "pca_tail", "random", "lpp", "center", None)
         assert pre in (None, "yj", "qe")
         assert qe_mode in ("both", "fit_only", "apply_only")
+        assert qe_stage in ("pre", "post")
         self.pca_dim = pca_dim
         self.whiten = whiten
         self.n_clusters = n_clusters
@@ -147,7 +149,17 @@ class UnlabeledTransform:
         self.qe_k = qe_k
         self.qe_alpha = qe_alpha
         self.qe_mode = qe_mode
+        self.qe_beta = qe_beta          # None = classic self-weight-1 alphaQE;
+                                        # else explicit mix (1-b)*x + b*nbr_avg
+        self.qe_reciprocal = qe_reciprocal  # keep neighbor u only if x lies
+                                        # inside u's own k-NN pool radius
+                                        # (label-free wrong-neighbor filter)
+        self.qe_stage = qe_stage        # 'pre' = smooth then PCA/whiten
+                                        # (default); 'post' = PCA/whiten then
+                                        # smooth in the transformed space
+                                        # (order-ablation arm)
         self.lpp_graph_k = lpp_graph_k
+        self.qe_radius_ = None          # per-pool-point k-th-NN similarity
         # fitted state
         self.pca_ = None
         self.rp_ = None                  # JL matrix (D x d), 'random' projection
@@ -175,9 +187,11 @@ class UnlabeledTransform:
         # 0) optional pre-stage; everything downstream is refit on pre(pool)
         if self.pre == "yj":
             X = self._fit_apply_yj(X)
-        elif self.pre == "qe":
+        elif self.pre == "qe" and self.qe_stage == "pre":
             self.qe_pool_ = X / (np.linalg.norm(X, axis=1,
                                                 keepdims=True) + 1e-12)
+            if self.qe_reciprocal:
+                self.qe_radius_ = self._pool_radii(self.qe_pool_)
             if self.qe_mode in ("both", "fit_only"):
                 X = self._qe_smooth(X, fitting_pool=True)
 
@@ -329,6 +343,18 @@ class UnlabeledTransform:
             self.Xu_transformed_ = self._soft_whiten(Xp)
         else:
             self.Xu_transformed_ = Xp
+
+        if self.pre == "qe" and self.qe_stage == "post":
+            # order-ablation arm: the projection/whitening above was fit on
+            # the RAW pool; smoothing now happens in the TRANSFORMED space,
+            # with the (unsmoothed) transformed pool as the neighbor bank.
+            Zu = self.Xu_transformed_
+            self.qe_pool_ = Zu / (np.linalg.norm(Zu, axis=1,
+                                                 keepdims=True) + 1e-12)
+            if self.qe_reciprocal:
+                self.qe_radius_ = self._pool_radii(self.qe_pool_)
+            if self.qe_mode in ("both", "fit_only"):
+                self.Xu_transformed_ = self._qe_smooth(Zu, fitting_pool=True)
         return self
 
     # -- apply to cal/test --------------------------------------------------
@@ -336,7 +362,8 @@ class UnlabeledTransform:
         Xp = np.asarray(X, dtype=np.float64)
         if self.pre == "yj":
             Xp = self._apply_yj(Xp)
-        elif self.pre == "qe" and self.qe_mode in ("both", "apply_only"):
+        elif (self.pre == "qe" and self.qe_stage == "pre"
+              and self.qe_mode in ("both", "apply_only")):
             Xp = self._qe_smooth(Xp, fitting_pool=False)
         if self.pca_ is not None:
             Xp = self.pca_.transform(Xp)
@@ -354,6 +381,9 @@ class UnlabeledTransform:
             Xp = Xp @ self.W_
         elif self.soft_As_ is not None:
             Xp = self._soft_whiten(Xp)
+        if (self.pre == "qe" and self.qe_stage == "post"
+                and self.qe_mode in ("both", "apply_only")):
+            Xp = self._qe_smooth(Xp, fitting_pool=False)
         return Xp
 
     # -- pre-stage / projection / whitening helpers (all pool-fit) ----------
@@ -385,10 +415,15 @@ class UnlabeledTransform:
         return Xt / (np.linalg.norm(Xt, axis=1, keepdims=True) + 1e-12)
 
     def _qe_smooth(self, X, fitting_pool=False):
-        """alpha-QE smoothing against the frozen pool:
-        T(x) = L2norm( x + sum_{i in NN_k(x)} s_i^alpha * u_i ),
-        s_i = max(cos(x, u_i), 0). When smoothing the pool itself
-        (fitting_pool=True) each point's own entry is excluded."""
+        """alpha-QE smoothing against the frozen pool. Classic form
+        (qe_beta=None):  T(x) = L2norm( x + sum_{i in NN_k(x)} s_i^alpha u_i ),
+        s_i = max(cos(x, u_i), 0). With qe_beta=b the self-weight is explicit:
+        T(x) = L2norm( (1-b) x + b * weighted-neighbor-mean ). With
+        qe_reciprocal, neighbor u_i contributes only if x falls inside u_i's
+        own qe_k-NN pool radius (s_i >= r_i) — a label-free wrong-neighbor
+        filter (k-reciprocal / QB-Norm activation-gate lineage); points with
+        no surviving neighbors pass through unsmoothed. When smoothing the
+        pool itself (fitting_pool=True) each point's own entry is excluded."""
         P = self.qe_pool_                      # (N, D) float64, L2-normed
         k, a = self.qe_k, self.qe_alpha
         Xn = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-12)
@@ -402,11 +437,34 @@ class UnlabeledTransform:
             idx = np.argpartition(-S, k, axis=1)[:, :k]
             s = np.take_along_axis(S, idx, axis=1)
             w = np.clip(s, 0.0, None) ** a     # (m, k)
+            if self.qe_radius_ is not None:
+                w = np.where(s >= self.qe_radius_[idx], w, 0.0)
             nb = P[idx]                        # (m, k, D)
-            v = ch + (w[:, :, None] * nb).sum(axis=1)
+            wsum = w.sum(axis=1, keepdims=True)
+            wnb = (w[:, :, None] * nb).sum(axis=1)
+            if self.qe_beta is None:
+                v = ch + wnb
+            else:
+                b = self.qe_beta
+                nb_avg = wnb / np.maximum(wsum, 1e-12)
+                v = np.where(wsum > 0, (1.0 - b) * ch + b * nb_avg, ch)
             out[i0:i0 + 1024] = v / (np.linalg.norm(v, axis=1,
                                                     keepdims=True) + 1e-12)
         return out
+
+    def _pool_radii(self, P):
+        """Per-pool-point reciprocity radius: cosine similarity to its own
+        qe_k-th nearest OTHER pool point (chunked)."""
+        N = len(P)
+        k = self.qe_k
+        r = np.empty(N)
+        for i0 in range(0, N, 1024):
+            S = P[i0:i0 + 1024] @ P.T
+            rows = np.arange(S.shape[0])
+            S[rows, i0 + rows] = -np.inf       # exclude self
+            top = np.partition(S, S.shape[1] - k, axis=1)[:, -k:]
+            r[i0:i0 + 1024] = top.min(axis=1)  # k-th largest similarity
+        return r
 
     def _fit_lpp(self, X, mu):
         """LPP eigenbasis from the pool: binary symmetrized cosine kNN graph
@@ -467,8 +525,16 @@ class UnlabeledTransform:
         lw = (f", lw_shrinkage={self.lw_shrinkage_:.4f}"
               if self.lw_shrinkage_ is not None else "")
         pre = "" if self.pre is None else f", pre={self.pre!r}"
-        if self.pre == "qe" and self.qe_mode != "both":
-            pre += f", qe_mode={self.qe_mode!r}"
+        if self.pre == "qe":
+            if self.qe_mode != "both":
+                pre += f", qe_mode={self.qe_mode!r}"
+            if self.qe_stage != "pre":
+                pre += f", qe_stage={self.qe_stage!r}"
+            pre += f", qe_k={self.qe_k}, qe_alpha={self.qe_alpha:g}"
+            if self.qe_beta is not None:
+                pre += f", qe_beta={self.qe_beta:g}"
+            if self.qe_reciprocal:
+                pre += ", qe_reciprocal=True"
         return (f"UnlabeledTransform(pca_dim={self.pca_dim}, whiten={self.whiten!r}, "
                 f"n_clusters={self.n_clusters}{proj}{pre}{lw})")
 

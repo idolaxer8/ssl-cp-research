@@ -129,6 +129,12 @@ def build_arm_transforms(arm, Xu, args):
             kw["qe_k"] = args.qe_k
         if args.qe_alpha is not None:
             kw["qe_alpha"] = args.qe_alpha
+        if args.qe_beta is not None:
+            kw["qe_beta"] = args.qe_beta
+        if args.qe_reciprocal:
+            kw["qe_reciprocal"] = True
+        if args.qe_stage is not None:
+            kw["qe_stage"] = args.qe_stage
     if kw.get("projection") == "random":
         return [UnlabeledTransform(rp_seed=args.seed + 7919 * r, **kw).fit(Xu)
                 for r in range(args.rp_repeats)]
@@ -191,6 +197,16 @@ def main():
                     help="override qe_k for pre='qe' arms (knob sweep).")
     ap.add_argument("--qe_alpha", type=float, default=None,
                     help="override qe_alpha for pre='qe' arms (knob sweep).")
+    ap.add_argument("--qe_beta", type=float, default=None,
+                    help="explicit self-mix weight for pre='qe' arms "
+                         "(harm-removal dial; None = classic alphaQE).")
+    ap.add_argument("--qe_reciprocal", action="store_true",
+                    help="reciprocal-radius neighbor gate for pre='qe' arms.")
+    ap.add_argument("--qe_stage", type=str, default=None,
+                    choices=["pre", "post"],
+                    help="smoothing order for pre='qe' arms: 'pre' (default, "
+                         "smooth then transform) or 'post' (transform then "
+                         "smooth -- order-ablation arm).")
     ap.add_argument("--proto_temperature", default="auto")
     ap.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
     ap.add_argument("--seed", type=int, default=42)
