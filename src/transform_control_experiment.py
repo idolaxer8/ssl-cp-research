@@ -124,6 +124,11 @@ def build_arm_transforms(arm, Xu, args):
         return [IdentityTransform().fit()]
     kw = dict(n_clusters=args.n_clusters_whiten)
     kw.update(spec)                       # spec may override n_clusters
+    if kw.get("pre") == "qe":
+        if args.qe_k is not None:
+            kw["qe_k"] = args.qe_k
+        if args.qe_alpha is not None:
+            kw["qe_alpha"] = args.qe_alpha
     if kw.get("projection") == "random":
         return [UnlabeledTransform(rp_seed=args.seed + 7919 * r, **kw).fit(Xu)
                 for r in range(args.rp_repeats)]
@@ -182,6 +187,10 @@ def main():
                          "vs ~0.5s GPU) only to reproduce the known degenerate "
                          "corner (prototype at random cal<=400 -> sz~K). Set 0 to "
                          "run everything.")
+    ap.add_argument("--qe_k", type=int, default=None,
+                    help="override qe_k for pre='qe' arms (knob sweep).")
+    ap.add_argument("--qe_alpha", type=float, default=None,
+                    help="override qe_alpha for pre='qe' arms (knob sweep).")
     ap.add_argument("--proto_temperature", default="auto")
     ap.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
     ap.add_argument("--seed", type=int, default=42)
