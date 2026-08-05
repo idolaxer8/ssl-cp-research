@@ -88,6 +88,11 @@ ARMS = {
                           whiten="cluster", projection="pca"),
     "qeB_pca128_cw": dict(pre="qe", qe_mode="fit_only", pca_dim=128,
                           whiten="cluster", projection="pca"),
+    # two-scatter pool discriminant (Sec-3.4 port): whiten-within THEN
+    # truncate by whitened total (= between) variance; no second whitening
+    "ldapool128":    dict(pca_dim=128, whiten=None, projection="ldapool"),
+    "ldapool256":    dict(pca_dim=256, whiten=None, projection="ldapool"),
+    "ldapool512":    dict(pca_dim=512, whiten=None, projection="ldapool"),
 }
 
 

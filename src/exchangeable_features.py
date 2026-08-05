@@ -133,7 +133,8 @@ class UnlabeledTransform:
                  qe_stage="pre"):
         assert whiten in ("cluster", "global", "lw_global", "lw_cluster",
                           "lw_cluster_soft", None)
-        assert projection in ("pca", "pca_tail", "random", "lpp", "center", None)
+        assert projection in ("pca", "pca_tail", "random", "lpp", "ldapool",
+                              "center", None)
         assert pre in (None, "yj", "qe")
         assert qe_mode in ("both", "fit_only", "apply_only")
         assert qe_stage in ("pre", "post")
@@ -165,6 +166,7 @@ class UnlabeledTransform:
         self.rp_ = None                  # JL matrix (D x d), 'random' projection
         self.tail_basis_ = None          # (D-r, D) tail eigenbasis, 'pca_tail'
         self.lpp_basis_ = None           # (D, d) LPP eigenbasis, 'lpp'
+        self.ldapool_basis_ = None       # (D, d) two-scatter basis, 'ldapool'
         self.center_ = None              # pool mean (random/tail/center/lw paths)
         self.kmeans_ = None
         self.inv_std_ = None             # diagonal whitening ('cluster'/'global')
@@ -222,6 +224,38 @@ class UnlabeledTransform:
             self.center_ = full.mean_
             self.tail_basis_ = full.components_[self.pca_dim:]
             Xp = (X - self.center_) @ self.tail_basis_.T
+        elif self.projection == "ldapool" and reduce:
+            # Two-scatter pool discriminant (label-free port of Radenovic
+            # et al. Sec 3.4 / Mikolajczyk-Matas learned whitening, with
+            # k-means pseudo-clusters as the pair oracle): whiten by the
+            # pooled within-cluster LW covariance, then keep the top-d'
+            # total-variance directions IN THE WHITENED METRIC. By the
+            # eigenvalue-shift identity (whitened total = I + whitened
+            # between), this equals ranking by between-cluster variance —
+            # the faithful discriminant, no pair sampling needed. No second
+            # whitening stage: the within scatter is isotropic in T-space
+            # by construction.
+            from sklearn.covariance import LedoitWolf
+            self.center_ = X.mean(axis=0)
+            Xc = X - self.center_
+            km0 = KMeans(n_clusters=self.n_clusters,
+                         random_state=self.random_state,
+                         n_init=self.n_init).fit(Xc)
+            resid = Xc.copy()
+            for cc in range(self.n_clusters):
+                m = km0.labels_ == cc
+                if m.any():
+                    resid[m] -= Xc[m].mean(axis=0)
+            lw = LedoitWolf(assume_centered=True).fit(resid)
+            self.lw_shrinkage_ = float(lw.shrinkage_)
+            evals, evecs = np.linalg.eigh(lw.covariance_)
+            evals = np.maximum(evals, 1e-12)
+            W0 = evecs @ np.diag(evals ** -0.5) @ evecs.T
+            Zw = Xc @ W0
+            pca_w = PCA(n_components=self.pca_dim,
+                        random_state=self.random_state).fit(Zw)
+            self.ldapool_basis_ = W0 @ pca_w.components_.T   # (D, d')
+            Xp = Xc @ self.ldapool_basis_
         elif self.projection == "lpp" and reduce:
             # Locality Preserving Projection (He & Niyogi 2003): generalized
             # eigenvectors of the pool kNN-graph Laplacian quadratic forms.
@@ -371,6 +405,8 @@ class UnlabeledTransform:
             Xp = (Xp - self.center_) @ self.rp_
         elif self.tail_basis_ is not None:
             Xp = (Xp - self.center_) @ self.tail_basis_.T
+        elif self.ldapool_basis_ is not None:
+            Xp = (Xp - self.center_) @ self.ldapool_basis_
         elif self.lpp_basis_ is not None:
             Xp = (Xp - self.center_) @ self.lpp_basis_
         elif self.center_ is not None:
