@@ -95,6 +95,14 @@ ARMS = {
     "ldapool512":    dict(pca_dim=512, whiten=None, projection="ldapool"),
     "qe_ldapool128": dict(pre="qe", pca_dim=128, whiten=None,
                           projection="ldapool"),
+    "qe_ldapool512": dict(pre="qe", pca_dim=512, whiten=None,
+                          projection="ldapool"),
+    # certification arms: rank by whitened BETWEEN scatter directly (the
+    # straightforward LDA form; should ~reproduce the total-ranked arms)
+    "ldapoolb128":   dict(pca_dim=128, whiten=None, projection="ldapool",
+                          ldapool_rank="between"),
+    "ldapoolb512":   dict(pca_dim=512, whiten=None, projection="ldapool",
+                          ldapool_rank="between"),
 }
 
 

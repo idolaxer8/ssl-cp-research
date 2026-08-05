@@ -130,7 +130,7 @@ class UnlabeledTransform:
                  projection="pca", rp_seed=None,
                  pre=None, qe_k=10, qe_alpha=3.0, lpp_graph_k=15,
                  qe_mode="both", qe_beta=None, qe_reciprocal=False,
-                 qe_stage="pre"):
+                 qe_stage="pre", ldapool_rank="total"):
         assert whiten in ("cluster", "global", "lw_global", "lw_cluster",
                           "lw_cluster_soft", None)
         assert projection in ("pca", "pca_tail", "random", "lpp", "ldapool",
@@ -138,6 +138,8 @@ class UnlabeledTransform:
         assert pre in (None, "yj", "qe")
         assert qe_mode in ("both", "fit_only", "apply_only")
         assert qe_stage in ("pre", "post")
+        assert ldapool_rank in ("total", "between")
+        self.ldapool_rank = ldapool_rank
         self.pca_dim = pca_dim
         self.whiten = whiten
         self.n_clusters = n_clusters
@@ -251,10 +253,26 @@ class UnlabeledTransform:
             evals, evecs = np.linalg.eigh(lw.covariance_)
             evals = np.maximum(evals, 1e-12)
             W0 = evecs @ np.diag(evals ** -0.5) @ evecs.T
-            Zw = Xc @ W0
-            pca_w = PCA(n_components=self.pca_dim,
-                        random_state=self.random_state).fit(Zw)
-            self.ldapool_basis_ = W0 @ pca_w.components_.T   # (D, d')
+            if self.ldapool_rank == "between":
+                # straightforward/certification form: rank directly by the
+                # whitened BETWEEN-cluster scatter ("directions where cluster
+                # means spread most after within-whitening"). Bypasses the
+                # eigenvalue-shift identity, hence immune to the O(shrinkage)
+                # perturbation of the total-ranked form.
+                n_g = np.bincount(km0.labels_, minlength=self.n_clusters)
+                mg = np.stack([Xc[km0.labels_ == cc].mean(axis=0)
+                               if n_g[cc] else np.zeros(X.shape[1])
+                               for cc in range(self.n_clusters)])
+                Sb = (mg * n_g[:, None]).T @ mg / len(Xc)
+                Bw = W0 @ Sb @ W0
+                Bw = (Bw + Bw.T) / 2
+                bev, bvec = np.linalg.eigh(Bw)
+                E = bvec[:, ::-1][:, :self.pca_dim]      # top-d' eigvecs
+            else:
+                Zw = Xc @ W0
+                E = PCA(n_components=self.pca_dim,
+                        random_state=self.random_state).fit(Zw).components_.T
+            self.ldapool_basis_ = W0 @ E                 # (D, d')
             Xp = Xc @ self.ldapool_basis_
         elif self.projection == "lpp" and reduce:
             # Locality Preserving Projection (He & Niyogi 2003): generalized
