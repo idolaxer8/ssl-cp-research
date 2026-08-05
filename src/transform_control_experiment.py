@@ -93,6 +93,8 @@ ARMS = {
     "ldapool128":    dict(pca_dim=128, whiten=None, projection="ldapool"),
     "ldapool256":    dict(pca_dim=256, whiten=None, projection="ldapool"),
     "ldapool512":    dict(pca_dim=512, whiten=None, projection="ldapool"),
+    "qe_ldapool128": dict(pre="qe", pca_dim=128, whiten=None,
+                          projection="ldapool"),
 }
 
 
