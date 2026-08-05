@@ -41,6 +41,7 @@ E    stage 3  discriminate  keep the d' directions that survive whitening
   regimes: cifar100 @ cal 200 drops 4.17 -> 2.27; CUB-200 @ 400 drops
   3.65 -> 2.73; aircraft ties its champion. Two knobs total: d'
   (regime-tracked) and the denoiser strength (safe default, sec 6).
+  Headline view: `champion/champion_lines.png`.
 
 ## 2. Why the pool-fit phase gives exact validity (the one theory fact)
 
@@ -186,6 +187,22 @@ miniImageNet         1.35 -> 1.24   1.05 -> 1.06   1.00 -> 1.04        -
  vs 1.23, CUB@1600 1.24 vs 1.23, aircraft@800 22.49 vs 22.03) except
  mini's saturated cells (-0.03..-0.05 absolute).)
 ```
+
+Figures for this table (`champion/`):
+- `champion_lines.png` — set size vs cal, all four datasets, four series
+  (raw embeddings / old menu best / old + SNAPS best / new champion);
+  the small-cal separation is the paper's positioning in one picture, and
+  the aircraft panel carries the SNAPS-harm annotation in place of a
+  curve.
+- `champion_gains.png` — % set-size change of BOTH levers vs the old
+  champion: the representation-level lever is deeper than the score-level
+  one in every cell where the latter works at all, and still delivers
+  where it is gated off (aircraft cal-200: -6%).
+- `champion_covgap.png` — the conditional-coverage fine print: CovGap
+  ties-or-improves on cifar but costs a mild +0.5-1.2 pp on
+  aircraft / mini / CUB@1600. This is the one known caveat of the adopted
+  pipeline (marginal coverage stays exact everywhere by sec 2); whether
+  the safe-qe knob modulates it is an open follow-up.
 
 ## 6. Deployment and the (performance-only) gate
 
