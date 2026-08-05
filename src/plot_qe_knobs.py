@@ -13,7 +13,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-KS, ALPHAS = [5, 10, 20, 50], [1, 3, 5]
+KS, ALPHAS = [5, 10, 20, 50], [0, 1, 3, 5]   # alpha=0 = plain AQE control
+                                             # (k=50/a=0 not run -> blank)
 REF = {"cifar100": {200: 4.17, 400: 1.64, 800: 1.30},
        "cub200": {400: 3.65, 800: 1.73, 1600: 1.31},
        "aircraft": {200: 29.01, 400: 24.61, 800: 22.03}}
@@ -37,21 +38,29 @@ def main():
         for k in KS:
             for a in ALPHAS:
                 p = os.path.join(args.data_dir, f"results_{ds}_qek{k}a{a}.json")
+                if not os.path.exists(p):
+                    continue
                 for r in json.load(open(p))["rows"]:
                     grid[(k, a, r["cal"])] = r["sz"]
         cals = sorted({c for (_, _, c) in grid})
         for j, cal in enumerate(cals):
             ax = axes[i][j]
-            M = np.array([[grid[(k, a, cal)] for a in ALPHAS] for k in KS])
-            best = M.min()
+            M = np.array([[grid.get((k, a, cal), np.nan) for a in ALPHAS]
+                          for k in KS])
+            best = np.nanmin(M)
             vmax = best * (1 + args.clip_pct / 100)
-            im = ax.imshow(np.minimum(M, vmax), cmap="viridis_r",
-                           vmin=best, vmax=vmax, aspect="auto")
+            im = ax.imshow(np.ma.masked_invalid(np.minimum(M, vmax)),
+                           cmap="viridis_r", vmin=best, vmax=vmax,
+                           aspect="auto")
             for r in range(len(KS)):
                 for c in range(len(ALPHAS)):
                     v = M[r, c]
+                    if np.isnan(v):
+                        ax.text(c, r, "-", ha="center", va="center",
+                                fontsize=8, color="gray")
+                        continue
                     txt = f"{v:.2f}" if v < 10 else f"{v:.0f}"
-                    bb, bc = None, ("w" if M[r, c] > (best + vmax) / 2 else "k")
+                    bb, bc = None, ("w" if v > (best + vmax) / 2 else "k")
                     if (KS[r], ALPHAS[c]) == (10, 3):
                         bb = dict(boxstyle="round,pad=0.15", fc="none",
                                   ec="red", lw=1.2)
