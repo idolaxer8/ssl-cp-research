@@ -112,6 +112,15 @@ ARMS = {
                           ldapool_rank="between"),
     "ldapoolb512":   dict(pca_dim=512, whiten=None, projection="ldapool",
                           ldapool_rank="between"),
+    # pipeline stage ablation (2^3 over {denoise, whiten, truncate}); the
+    # no-whiten truncation degrades to raw-variance PCA by construction
+    "ldapool192":    dict(pca_dim=192, whiten=None, projection="ldapool"),
+    "pca192":        dict(pca_dim=192, whiten=None, projection="pca"),
+    "pca512":        dict(pca_dim=512, whiten=None, projection="pca"),
+    "qe_pca192":     dict(pre="qe", pca_dim=192, whiten=None, projection="pca"),
+    "qe_pca512":     dict(pre="qe", pca_dim=512, whiten=None, projection="pca"),
+    "qe_raw768":     dict(pre="qe", pca_dim=None, whiten=None,
+                          projection="center"),
 }
 
 
