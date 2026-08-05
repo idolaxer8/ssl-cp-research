@@ -83,7 +83,7 @@ def build(base):
     ds["CIFAR-100"] = dict(
         ncm="prototype", cals=[200, 400, 800],
         raw=tc_series(r1c, "raw768", P),
-        old=old_c, old_label=lbl_c,
+        old=old_c, old_label=lbl_c, new_label="d'=192, classic qe",
         snaps=snaps_best(rows_of(f"{base}/snaps_stack/results_cifar100_p128_none.json")),
         new=tc_series(rows_of(f"{base}/ldapool/results_cifar100_dscan.json"),
                       "qe_ldapool192", P),
@@ -94,6 +94,7 @@ def build(base):
         ncm="prototype", cals=[400, 800, 1600],
         raw=tc_series(r1b, "raw768", P),
         old=old_b, old_label=lbl_b,
+        new_label="d'=512, C=300; classic qe@400, safe@800+",
         snaps=best_of([snaps_best(rows_of(f"{base}/snaps_stack/results_cub200_p128_none.json")),
                        snaps_best(rows_of(f"{base}/snaps_stack/results_cub200_p512_none.json"))]),
         new=best_of([tc_series(rows_of(f"{base}/ldapool/results_cub200_qec300.json"),
@@ -108,6 +109,7 @@ def build(base):
         raw=tc_series(r1a, "raw768", G),
         old=old_a, old_label=lbl_a + " (full 768-d, no PCA cut)"
             if lbl_a == "lw_cluster768" else lbl_a,
+        new_label="d'=512, safe qe (k=5, b=0.3)",
         snaps=None,   # champion-base harm +13..37% (2026-07-28), gated off
         new=tc_series(rows_of(f"{base}/ldapool/results_aircraft_safeqe.json"),
                       "qe_ldapool512", G),
@@ -118,6 +120,7 @@ def build(base):
         ncm="prototype", cals=[200, 400, 800],
         raw=tc_series(rmc, "raw768", P),
         old=tc_series(rmc, "pca128_cw", P), old_label="pca128_cw",
+        new_label="d'=128, classic qe",
         snaps=snaps_best(rows_of(f"{base}/snaps_stack/results_mini_p128_none.json")),
         new=tc_series(rows_of(f"{base}/ldapool/results_miniimagenet.json"),
                       "qe_ldapool128", P),
@@ -173,9 +176,12 @@ def main():
             ax.text(0.5, 0.9, "SNAPS on champion base:\n+13..37% (harm, gated off)",
                     transform=ax.transAxes, ha="center", fontsize=8,
                     color=STYLE["snaps"]["color"], style="italic")
-        ax.text(0.02, 0.02, f"old menu arm: {d['old_label']}",
+        ax.text(0.02, 0.075, f"old menu arm: {d['old_label']}",
                 transform=ax.transAxes, fontsize=7.5,
                 color=STYLE["old"]["color"], style="italic")
+        ax.text(0.02, 0.02, f"new champion: {d['new_label']}",
+                transform=ax.transAxes, fontsize=7.5,
+                color=STYLE["new"]["color"], style="italic")
         ax.set_ylim(0, ylim)
         ax.set_xticks(cals)
         ax.set_xlabel("cal size")
