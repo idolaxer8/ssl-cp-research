@@ -162,6 +162,25 @@ sec 2 guarantees), judged on mean set size.
   (2.73 vs 4.17 @ cifar-200), ties the aircraft champion at d'=512, and
   with C >= K wins CUB among qe arms (2.73/1.62/1.37 @ C=300). The
   between-ranked certification form reproduces it within ~1 SE.
+- **NCM re-audit in T-space** (`ncm_audit/` JSONs): prototype-softmax is
+  the matched NCM of the new geometry — it dominates the geodesic
+  variants on cifar (2.29 vs 6.08 @200) and CUB, and **overturns the
+  "prototype bloats on fine-grained" scope limit on aircraft at
+  cal >= 400: 21.91 / 19.81 vs the geodesic 24.29 / 22.49 — new best
+  aircraft cells (-11% / -10% vs the old champion)**. Prototype still
+  degenerates at aircraft cal-200 (2 shots/class), where geodesic mean
+  remains the fallback; saturated mini slightly favors geodesic at high
+  cal (0.98 vs 1.04). CovGap fine print: the aircraft prototype win
+  costs ~2pp CovGap vs geodesic.
+- **Stage ablation, 2^3 over {D, W, T}**
+  (`stage_ablation/pipeline_stage_ablation.png`): stage contributions
+  are regime-dependent and the interactions match the theory — on cifar
+  every stage helps and D is the biggest single stage (raw 10.1 -> 3.5
+  @200); on aircraft W is the whole story (raw 57.7 -> 28.9) with D and
+  T useless ALONE (both ~raw) and D adding only on top of W; on CUB, W
+  alone HURTS (+13% @400) and pays only combined with T. No stage is
+  redundant, and no stage works in every regime alone — the composition
+  is what carries.
 - **Completion runs (the gap cells)**: safe-qe composes cleanly with the
   discriminant — aircraft 27.38 / 24.29 / 22.49, matching the menu's best
   arm at every cal; CUB safe-qe @ C300 reaches 1.24 @ 1600 (crown 1.23 —
@@ -177,7 +196,8 @@ sec 2 guarantees), judged on mean set size.
                        cal 200        cal 400        cal 800        cal 1600
 cifar100 (proto)     4.17 -> 2.27   1.64 -> 1.43   1.30 -> 1.27       -
 cub200   (proto)          -         3.65 -> 2.73   1.73 -> 1.56   1.31 -> 1.24
-aircraft (geo)      29.01 -> 27.38  24.61 -> 24.29  22.03 -> 22.49     -
+aircraft            29.01 -> 27.38  24.61 -> 21.91  22.03 -> 19.81     -
+  (geo @200 / PROTOTYPE @400+ after the T-space NCM re-audit, sec 4)
 miniImageNet         1.35 -> 1.24   1.05 -> 1.06   1.00 -> 1.04        -
 (left = best incumbent without the pool representation; right = the
  unified pipeline, best qe-mode per cell. Knobs behind the right column:
@@ -221,9 +241,12 @@ unreachable). Estimator panel = open work.
   safe mode, order), stages 2-3 replacement (formalization,
   certification, C >= K rule, adoption decision).
 - OPEN: (a) hom_hat estimator panel; (b) 50-trial cluster hardening of
-  the sec-5 table before write-up; (c) side anomaly: prototype + pca512 @
-  aircraft cal-800 = 14.90, vs the "prototype bloats on fine-grained"
-  scope limit.
+  the sec-5 table before write-up; (c) the aircraft anomaly DEEPENED:
+  prototype + pca512_cw (old-style space, no qe) hit 14.90 @ cal-800 in
+  round 1 — still far below the new T-space prototype champion (19.81).
+  If it replicates, the aircraft-optimal space for the prototype NCM is
+  not the discriminant one, and the sec-5 aircraft cells have ~25% more
+  headroom. Top-priority follow-up.
 
 ---
 
