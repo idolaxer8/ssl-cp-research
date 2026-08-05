@@ -161,20 +161,30 @@ sec 2 guarantees), judged on mean set size.
   (2.73 vs 4.17 @ cifar-200), ties the aircraft champion at d'=512, and
   with C >= K wins CUB among qe arms (2.73/1.62/1.37 @ C=300). The
   between-ranked certification form reproduces it within ~1 SE.
-  Completion runs in flight: safe-qe composition on aircraft/CUB, mini,
-  and a d' fine-scan on the two cells where Appendix A's menu still leads.
+- **Completion runs (the gap cells)**: safe-qe composes cleanly with the
+  discriminant — aircraft 27.38 / 24.29 / 22.49, matching the menu's best
+  arm at every cal; CUB safe-qe @ C300 reaches 1.24 @ 1600 (crown 1.23 —
+  closed) plus a new best 1.56 @ 800; the cifar d' scan closes the 800
+  cell at d' = 192-256 (1.27 vs 1.23, ~1 SE; d' = 192 is near-optimal at
+  every cifar cal: 2.29 / 1.43 / 1.27). miniImageNet: ldapool ties the
+  menu pre-qe; with qe a small residual deficit remains on this saturated
+  dataset (1.24 / 1.06 / 1.04 vs 1.19 / 1.03 / 0.99).
 
-## 5. Bottom line (10-trial standings; * = completion runs in flight)
+## 5. Bottom line (10-trial standings, completion runs folded in)
 
 ```
                        cal 200        cal 400        cal 800        cal 1600
-cifar100 (proto)     4.17 -> 2.27   1.64 -> 1.43   1.30 -> 1.31*      -
-cub200   (proto)          -         3.65 -> 2.73   1.73 -> 1.62   1.31 -> 1.37*
-aircraft (geo)      29.01 -> 28.69* 24.61 -> 24.66* 22.03 -> 22.37*    -
-miniImageNet             *              *              *               -
-(left value = best no-pool-repr incumbent; right = unified pipeline;
- the two starred gap cells are where Appendix A's per-cell menu still
- leads: cifar@800 1.23, CUB@1600 1.23)
+cifar100 (proto)     4.17 -> 2.27   1.64 -> 1.43   1.30 -> 1.27       -
+cub200   (proto)          -         3.65 -> 2.73   1.73 -> 1.56   1.31 -> 1.24
+aircraft (geo)      29.01 -> 27.38  24.61 -> 24.29  22.03 -> 22.49     -
+miniImageNet         1.35 -> 1.24   1.05 -> 1.06   1.00 -> 1.04        -
+(left = best incumbent without the pool representation; right = the
+ unified pipeline, best qe-mode per cell. Knobs behind the right column:
+ d' = 192 cifar / 512 CUB (C=300) / 512 aircraft / 128 mini; qe classic
+ at small cal, safe at high cal / low homophily — the sec-6 gate rule.
+ vs Appendix A's per-cell menu: within ~1 SE everywhere (cifar@800 1.27
+ vs 1.23, CUB@1600 1.24 vs 1.23, aircraft@800 22.49 vs 22.03) except
+ mini's saturated cells (-0.03..-0.05 absolute).)
 ```
 
 ## 6. Deployment and the (performance-only) gate
@@ -193,10 +203,10 @@ unreachable). Estimator panel = open work.
 - DONE: stage-1 line (discovery, mechanism, SNAPS subsumption, knobs,
   safe mode, order), stages 2-3 replacement (formalization,
   certification, C >= K rule, adoption decision).
-- OPEN: (a) completion cells (sec 5 stars); (b) hom_hat estimator panel;
-  (c) 50-trial cluster hardening before write-up; (d) side anomaly:
-  prototype + pca512 @ aircraft cal-800 = 14.90, vs the "prototype bloats
-  on fine-grained" scope limit.
+- OPEN: (a) hom_hat estimator panel; (b) 50-trial cluster hardening of
+  the sec-5 table before write-up; (c) side anomaly: prototype + pca512 @
+  aircraft cal-800 = 14.90, vs the "prototype bloats on fine-grained"
+  scope limit.
 
 ---
 
@@ -228,12 +238,13 @@ Differences to the adopted stages 2-3: the menu RANKS directions by raw
 total variance and equalizes afterwards; the discriminant equalizes first
 and ranks by what survives. The orders coincide when the top spectrum is
 signal (separable data, hence near-ties there with qe) and diverge when
-signal hides in low-variance directions. Where the menu still leads
-(pre-completion-runs): cifar@800 (1.23 vs 1.31) and CUB@1600 via
-prototype+pca512 no-qe (1.23 vs 1.37). Where it loses: cifar/CUB small
-cal pre-qe (4.17 vs 2.73; degeneracy-free behavior needs three different
-arms), and it needs a per-regime selection rule the single construction
-does not.
+signal hides in low-variance directions. After the completion runs the menu's remaining lead is statistical noise
+on the big datasets (cifar@800 1.23 vs 1.27; CUB@1600 1.23 vs 1.24;
+aircraft@800 22.03 vs 22.49 — all ~1 SE) plus a small real deficit on
+saturated miniImageNet (0.99 vs 1.04 @800). Where it loses: cifar/CUB
+small cal pre-qe (4.17 vs 2.73), and it needs three different
+constructions plus a per-regime selection rule where the adopted pipeline
+needs one construction and a d' knob.
 
 [Reserved: if the per-cell menu is later re-adopted for the last few
 tenths in the gap cells, it goes here as an OPTIMIZATION EXTENSION of the
