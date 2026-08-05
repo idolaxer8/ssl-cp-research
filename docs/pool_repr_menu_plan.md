@@ -227,35 +227,51 @@ unreachable). Estimator panel = open work.
 
 ---
 
-## Appendix A — the previous stages 2-3: truncate-then-whiten menu
+## Appendix A — the previous pool-fit pipeline (PCA + whitening, before alpha-QE)
 
-What the pipeline used before the discriminant transform (and the
-comparison baseline throughout `output/pool_repr_menu/`):
+What the pool bought us BEFORE this line of work: no denoising stage at
+all — raw embeddings went straight into a linear map fit on the pool
+(same exact-validity argument, sec 2):
 
 ```
-T_old(x) = W_cw * P_d'^T * (D(x) - mu)
+T_old(x) = W_cw * P_d'^T * (x - mu)
 
-P_d'  top-d' eigenvectors of the RAW pool covariance (plain PCA);
-      d' by regime: 128 separable / 512 mid / none on collapsed spectra
-W_cw  per-dimension within-cluster whitening in the projected space
-      (diagonal); on collapsed spectra instead: full-rank Ledoit-Wolf
-      ZCA at 768 with NO truncation (lw_cluster768)
+P_d'  plain PCA: the top-d' eigenvectors of the raw pool covariance —
+      "keep the biggest directions"
+W_cw  whitening AFTER the cut: per-dimension within-cluster variance
+      equalization in the projected space (k-means pseudo-classes)
 ```
 
-I.e. a per-regime MENU of three arms {pca128_cw, pca512_cw,
-lw_cluster768}, selected by the pool participation ratio
-PR = (sum l_j)^2 / sum l_j^2 (cifar/mini ~240 -> 128; CUB ~58 -> 512;
-aircraft ~16 -> no truncation). Its justification record: JL and
-tail-probe controls (PCA's data-adaptivity is the lever, reduction per se
-is not; aircraft's signal really is in the low-variance tail),
-Gavish-Donoho spiked-spectrum anchors (valid where truncation works,
-provably inapplicable where it does not).
+Simply put: rank directions by raw variance, keep the big ones, then
+equalize the noise inside what was kept. Because raw variance is not
+always where class signal lives, this needed a per-regime MENU: pca128_cw
+on separable data, pca512_cw on mid (CUB), and on collapsed spectra
+(aircraft) truncation had to be abandoned entirely in favor of full-rank
+Ledoit-Wolf ZCA whitening at 768 (lw_cluster768). The regime was selected
+by the pool participation ratio PR = (sum l_j)^2 / sum l_j^2 (cifar/mini
+~240 -> 128; CUB ~58 -> 512; aircraft ~16 -> no truncation). Its
+justification record: JL and tail-probe controls (PCA's data-adaptivity
+is the lever, reduction per se is not; aircraft's signal really is in the
+low-variance tail), Gavish-Donoho spiked-spectrum anchors (valid where
+truncation works, provably inapplicable where it does not).
 
-Differences to the adopted stages 2-3: the menu RANKS directions by raw
-total variance and equalizes afterwards; the discriminant equalizes first
-and ranks by what survives. The orders coincide when the top spectrum is
-signal (separable data, hence near-ties there with qe) and diverge when
-signal hides in low-variance directions. After the completion runs the menu's remaining lead is statistical noise
+**How the adopted pipeline differs — three changes:**
+
+1. **A denoising stage now exists (stage 1, alpha-QE).** The old pipeline
+   fed raw points into the linear map; the binding noise at 2-8 shots per
+   class — in the cal points and test queries themselves — was untreated.
+   This stage alone is most of the small-cal gain.
+2. **The order of the two linear operations flipped.** Old:
+   rank-by-raw-variance, THEN equalize (truncate-then-whiten). New:
+   equalize the within-cluster noise FIRST, then rank by what survives
+   (whiten-then-discriminate). The orders coincide when the top spectrum
+   IS the signal (separable data — hence near-ties there) and diverge
+   exactly when signal hides in low-variance directions, which is the
+   regime that forced the old menu's special full-rank arm.
+3. **One construction instead of a menu.** The old pipeline needed three
+   different arms plus a PR selection rule; the new one is a single
+   formula whose only regime knob is d' (plus C >= K, a known-constants
+   rule). After the completion runs the menu's remaining lead is statistical noise
 on the big datasets (cifar@800 1.23 vs 1.27; CUB@1600 1.23 vs 1.24;
 aircraft@800 22.03 vs 22.49 — all ~1 SE) plus a small real deficit on
 saturated miniImageNet (0.99 vs 1.04 @800). Where it loses: cifar/CUB
