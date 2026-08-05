@@ -56,19 +56,34 @@ def build(base):
     r1a = rows_of(f"{base}/results_aircraft.json")
     rmc = rows_of(f"{base}/results_miniimagenet_confirm.json")
 
-    def best_of(series_list):
-        out = {}
-        for s in series_list:
+    def best_of(series_list, names=None):
+        """Per-cal min across series; if arm names given, also return the
+        winning-arm label string (so the plot can say WHICH menu arm the
+        'old' curve is in each panel — e.g. aircraft = full-768 LW, not
+        PCA truncation)."""
+        out, won = {}, {}
+        for i, s in enumerate(series_list):
             for cal, v in s.items():
                 if cal not in out or v[0] < out[cal][0]:
                     out[cal] = v
-        return out
+                    won[cal] = names[i] if names else None
+        if names is None:
+            return out
+        uniq = sorted(set(won.values()))
+        if len(uniq) == 1:
+            label = uniq[0]
+        else:
+            label = ", ".join(f"{a}@{c}" for c, a in sorted(won.items()))
+        return out, label
 
+    MENU = ("pca128_cw", "pca512_cw", "lw_cluster768")
+    old_c, lbl_c = best_of([tc_series(r1c, a, P) for a in MENU], MENU)
+    old_b, lbl_b = best_of([tc_series(r1b, a, P) for a in MENU], MENU)
+    old_a, lbl_a = best_of([tc_series(r1a, a, G) for a in MENU], MENU)
     ds["CIFAR-100"] = dict(
         ncm="prototype", cals=[200, 400, 800],
         raw=tc_series(r1c, "raw768", P),
-        old=best_of([tc_series(r1c, a, P) for a in
-                     ("pca128_cw", "pca512_cw", "lw_cluster768")]),
+        old=old_c, old_label=lbl_c,
         snaps=snaps_best(rows_of(f"{base}/snaps_stack/results_cifar100_p128_none.json")),
         new=tc_series(rows_of(f"{base}/ldapool/results_cifar100_dscan.json"),
                       "qe_ldapool192", P),
@@ -78,8 +93,7 @@ def build(base):
     ds["CUB-200"] = dict(
         ncm="prototype", cals=[400, 800, 1600],
         raw=tc_series(r1b, "raw768", P),
-        old=best_of([tc_series(r1b, a, P) for a in
-                     ("pca128_cw", "pca512_cw", "lw_cluster768")]),
+        old=old_b, old_label=lbl_b,
         snaps=best_of([snaps_best(rows_of(f"{base}/snaps_stack/results_cub200_p128_none.json")),
                        snaps_best(rows_of(f"{base}/snaps_stack/results_cub200_p512_none.json"))]),
         new=best_of([tc_series(rows_of(f"{base}/ldapool/results_cub200_qec300.json"),
@@ -92,8 +106,8 @@ def build(base):
     ds["Aircraft"] = dict(
         ncm="geodesic", cals=[200, 400, 800],
         raw=tc_series(r1a, "raw768", G),
-        old=best_of([tc_series(r1a, a, G) for a in
-                     ("pca128_cw", "pca512_cw", "lw_cluster768")]),
+        old=old_a, old_label=lbl_a + " (full 768-d, no PCA cut)"
+            if lbl_a == "lw_cluster768" else lbl_a,
         snaps=None,   # champion-base harm +13..37% (2026-07-28), gated off
         new=tc_series(rows_of(f"{base}/ldapool/results_aircraft_safeqe.json"),
                       "qe_ldapool512", G),
@@ -103,7 +117,7 @@ def build(base):
     ds["miniImageNet"] = dict(
         ncm="prototype", cals=[200, 400, 800],
         raw=tc_series(rmc, "raw768", P),
-        old=tc_series(rmc, "pca128_cw", P),
+        old=tc_series(rmc, "pca128_cw", P), old_label="pca128_cw",
         snaps=snaps_best(rows_of(f"{base}/snaps_stack/results_mini_p128_none.json")),
         new=tc_series(rows_of(f"{base}/ldapool/results_miniimagenet.json"),
                       "qe_ldapool128", P),
@@ -116,7 +130,8 @@ def build(base):
 STYLE = {"raw": dict(color="#9e9e9e", ls=":", marker="s", lw=1.5,
                      label="raw embeddings (no pool repr.)"),
          "old": dict(color="#5b8db8", ls="-", marker="o", lw=1.8,
-                     label="old: PCA+whiten menu (per-cell best)"),
+                     label="old pool-fit menu, per-cell best arm\n"
+                           "(PCA+whiten OR full-768 LW; see panel note)"),
          "snaps": dict(color="#2f5d82", ls="--", marker="^", lw=1.8,
                        label="old + SNAPS score corr. (best eta x k)"),
          "new": dict(color="#d1862c", ls="-", marker="D", lw=2.6,
@@ -158,6 +173,9 @@ def main():
             ax.text(0.5, 0.9, "SNAPS on champion base:\n+13..37% (harm, gated off)",
                     transform=ax.transAxes, ha="center", fontsize=8,
                     color=STYLE["snaps"]["color"], style="italic")
+        ax.text(0.02, 0.02, f"old menu arm: {d['old_label']}",
+                transform=ax.transAxes, fontsize=7.5,
+                color=STYLE["old"]["color"], style="italic")
         ax.set_ylim(0, ylim)
         ax.set_xticks(cals)
         ax.set_xlabel("cal size")
