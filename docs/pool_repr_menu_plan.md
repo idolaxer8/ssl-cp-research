@@ -195,57 +195,6 @@ than no qe at all. Rule: post-smoothing's damage scales with how much the
 transform amplifies the spectral tail. Smooth-first is confirmed, not
 assumed.
 
-### Relation to the retrieval paper's learned whitening (their Sec 3.4)
-
-The same paper we took qe from also replaces PCA-whitening — worth a
-direct comparison since stages 2-3 are our version of that step. Their
-construction (Radenovic et al. Sec 3.4, Eqs 7-8; originally Mikolajczyk &
-Matas): from SfM 3D models they get MATCHING and NON-MATCHING image pairs,
-build two difference covariances, and take a two-scatter discriminant
-projection:
-
-```
-C_S = sum_{matching (i,j)}     (f_i - f_j)(f_i - f_j)^T     "within"
-C_D = sum_{non-matching (i,j)} (f_i - f_j)(f_i - f_j)^T     "between"
-
-P   = C_S^{-1/2} * eig( C_S^{-1/2} C_D C_S^{-1/2} )         keep top-D
-applied as P^T (f - mu), then L2-normalize
-```
-
-i.e. whiten by the within covariance FIRST, then pick directions by
-BETWEEN-pair variance measured IN THE WHITENED METRIC. It beats
-PCA-whitening in 22/24 of their benchmark cells.
-
-Three differences from our stages 2-3:
-
-1. **Supervision oracle.** Their pairs come from SfM geometry — no human
-   labels, but real structural supervision. We have no pair oracle; our
-   within-proxy is k-means pseudo-clusters on the pool. (The estimand
-   difference is cosmetic: pair-difference covariance = 2x the
-   within-group covariance under the same grouping.)
-2. **What ranks the kept directions.** Theirs: between-pair variance in
-   the whitened space (discriminative). Ours: TOTAL variance in the raw
-   space (plain PCA), whitening only afterwards.
-3. **Order.** Theirs is whiten-then-truncate; ours is
-   truncate-then-whiten. (Distinct from the stage-1 order question of
-   sec "Why THIS order", which is about the DENOISER staying in the raw
-   metric — that verdict is unaffected.)
-
-**Can we align? Yes, label-free.** Take same-cluster pool pairs (or
-qe/mutual neighbors) as pseudo-matching and random pool pairs as
-non-matching. For random pairs C_D ~= 2 * Sigma_total, so their formula
-collapses to: within-cluster whiten at full rank, THEN PCA-truncate by
-total variance in the whitened space — i.e. **our own two ingredients
-composed in the opposite order** (`lw_then_pca_d'`). That makes the
-comparison a one-arm experiment. Prediction from the regime map: on
-separable data ~ pca128_cw (whitening barely reorders the top spectrum);
-on aircraft it could deliver the first VALID truncation — within-whitening
-rescales the tail signal UP before the variance ranking, so discriminative
-directions can enter the top-d'. Caveat: on collapsed spectra the
-within-cluster covariance is the fragile estimate (heavy LW shrinkage
-would degrade the arm toward plain PCA). Status: proposed arm, not yet
-run.
-
 ## 4. Experiments, in order (what we tried, what died, what survived)
 
 All experiments: balanced splits, 10-20 trials, coverage verified ~0.90 in
@@ -364,6 +313,4 @@ hold a 6-dataset labeled homophily map to validate against).
   50-trial cluster hardening of the headline cells before write-up; (c) a
   side anomaly worth one look: prototype + pca512 @ aircraft cal-800 hit
   14.90 (best aircraft cell ever), against the standing "prototype bloats
-  on fine-grained" scope limit; (d) the `lw_then_pca` arm (the label-free
-  port of the paper's Sec 3.4 discriminant whitening — see sec 3), most
-  interesting on aircraft.
+  on fine-grained" scope limit.
