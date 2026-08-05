@@ -97,6 +97,15 @@ ARMS = {
                           projection="ldapool"),
     "qe_ldapool512": dict(pre="qe", pca_dim=512, whiten=None,
                           projection="ldapool"),
+    # d' fine-scan around the cifar@800 gap cell
+    "qe_ldapool64":  dict(pre="qe", pca_dim=64, whiten=None,
+                          projection="ldapool"),
+    "qe_ldapool96":  dict(pre="qe", pca_dim=96, whiten=None,
+                          projection="ldapool"),
+    "qe_ldapool192": dict(pre="qe", pca_dim=192, whiten=None,
+                          projection="ldapool"),
+    "qe_ldapool256": dict(pre="qe", pca_dim=256, whiten=None,
+                          projection="ldapool"),
     # certification arms: rank by whitened BETWEEN scatter directly (the
     # straightforward LDA form; should ~reproduce the total-ranked arms)
     "ldapoolb128":   dict(pca_dim=128, whiten=None, projection="ldapool",
