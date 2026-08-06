@@ -248,7 +248,7 @@ def run_selftrain(X, y, Xu, allc, args):
                 tr, ca = perm[:n_tr], perm[n_tr:]
                 yca_idx = np.array([col[int(c)] for c in y[ca]])
                 # round 0 = plain probe (the SCP-THR refresh)
-                clf = fit_probe(Zl[tr], y[tr])
+                clf = fit_probe(Zl[tr], y[tr], lam=args.lam)
                 for r in range(len(Q_SCHEDULE) + 1):
                     if r > 0:
                         P_pool = full_probs(clf, Zu, allc)
@@ -258,7 +258,7 @@ def run_selftrain(X, y, Xu, allc, args):
                             Zaug = np.vstack([Zl[tr], Zu[sel]])
                             yaug = np.concatenate(
                                 [y[tr], allc[ysel_idx]])
-                            clf = fit_probe(Zaug, yaug)
+                            clf = fit_probe(Zaug, yaug, lam=args.lam)
                     n_missing = K - (0 if clf is None
                                      else len(clf.classes_))
                     P_ca = full_probs(clf, Zl[ca], allc)
@@ -435,6 +435,9 @@ def main():
     ap.add_argument("--test_per_class", type=int, default=5)
     ap.add_argument("--n_trials", type=int, default=10)
     ap.add_argument("--alpha", type=float, default=0.1)
+    ap.add_argument("--lam", type=float, default=LAM,
+                    help="probe ridge (mean-CE parameterization; plan sec "
+                         "2.1 sensitivity clause).")
     ap.add_argument("--mlp_seeds", type=int, default=3)
     ap.add_argument("--mlp_epochs", type=int, default=100)
     ap.add_argument("--random_min_cal_softmax", type=int, default=800)
