@@ -171,15 +171,35 @@ class PoolMLPTransform:
 # ---------------------------------------------------------------------------
 # Arm A: self-training probe + THR split CP
 # ---------------------------------------------------------------------------
+class _ScaledProbe:
+    """Probe = StandardScaler + logistic regression, mirroring the historical
+    SoftmaxSplitCP protocol (scaler fit on the probe's own train data --
+    label-dependent, but it is part of arm A's classifier, which is allowed).
+    Without scaling, L2-normed features (~0.03/dim) cap the ridge-penalized
+    logits at a near-uniform softmax over K>=100 classes -- an unfair-to-arm-A
+    artifact found in the pilot (plan deviation logged 2026-08-06)."""
+
+    def __init__(self, clf, scaler):
+        self._clf = clf
+        self._scaler = scaler
+        self.classes_ = clf.classes_
+
+    def predict_proba(self, Z):
+        return self._clf.predict_proba(self._scaler.transform(Z))
+
+
 def fit_probe(Z, y, lam=LAM):
     """Multinomial logistic probe; (1/n) sum CE + lam ||W||_F^2 mapped onto
-    sklearn's  0.5 ||w||^2 + C_skl * sum CE  via  C_skl = 1 / (2 lam n)."""
+    sklearn's  0.5 ||w||^2 + C_skl * sum CE  via  C_skl = 1 / (2 lam n).
+    lam <= 0 selects the historical sklearn default C = 1.0 exactly."""
+    from sklearn.preprocessing import StandardScaler
     if len(np.unique(y)) < 2:
         return None
-    C_skl = 1.0 / (2.0 * lam * len(y))
+    scaler = StandardScaler().fit(Z)
+    C_skl = 1.0 if lam <= 0 else 1.0 / (2.0 * lam * len(y))
     clf = LogisticRegression(C=C_skl, solver="lbfgs", max_iter=1000)
-    clf.fit(Z, y)
-    return clf
+    clf.fit(scaler.transform(Z), y)
+    return _ScaledProbe(clf, scaler)
 
 
 def full_probs(clf, Z, allc):

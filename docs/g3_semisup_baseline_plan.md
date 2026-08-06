@@ -315,3 +315,17 @@ baseline) · `docs/theory.md` sec 2 Prop 2 (validity of pool-fit maps).
 *Created 2026-08-06. Pre-registration: secs 2-3 constants and sec 6
 rules are frozen before the first run; any deviation gets logged here
 with a date.*
+
+**Deviation log.**
+- 2026-08-06 (after the cifar100 pilot): the probe spec gained a
+  StandardScaler (fit on the probe's train data) in front of the
+  logistic regression, and lam <= 0 now selects the historical sklearn
+  default C = 1.0. Reason: without scaling, L2-normed inputs (~0.03 per
+  dim) cap the ridge-penalized logits at a near-uniform softmax over
+  K >= 100 classes — the pilot's arm-A collapse (sz 85-100 even at
+  cal 800, vs the historical SCP-THR ~2.6-3.2 at B = 800, which DID
+  scale in `SoftmaxSplitCP.fit`) was partly this artifact, not only
+  the budget split. Arm A is re-run scaled and reported at its best
+  lam (the sec-2.2 fairness requirement extended to the probe spec).
+  The unscaled pilot rows are kept in `results_cifar100_pilot.json`
+  for the record.
