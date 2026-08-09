@@ -11,28 +11,34 @@ Results below (runs 2026-08-06..09); plan follows unchanged from sec 0.
 
 ## EXECUTIVE VERDICT (2026-08-09)
 
-One sentence: **the semi-supervised alternatives lose everywhere except
-one cell — a trained probe + split CP overtakes us on aircraft at
-cal 800 — so the paper's claim becomes budget-indexed: the pipeline's
-exclusive regime is cal/K <= ~4 shots per class.**
+One sentence: **every semi-supervised alternative loses at
+cal/K <= ~4 shots per class (by 2-19x); at ~6 shots per class the
+trained-probe methods catch up — SemiCP wins aircraft-800 and ties the
+CUB-1600 crown — so the paper's claim is budget-indexed: the pipeline's
+exclusive regime is the starved-label corner, which is exactly the
+regime the paper is about.**
 
-Standings (balanced, 10 trials, best config per cell; figure
+Standings (balanced, 10 trials, best config per cell, all coverages
+valid 0.90-0.99; figure
 `output/pool_repr_menu/g3_semisup/g3_depth_axis_final.png`):
 
 ```
                       cal 200          cal 400          cal 800
 cifar100  champion    2.29             1.43             1.27
           arm A       100  (collapse)  8.75  (>2x)      1.56  (+23%)
+          SemiCP      95.4 (collapse)  4.59  (>2x)      1.58  (+24%)
           arm B best  4.15             1.76             1.44
 aircraft  champion    27.38            21.91            19.81
           arm A       100  (collapse)  36.06 (1.6x)     15.85  << WIN
+          SemiCP      100  (collapse)  34.95 (1.6x)     14.58  << WIN
           arm B best  81.06            68.65            52.10  (> raw 57.7->21!)
 cub200    champion    (cal 400/800/1600:)  3.02         1.56    [1.24 @1600 plan]
-          arm A                            200          184.9   171 @1600
+          arm A                            200          184.9   171  @1600
+          SemiCP                           172          2.66    1.24 @1600 = TIE
           arm B                            (run stopped before this arm)
 ```
 
-Four takeaways, in presentation order:
+Five takeaways, in presentation order:
 
 1. **Arm A (self-train probe + split CP): structural collapse at
    cal <= 400 on all three datasets** (missing classes in the train
@@ -42,15 +48,27 @@ Four takeaways, in presentation order:
    cannot restore missing classes, and helps only cifar-800
    (1.84 -> 1.56). Coverage valid everywhere — the loss is efficiency,
    exactly as predicted.
-2. **The crossover is real and honest: aircraft cal-800, plain probe
-   (no self-training, 6 train-shots/class) = 15.85 vs champion 19.81
-   (>2 SE, cov 0.92).** cifar-800 narrows to +23%; CUB stays trivial
-   (K = 200 kills the probe at these budgets). This is THEORY.MD's
-   "no-train-split NCM wins is a small-budget theorem" made concrete:
-   on saturating-geometry data the trained head crosses over by ~6
-   shots/class. Scope sentence for the paper: budget-indexed, never
+2. **The crossover is real, honest, and now dual-dataset: at ~6
+   train-shots/class the trained-probe methods catch up.** Aircraft
+   cal-800: plain probe 15.85 and SemiCP 14.58 both beat champion
+   19.81 (>2 SE, cov 0.91-0.92); CUB cal-1600: SemiCP-THR 1.24 TIES
+   the champion crown (cov 0.897); cifar-800 narrows to +23-24%. This
+   is THEORY.MD's "no-train-split NCM wins is a small-budget theorem"
+   made concrete. Scope sentence for the paper: budget-indexed, never
    dataset-indexed. (Aircraft-800 crown is G4-contingent: the
-   unreplicated menu cell 14.90 would retake it.)
+   unreplicated menu cell 14.90 ~ties SemiCP's 14.58.)
+2b. **SemiCP (Zhou 2505.21147, the score-level pool use) is the
+   strongest baseline — and our old "NNM neutral" verdict (2026-05,
+   50/50 splits) was a protocol artifact.** NNM's pool-stabilized
+   quantile rescues split CP's starved-cal-half corner: CUB-800
+   185 -> 2.66, cifar-400 8.75 -> 4.59 (vs the plain probe at the same
+   ratio). It still loses the exclusive regime everywhere (2-19x at
+   cal <= 400) and never beats the champion where the champion is
+   ahead. Positioning consequence: the pool helps in EITHER slot once
+   labels suffice to train a probe; only the representation slot works
+   when they don't. Untested compose: SemiCP ON OUR representation
+   (probe on T(x)) — natural follow-up, likely the true
+   high-budget frontier.
 3. **Arm B (pool-only learned head): dataset-level LOSS everywhere it
    ran.** cifar: loses to the closed-form champion at every cell
    (>2 SE) despite qe-denoised inputs helping it (B-qe < B-raw).

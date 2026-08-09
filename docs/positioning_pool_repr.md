@@ -32,10 +32,10 @@ Three pillars carry the paper:
    collapses (sec 3). So "post-processing + FCP" is the correct headline
    pairing: the representation buys efficiency, FCP buys exactness.
    BUDGET QUALIFIER (G3 result, 2026-08-09): "collapses" holds at
-   cal/K <= ~4 shots/class; by ~6 shots/class on saturating-geometry
-   data (aircraft cal-800: probe 15.85 vs champion 19.81) a trained
-   probe + split CP crosses over and wins. State the regime as a
-   budget, never as "always".
+   cal/K <= ~4 shots/class; by ~6 shots/class trained-probe methods
+   catch up (aircraft cal-800: probe 15.85 / SemiCP 14.58 vs champion
+   19.81; CUB-1600: SemiCP ties the crown at 1.24). State the regime
+   as a budget, never as "always".
 3. **The subsumption result.** Representation-level use of the pool
    empirically dominates and largely subsumes the score-level use: qe
    alone >= SNAPS alone in every cell; SNAPS marginal gain collapses
@@ -164,7 +164,13 @@ Consequences for the paper:
   cal <= 400 on all three datasets but CROSSES OVER on aircraft at
   cal 800 (15.85 vs champion 19.81, valid cov) — the paper's scope
   sentence becomes budget-indexed (cal/K <= ~4 shots exclusive; ~6+
-  shots on saturating geometry = contested). Arm B (pool-only
+  shots = contested). SemiCP arm added 2026-08-09 (score-level lane-1
+  competitor, same trial protocol): strongest baseline — NNM rescues
+  the starved-cal-half corner (CUB-800 185 -> 2.66; old "NNM neutral"
+  verdict was a 50/50-split artifact), wins aircraft-800 (14.58) and
+  ties the CUB-1600 crown (1.24), but loses the exclusive regime
+  everywhere (2-19x at cal <= 400). Untested compose: SemiCP probe on
+  T(x). Arm B (pool-only
   DeepCluster MLP, matched d'/C) LOSES everywhere run and is
   actively harmful on aircraft (worse than raw embeddings — neural
   collapse onto wrong-class pseudo-clusters at hom .25): the depth
