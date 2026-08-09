@@ -48,6 +48,15 @@ def arm_a_cells(rows, cal):
              f"ratio {ba['ratio']:.2f}, r={ba['round']}"))
 
 
+def semicp_cell(rows, cal):
+    """SemiCP oracle over (ratio, score_fn): (sz, se, label) or None."""
+    sub = [r for r in rows if r["cal"] == cal]
+    if not sub:
+        return None
+    b = min(sub, key=lambda r: r["sz"])
+    return b["sz"], b["sz_se"], f"ratio {b['ratio']:.2f}, {b['score_fn']}"
+
+
 def verdict(sz_a, se_a, sz_b, se_b):
     """2-SE rule: 'win' if a beats b, 'loss' if b beats a, else 'tie'."""
     d = sz_a - sz_b
@@ -77,6 +86,7 @@ def main():
     for ax, ds in zip(axes[0], args.datasets):
         d = data[ds]
         frows, srows = d["fcp_rows"], d["selftrain_rows"]
+        mrows = d.get("semicp_rows", [])
         cals = sorted({r["cal"] for r in frows
                        if r["split"] == "balanced_both"})
         print(f"\n=== {ds} ===")
@@ -95,6 +105,11 @@ def main():
                       f"({ora[2]}) -> {verdict(ora[0], ora[1], *ch[:2])} "
                       f"vs champion; collapse(>2x)="
                       f"{'YES' if ora[0] > 2 * ch[0] else 'no'}")
+            sc = semicp_cell(mrows, cal)
+            if sc and ch:
+                print(f"  SemiCP oracle    {sc[0]:7.2f}+-{sc[1]:.2f} "
+                      f"({sc[2]}) -> {verdict(sc[0], sc[1], *ch[:2])} "
+                      f"vs champion")
             for arm in ("poolmlp_raw", "poolmlp_qe"):
                 b = best_fcp_cell(frows, arm, cal)
                 if b and ch:
@@ -114,12 +129,19 @@ def main():
                 es.append(b[1] if b else 0)
             ax.errorbar(cals, ys, yerr=es, label=label, color=color,
                         marker=marker, ms=6, capsize=3)
-        for src, label, color in ((0, "SCP-THR (split, r=0)", "#9467bd"),
-                                  (1, "self-train oracle (arm A)", "#e377c2")):
+        dash_series = [("arm_a_0", "SCP-THR (split, r=0)", "#9467bd"),
+                       ("arm_a", "self-train oracle (arm A)", "#e377c2")]
+        if mrows:
+            dash_series.append(("semicp", "SemiCP oracle (NNM)", "#bcbd22"))
+        for src, label, color in dash_series:
             ys = []
             for cal in cals:
-                cells = arm_a_cells(srows, cal)
-                ys.append(cells[src][0] if cells[src] else np.nan)
+                if src == "semicp":
+                    cell = semicp_cell(mrows, cal)
+                else:
+                    cells = arm_a_cells(srows, cal)
+                    cell = cells[0] if src == "arm_a_0" else cells[1]
+                ys.append(cell[0] if cell else np.nan)
             clipped = [min(v, ylim * 0.97) if np.isfinite(v) else v
                        for v in ys]
             ax.plot(cals, clipped, label=label, color=color, marker="v",

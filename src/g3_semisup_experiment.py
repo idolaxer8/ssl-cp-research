@@ -44,7 +44,7 @@ from sklearn.linear_model import LogisticRegression
 
 from conformal_prediction import FullConformalPredictor, create_ncm
 from exchangeable_features import UnlabeledTransform, IdentityTransform
-from split_cp_baselines import compute_cp_scores, compute_cp_sets
+from split_cp_baselines import compute_cp_scores, compute_cp_sets, SemiCP
 from transform_control_experiment import (balanced_split, random_split,
                                           resolve_softmax_T)
 
@@ -311,6 +311,74 @@ def run_selftrain(X, y, Xu, allc, args):
 
 
 # ---------------------------------------------------------------------------
+# SemiCP arm (Zhou et al. 2505.21147): split CP whose calibration quantile is
+# stabilized by NNM bias-corrected pseudo-scores from the unlabeled pool --
+# the SCORE-level use of the pool (lane 1 of the positioning doc), vs our
+# representation-level use. Same splits/seeds as arm A (identical tr/ca per
+# trial x ratio), so the three baselines share trials. Historical result
+# (2026-05, output/semicp_experiments/): NNM ~neutral vs plain SCP; this arm
+# re-tests that against the CURRENT champion on the G3 protocol.
+# ---------------------------------------------------------------------------
+SEMICP_SCORES = ("THR", "APS")
+
+
+def run_semicp(X, y, Xu, allc, args):
+    import contextlib, io
+    K = len(allc)
+    Zl = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-12)
+    Zu = Xu / (np.linalg.norm(Xu, axis=1, keepdims=True) + 1e-12)
+    rows = []
+    for cal in args.cal_sizes:
+        m_cal = cal // K
+        if m_cal < 2:
+            continue
+        acc = {(rt, sf): {"cov": [], "sz": []}
+               for rt in RATIOS for sf in SEMICP_SCORES}
+        t0 = time.time()
+        for t in range(args.n_trials):
+            rng = np.random.default_rng(args.seed + 1000 * t)
+            ci, ti = balanced_split(y, allc, m_cal, args.test_per_class, rng)
+            yt = y[ti]
+            for rt in RATIOS:
+                rng2 = np.random.default_rng(args.seed + 1000 * t
+                                             + int(rt * 100) * 17)
+                perm = rng2.permutation(ci)
+                n_tr = int(round(rt * len(ci)))
+                tr, ca = perm[:n_tr], perm[n_tr:]
+                if len(np.unique(y[tr])) < 2:
+                    for sf in SEMICP_SCORES:
+                        acc[(rt, sf)]["cov"].append(1.0)
+                        acc[(rt, sf)]["sz"].append(float(K))
+                    continue
+                for sf in SEMICP_SCORES:
+                    m = SemiCP(alpha=args.alpha, score_fn=sf)
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        m.fit(Zl[tr], y[tr])
+                        m.calibrate(Zl[ca], y[ca], X_unlabeled=Zu,
+                                    all_classes=allc)
+                        sets = m.predict(Zl[ti])["prediction_sets"]
+                    covered = np.array([int(yt[i]) in sets[i]
+                                        for i in range(len(ti))])
+                    acc[(rt, sf)]["cov"].append(float(covered.mean()))
+                    acc[(rt, sf)]["sz"].append(
+                        float(np.mean([len(s) for s in sets])))
+        for (rt, sf), a in acc.items():
+            szs = np.array(a["sz"])
+            rows.append({
+                "arm": "semicp", "cal": cal, "ratio": rt, "score_fn": sf,
+                "cov": float(np.mean(a["cov"])),
+                "cov_sd": float(np.std(a["cov"])),
+                "sz": float(szs.mean()), "sz_sd": float(szs.std()),
+                "sz_se": float(szs.std() / np.sqrt(len(szs))),
+                "n_trials": args.n_trials})
+            print(f"  [semicp   ] cal={cal:4d} ratio={rt:.2f} {sf:4s} "
+                  f"cov={rows[-1]['cov']:.4f} sz={rows[-1]['sz']:6.2f}"
+                  f"+-{rows[-1]['sz_se']:.2f}")
+        print(f"  cal={cal} done in {time.time()-t0:.0f}s")
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # FCP arms (raw / champion / poolmlp_raw / poolmlp_qe) -- reference-driver
 # protocol (same seeds -> same splits as the menu runs)
 # ---------------------------------------------------------------------------
@@ -443,7 +511,7 @@ def main():
                     help="override labeled .pt path (cub200 layout)")
     ap.add_argument("--unl_path", default=None)
     ap.add_argument("--arms", nargs="+", default=["selftrain", "fcp"],
-                    choices=["selftrain", "fcp"])
+                    choices=["selftrain", "fcp", "semicp"])
     ap.add_argument("--fcp_arms", nargs="+",
                     default=["raw", "champion", "poolmlp_raw", "poolmlp_qe"],
                     choices=["raw", "champion", "poolmlp_raw", "poolmlp_qe"])
@@ -485,10 +553,13 @@ def main():
           f"device={args.device}")
 
     out = {"config": vars(args), "dataset": args.dataset,
-           "selftrain_rows": [], "fcp_rows": []}
+           "selftrain_rows": [], "fcp_rows": [], "semicp_rows": []}
     if "selftrain" in args.arms:
         print("\n### Arm A: self-training probe + THR split CP ###")
         out["selftrain_rows"] = run_selftrain(X, y, Xu, allc, args)
+    if "semicp" in args.arms:
+        print("\n### SemiCP arm (Zhou et al. 2505.21147, NNM) ###")
+        out["semicp_rows"] = run_semicp(X, y, Xu, allc, args)
     if "fcp" in args.arms:
         print("\n### FCP arms (raw / champion / pool-MLP) ###")
         out["fcp_rows"] = run_fcp_arms(X, y, Xu, allc, args.dataset, args)
