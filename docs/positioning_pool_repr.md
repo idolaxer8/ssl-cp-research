@@ -43,6 +43,13 @@ Three pillars carry the paper:
    eta* -> 0; runtime asymmetry is architectural (0.4 ms/point fixed map
    vs 174-410 ms per recalibration + an LOO leak repair). No other paper
    occupies both slots, so no other paper can run this comparison.
+   RE-AUDIT 2026-08-09 (stack JSONs, 20 trials): post-qe, NO cell in
+   any of the 3 stacked datasets clears 2 SE (cifar-200 residual 0.166
+   vs threshold 0.213) — SNAPS is KILLED as a pipeline component, kept
+   only as the paper's score-level foil. Caveat: stack bases were the
+   old-menu spaces; strict SNAPS-on-DWT never measured, residual
+   bounded above by these cells (DWT is the stronger base and the
+   nothing-left-to-harvest mechanism is base-agnostic).
 
 ## 2. Lane-by-lane lineup
 
