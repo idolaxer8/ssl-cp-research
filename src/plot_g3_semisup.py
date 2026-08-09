@@ -138,7 +138,7 @@ def main():
     axes[0][0].legend(fontsize=8, loc="upper right")
     fig.suptitle("The depth axis: label-dependent split CP vs pool-only "
                  "representations under exact FCP", fontsize=11)
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
     out = os.path.join(args.results_dir, f"g3_depth_axis{tag}.png")
     fig.savefig(out, dpi=150)
     print(f"\nSaved -> {out}")

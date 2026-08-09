@@ -5,6 +5,73 @@
 200-800 labels and a 3-10k unlabeled pool, why not semi-supervised
 learning + CP?" with two arms that bracket the design space. Written
 2026-08-06; decision rules pre-registered in sec 6 BEFORE any run.
+Results below (runs 2026-08-06..09); plan follows unchanged from sec 0.
+
+---
+
+## EXECUTIVE VERDICT (2026-08-09)
+
+One sentence: **the semi-supervised alternatives lose everywhere except
+one cell — a trained probe + split CP overtakes us on aircraft at
+cal 800 — so the paper's claim becomes budget-indexed: the pipeline's
+exclusive regime is cal/K <= ~4 shots per class.**
+
+Standings (balanced, 10 trials, best config per cell; figure
+`output/pool_repr_menu/g3_semisup/g3_depth_axis_final.png`):
+
+```
+                      cal 200          cal 400          cal 800
+cifar100  champion    2.29             1.43             1.27
+          arm A       100  (collapse)  8.75  (>2x)      1.56  (+23%)
+          arm B best  4.15             1.76             1.44
+aircraft  champion    27.38            21.91            19.81
+          arm A       100  (collapse)  36.06 (1.6x)     15.85  << WIN
+          arm B best  81.06            68.65            52.10  (> raw 57.7->21!)
+cub200    champion    (cal 400/800/1600:)  3.02         1.56    [1.24 @1600 plan]
+          arm A                            200          184.9   171 @1600
+          arm B                            (run stopped before this arm)
+```
+
+Four takeaways, in presentation order:
+
+1. **Arm A (self-train probe + split CP): structural collapse at
+   cal <= 400 on all three datasets** (missing classes in the train
+   half force the trivial cover; oracle over 3 budget ratios and 3
+   self-training rounds). Aircraft-400 is the one soft cell (1.6x, under
+   the pre-registered 2x bar). Self-training itself is a near no-op: it
+   cannot restore missing classes, and helps only cifar-800
+   (1.84 -> 1.56). Coverage valid everywhere — the loss is efficiency,
+   exactly as predicted.
+2. **The crossover is real and honest: aircraft cal-800, plain probe
+   (no self-training, 6 train-shots/class) = 15.85 vs champion 19.81
+   (>2 SE, cov 0.92).** cifar-800 narrows to +23%; CUB stays trivial
+   (K = 200 kills the probe at these budgets). This is THEORY.MD's
+   "no-train-split NCM wins is a small-budget theorem" made concrete:
+   on saturating-geometry data the trained head crosses over by ~6
+   shots/class. Scope sentence for the paper: budget-indexed, never
+   dataset-indexed. (Aircraft-800 crown is G4-contingent: the
+   unreplicated menu cell 14.90 would retake it.)
+3. **Arm B (pool-only learned head): dataset-level LOSS everywhere it
+   ran.** cifar: loses to the closed-form champion at every cell
+   (>2 SE) despite qe-denoised inputs helping it (B-qe < B-raw).
+   Aircraft: catastrophic — 52-84 vs raw embeddings' 21-58; the head
+   neural-collapses onto majority-wrong-class pseudo-clusters at
+   homophily .25. **Depth does not escape the homophily regime map, it
+   amplifies its failure mode.** The closed-form discriminant (shrunk,
+   linear) is the right point on the depth axis — the sec-6 shield
+   paragraph holds with evidence.
+4. **Probe fairness mattered**: the pilot's arm-A numbers were partly
+   an artifact of an unscaled probe (deviation log below); the scaled
+   re-run is what revived arm A at cal 800. Reporting the strongest
+   version of the baseline is what makes takeaway 2 credible.
+
+Stopped early for the 2026-08 instructor meeting (not verdict-relevant,
+resumable from the JSONs/logs): CUB arm-B cells, cifar 3-seed MLP
+hardening, CUB lam=0 top-up. CUB arm-A rows above are scaled
+lam=1e-2 (its lam=0 twin pending; the cifar lam sweep moved cells by
+<2x, never across a verdict boundary).
+
+---
 
 ## 0. What is at stake
 
