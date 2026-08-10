@@ -23,6 +23,107 @@ Anderson, Proc. AMS 1955; [ACMP16] Arias-Castro-Mason-Pelletier JMLR 2016
 
 ---
 
+## 0. The claim, the picture, and the ladder from intuition to proof
+
+**0.1 The claim in one sentence.** Under the SAME nonconformity scoring
+s(x,c), replacing the natural representation x by T(x) (DWT) changes the
+score distributions so that taking the calibration quantile on
+{s(T(x_i), y_i)} yields tighter prediction sets at the same (exact)
+coverage — provided pool-kNN homophily is high.
+
+**0.2 The empirical picture.** `src/dwt_score_histograms.py` (this branch)
+plots, for the prototype-cosine score s = -cos(z, m_c), the test-set
+distribution of TRUE-class scores s(x,y) vs FALSE-class scores s(x,c),
+c != y, with the split-CP quantile q_hat marked — raw arm vs DWT arm,
+cal=400 balanced, alpha=0.1, single seed. Figure:
+`output/dwt_histograms/dwt_score_histograms.png` (+ stats JSON). Numbers
+from the 2026-08-10 run:
+
+```
+dataset   h(k=10)  arm   coverage  avg|C|   false-leak   q_hat
+cifar100   0.79    raw    0.916     3.59      2.68       -0.243
+cifar100   0.79    DWT    0.903     1.76      0.86       -0.330
+aircraft   0.30    raw    0.919    26.44     25.52       -0.238
+aircraft   0.30    DWT    0.919    22.34     21.42       -0.205
+```
+
+What to see, panel by panel:
+- cifar100/raw: the true-class (green) hump overlaps the left flank of the
+  false-class (red) peak; q_hat must sit inside that flank, so ~2.7 false
+  classes per test point leak below it.
+- cifar100/DWT: the green mass moves far left (points now hug their own
+  prototypes) AND the red peak tightens around 0 (wrong-class angles
+  concentrate near orthogonal); q_hat moves left; overlap — and with it
+  the leak — collapses by ~3x. Coverage unchanged (~0.90 by construction,
+  Prop 1). BOTH histogram moves predicted by Lemma B are visible.
+- aircraft (h ~= 0.30, the gate-OFF regime): green and red stay
+  interleaved in BOTH arms; q_hat barely moves; the leak stays >21 of
+  K=100. The mechanism has almost nothing to harvest at low homophily —
+  the scope limit is visible in the score space itself, exactly where
+  (M2) fails. (Note: in this simplified single-seed run DWT is mildly
+  helpful on aircraft, not harmful; the champion-config result is
+  neutral-to-harmful. The claim the panel supports is "no separation to
+  harvest", not "harm".)
+
+The whole formal draft below is an annotation of this picture. Ladder:
+
+**Rung 1 — name what the picture shows (-> Section 2, eq. 2.1).**
+Green histogram = true-class score law, CDF F_true; its calibration
+version determines q_hat (the ceil((1-alpha)(n+1))-th smallest cal score
+— an order statistic of n draws from F_true). Red histogram = false-class
+score law; define G(r) = expected number of false classes with score <= r
+(the mean false-count curve). Then, with coverage pinned by validity:
+
+```
+E|C| = (1-alpha) + O(1/(n+1)) + E[G(q_hat)]
+```
+
+so "tighter sets" IS "smaller E[G(q_hat)]": less red mass left of the
+dashed line. Nothing else matters.
+
+**Rung 2 — the comparison principle (-> Proposition C, Section 6).**
+If the transform (a) pulls the calibration-relevant right tail of the
+green histogram in (F^T_true >= F_true near the quantile region R_alpha,
+so q_hat^T <=_st q_hat), and (b) pushes red mass right (G^T <= G on
+R_alpha), then E|C^T| <= E|C|. Proof is complete (order-statistic law +
+monotone coupling; machinery of [D24]). The figure's cifar100 row is the
+empirical form of (a)+(b) simultaneously.
+
+**Rung 3 — why the histograms move (-> Lemma B, Section 5).** The score
+gap decomposes as s(x,c) - s(x,y) = <z_bar, m_y - m_c> = fixed
+class-separation term + noise projection. T does not touch the separation
+term (W/T affine, prototypes covariant — Section 4a) and shrinks the noise
+projection, so green moves left and red moves right TOGETHER — one
+geometric event, two histogram moves.
+
+**Rung 4 — why the noise shrinks (-> Lemma A, Section 3; W/T, Section 4).**
+qe averages each point with its k pool neighbors: the same-class fraction
+h(k) cancels noise like k repeated measurements (~1/k_eff variance); the
+(1-h(k)) wrong-class fraction drags toward foreign means by up to
+Delta_max. Net improvement iff
+
+```
+variance removed by averaging  >  (1-h(k)) * Delta_max drag  (+ G2 remainder)
+```
+
+— DAPS Theorem 2 [Z23] transplanted from scores to representations; the
+empirical h(k) >= ~0.7 gate is this inequality's solved form. W/T then
+equalize noise directions and drop pure-noise dimensions (RCA + spiked
+covariance, cited in Section 4b) so that "cosine to prototype" measures
+the right metric.
+
+**Rung 5 — assemble, and the two IOUs (-> Sections 7-8).** Rungs 1-2 are
+proved; rung 3 is proved given rung 4; rung 4 is proved up to G2 (neighbor
+selection uses the noisy features themselves — the echo-chamber effect;
+route: mean-shift small-ball expansion) and the rung-2 hypotheses need
+distributional (right-tail) versions of rung 3-4's moment statements —
+G6 (route: Anderson/conditional Gaussianity, or name-the-condition and
+validate). The histogram protocol of 0.2 IS the validation instrument for
+G6's named condition, per the [T23] precedent (their Table 5 validates
+their expansion condition the same way).
+
+---
+
 ## 1. Setting and notation
 
 Data. Classes c in {1..K} with unit-norm means mu_c in R^d. Embeddings
@@ -441,6 +542,9 @@ Each checkable assumption gets a measured pre/post-DWT panel:
 3. (M4): whitened prototype separation g0.
 4. (5c)(i): true-class score CDFs pre/post DWT on R_alpha (the dominance
    picture); (5c)(ii): mean false-count G(r) curves on R_alpha.
+   **STARTED 08-10**: `src/dwt_score_histograms.py` + Section 0.2 figure
+   (cifar100 both moves visible, leak 2.68 -> 0.86; aircraft flat) —
+   extend to CDF/G(r) overlays on R_alpha, more seeds/datasets.
 5. (iii): dispersion of q_hat across trials (quantile stability), and the
    [T23] cubic metric analogue: mean |score - q_hat| pre/post DWT.
 6. G4: off-diagonal energy of within-class covariance in the pool-PCA
