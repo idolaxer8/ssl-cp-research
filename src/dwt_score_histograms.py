@@ -208,11 +208,11 @@ def make_overlay_fig(store, out_dir, results):
             ax.set_xlabel("score r   (dashed lines: each arm's q_hat)")
             ax.set_xlim(x0, x1)
             ax.legend(fontsize=8, loc="upper left")
-    fig.suptitle("Prop C hypotheses on the quantile region: (i) true-score "
-                 "CDF dominance sets q_hat earlier; (ii) false-count "
-                 "dominance means fewer classes below any threshold",
+    fig.suptitle("Prop C hypotheses on the quantile region:\n"
+                 "(i) true-score CDF dominance -> smaller q_hat;   "
+                 "(ii) false-count dominance -> fewer classes below it",
                  fontsize=11)
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
     path = os.path.join(out_dir, "dwt_cdf_G_overlays.png")
     fig.savefig(path, dpi=150)
     print(f"overlay figure -> {path}")
