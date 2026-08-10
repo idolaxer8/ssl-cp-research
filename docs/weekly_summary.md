@@ -9,6 +9,81 @@ All experiments: CIFAR-100, DINOv2 embeddings, exchangeable pipeline
 
 ---
 
+## Goals — week 08-10 to 08-14 (planned)
+
+Instructor's main note (08-10 session): this week is THEORETICAL. The DWT
+pipeline (Denoise -> Whiten -> Truncate: qe pool-neighbor smoothing +
+cluster-whitening + PCA truncation, every stage pool-fit) performs best
+empirically; the missing piece is a rigorous justification. Role model: DAPS
+Theorem 2 (Zargarbashi et al., ICML 2023) proves score diffusion reduces the
+approximation error ||pi_i - p_i|| whenever (avg neighbor error) + Delta <
+(own error), with Delta the homophily radius. Our complication: DWT modifies
+the REPRESENTATION (the input to a distance-based NCM), not the score, so
+their proof does not port directly — the error must be propagated through
+the NCM and the quantile step.
+
+### 1. Main goal — a DAPS-Theorem-2 analogue for representation-space denoising
+
+Target: a theorem of the form "under a cluster model on embeddings +
+pool-kNN homophily, the DWT map reduces an error functional that provably
+controls expected set size at fixed coverage". Working decomposition, one
+lemma per arrow (representation error -> score error -> set size):
+
+- **Step A (denoising lemma, the DAPS-2 analogue).** Model x_i = mu_{y_i}
+  + eps_i (noise sub-Gaussian, cov Sigma); let h(k) = expected same-class
+  fraction among the k pool neighbors (the kNN homophily we already log as
+  `purity`). For x_hat = (1-lam)*x + lam*mean_k(pool-kNN(x)): within-class
+  noise variance contracts by ~ (1-lam)^2 + lam^2/k (averaging k noisy
+  same-class draws), at the cost of a bias term ~ lam*(1-h(k))*Delta_mu
+  from wrong-class neighbors, where Delta_mu = typical between-class mean
+  gap. Improvement condition = the DAPS-style inequality: contraction gain
+  > contamination bias, which holds iff h(k) is large — this would DERIVE
+  the empirical hom(k) >= ~0.7 gate instead of postulating it. Anchor: the
+  CSBM graph-convolution separability line (Baranwal et al.) proves exactly
+  this variance-shrink for neighborhood averaging; adapt from a given graph
+  to the pool-kNN graph.
+- **Step B (score transfer).** Show the NCM is Lipschitz in the
+  representation (prototype-cosine: explicit constant via prototype norms;
+  geodesic top-k ratio: local Lipschitz away from zero denominator), so
+  score perturbation <= L * representation perturbation, and the true-class
+  score distribution CONCENTRATES under Step A.
+- **Step C (set-size transfer).** Convert score concentration into smaller
+  sets at fixed 1-alpha: expected set size = sum_over_c P(s(X,c) on the
+  wrong side of q_hat), so efficiency is governed by (i) the true-class
+  score dispersion around its (1-alpha)-quantile (the "cost of the quantile
+  step") and (ii) false-class/true-class separation. This is exactly the
+  proof architecture of Feature CP Theorem 6 (see below) — reuse its
+  skeleton (their "expansion" condition = our concentration claim from
+  Steps A+B), not its statement.
+
+Deliverable: a theory note (new docs/dwt_theory.md, folded into THEORY.MD)
+with the formal statement, proof skeleton, per-assumption status (proved /
+assumed / empirically checkable), and the empirical diagnostics that
+validate the checkable ones on our data (score dispersion around q_hat and
+h(k), pre/post DWT — Feature CP validates its conditions the same way).
+
+### 2. Literature base for the proof
+
+- **Feature CP located + deep-read (08-10): Teng, Wen, Zhang, Bengio, Gao,
+  Yuan, "Predictive Inference with Feature Conformal Prediction", ICLR
+  2023 (arXiv 2210.00173)** — the paper the instructor recalled. It DOES
+  have a usable theory section: Theorem 6 proves feature-space CP beats
+  output-space CP under three "cubic conditions" (length preservation /
+  expansion / quantile stability); the mechanism is that the quantile step
+  costs less in a space where scores concentrate around their quantile.
+  Adopt the proof architecture; the statement itself does not transfer
+  (regression, fixed model, feature-vs-output score — ours is one score
+  family on two representations, classification).
+- Digest the parallel lit sweep (running 08-10) across: expected-set-size
+  functionals (Dhillon et al. AISTATS 2024), oracle-optimality /
+  score-estimation-error bounds (Sadinle 2019, Romano 2020 + quantitative
+  follow-ups), CSBM neighborhood-averaging separability (Step A anchor),
+  and post-DAPS similarity-aggregation CP theory (SNAPS et al.). Pick the
+  final anchor set, then draft the theorem + proof skeleton as the week's
+  main deliverable.
+
+---
+
 ## Goals — week 08-03 to 08-07 (planned)
 
 Forward-looking plan, not results. Two threads: harden the SNAPS pool-score

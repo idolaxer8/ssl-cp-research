@@ -64,14 +64,21 @@ Three load-bearing claims, each now backed by experiments in
    LOO re-prototyping), and the whole effect rides on pool-neighbor label
    homophily: gain above roughly 0.7 (mini .92, cifar .8), harm below (cars
    .45, aircraft .25). The harmful regime must be excluded label-free for the
-   method to be deployable.
+   method to be deployable. The 08-03/04 menu round then moved the lever one
+   stage earlier: alpha-QE pool-neighbor smoothing of the *embedding* (qe)
+   subsumes the score-space correction — post-qe the SNAPS gain collapses
+   (−41% -> −6.6%, eta* -> 0; purity rises but nothing is left to harvest).
+   Same homophily fingerprint, one shared gate; the deployable pool-neighbor
+   lever is input denoising, not score diffusion.
 
-The lead pipeline is therefore: DINOv2 embeddings -> pool-fit PCA-128 +
-cluster-whiten -> unwhitened geodesic or prototype NCM -> FCP (GPU fast
-path) -> optional MS-CS penalty and, where homophily allows, the SNAPS pool
-correction. Everything in that chain is exactly exchangeable, so coverage
-sits at the theoretical target 1 - floor(alpha(n+1))/(n+1) ~ 0.90 at every
-cal size — confirmed to be Monte-Carlo-tight by the 100-trial diagnostic.
+The lead pipeline — named **DWT** (Denoise -> Whiten -> Truncate) in the
+08-10 instructor session — is therefore: DINOv2 embeddings -> qe
+pool-neighbor denoising -> pool-fit cluster-whitening -> PCA truncation ->
+unwhitened geodesic or prototype NCM -> FCP (GPU fast path) -> optional
+MS-CS penalty. Every stage is pool-fit and permutation-equivariant, hence
+exactly exchangeable: coverage sits at the theoretical target
+1 - floor(alpha(n+1))/(n+1) ~ 0.90 at every cal size — confirmed
+Monte-Carlo-tight by the 100-trial diagnostic.
 
 ## Strategy
 
@@ -82,8 +89,29 @@ defaults to `whiten=False`; every cal-fit variant routes through
 a theory requirement into an API affordance — new experiments are valid
 unless someone explicitly opts out.
 
-The current campaign hardens the two live levers into method components
-rather than lucky points. (a) The SNAPS pool correction: show the gain is a
+The immediate campaign (08-10 week, instructor-set) is theoretical: DWT wins
+empirically but has no rigorous justification, and that is now the paper's
+critical path. The role model is DAPS Theorem 2 — score diffusion provably
+reduces score error under a homophily radius — but DWT intervenes on the
+*representation*, so the proof is rebuilt as a three-lemma chain:
+(A) a denoising lemma, the DAPS-2 analogue in embedding space — under a
+mixture model x = mu_y + eps, qe smoothing contracts within-class noise by
+~ (1-lam)^2 + lam^2/k while paying a wrong-class contamination bias
+~ lam*(1-h(k))*Delta_mu, improving the representation iff homophily h(k) is
+high (the CSBM graph-convolution separability line proves exactly this for
+neighborhood averaging); (B) Lipschitz transfer of that gain through the
+distance-based NCM into score concentration; (C) a quantile-step argument
+converting score concentration into smaller expected sets at fixed
+coverage — the proof architecture of Feature CP's Theorem 6 (Teng et al.,
+ICLR 2023, "cubic conditions"), whose mechanism (the quantile step costs
+less in a space where scores concentrate around their quantile) is our
+Step C even though its statement (feature- vs output-space bands,
+regression) does not transfer. A structural bonus: Step A's improvement
+condition would *derive* the empirical hom(k) >= ~0.7 gate instead of
+postulating it, unifying the deployability blocker with the theory.
+
+The standing empirical campaign hardens the two live levers into method
+components rather than lucky points. (a) The SNAPS pool correction: show the gain is a
 surface, not a point — eta x k x neighbor-weighting sweeps across datasets,
 extend the homophily map with CUB-200 (the missing mid point) and CIFAR-10,
 and build the label-free homophily gate (margin-tail / pool
@@ -154,13 +182,37 @@ them would silently change experiment semantics.
   trained score model. The LOO repair restores exact validity, and the
   corrected method keeps its full gain inside exact full CP (no LATA-style
   cancellation).
+- **qe subsumes SNAPS**: smoothing the embedding over pool neighbors
+  captures what score diffusion was harvesting — the gain lives in the
+  representation, one stage earlier than DAPS/SNAPS operate. This is why
+  the justification must be a representation-space theorem, not a score
+  smoothing one.
+- **The feature-space CP theory exists and its architecture transfers**:
+  Teng et al. (ICLR 2023, Feature CP) prove feature-level CP beats
+  output-level CP via three "cubic conditions" (length preservation,
+  expansion, quantile stability); the load-bearing quantity is the mean
+  distance of scores from their (1-alpha)-quantile — the "cost of the
+  quantile step" — which they also validate empirically per dataset. Their
+  statement compares two score spaces for one model; ours compares two
+  representations under one score family, so we reuse the skeleton, not
+  the theorem.
 
 ## Open Questions
 
+- **Can the DWT theorem chain be closed?** Step A is near-standard
+  (CSBM-style variance contraction), but Step B needs a Lipschitz constant
+  for the geodesic top-k *ratio* NCM (denominator can shrink), and Step C
+  needs the classification set-size version of the quantile-step argument
+  (expected size = sum over classes of tail probabilities at q_hat), where
+  Feature CP only treats regression bands. Also open: do Whiten and
+  Truncate enter the same theorem (spiked-covariance denoising) or stay
+  empirical conditions, and does Step A's derived threshold actually land
+  near the observed hom(k) ~ 0.7?
 - **The label-free homophily gate is THE deployability blocker** for the
-  SNAPS correction: kNN label homophily (the dial) needs labels; candidate
-  proxies are margin-tail and pool self-consistency. Without it the method
-  ships with a caveat instead of a switch.
+  pool-neighbor lever: kNN label homophily (the dial) needs labels;
+  candidate proxies are margin-tail and pool self-consistency. If Step A
+  closes, the gate becomes a theorem-checking diagnostic rather than a
+  heuristic.
 - Is the headline arm (eta=0.5, k=10) genuinely robust, or does the optimal
   arm drift with homophily and cal? The cars k=10-vs-20 ordering hints harm
   grows with neighborhood size; the sweep will tell.
