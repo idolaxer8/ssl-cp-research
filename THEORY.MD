@@ -212,15 +212,21 @@ them would silently change experiment semantics.
 
 ## Open Questions
 
-- **Can the DWT theorem chain be closed?** Step A is near-standard
-  (CSBM-style variance contraction), but Step B needs a Lipschitz constant
-  for the geodesic top-k *ratio* NCM (denominator can shrink), and Step C
-  needs the classification set-size version of the quantile-step argument
-  (expected size = sum over classes of tail probabilities at q_hat), where
-  Feature CP only treats regression bands. Also open: do Whiten and
-  Truncate enter the same theorem (spiked-covariance denoising) or stay
-  empirical conditions, and does Step A's derived threshold actually land
-  near the observed hom(k) ~ 0.7?
+- **Closing the two medium gaps in the DWT proof draft**
+  (`docs/dwt_theory.md` v0.1, gap ledger G1-G10). The chain is complete at
+  proved-or-cited level except: G2 — selection-noise correlation (the kNN
+  graph is built from the features it averages; route = mean-shift
+  small-ball expansion), and G6 — right-tail stochastic dominance of score
+  CDFs (moments alone don't give it; route = Anderson's inequality under
+  conditional Gaussianity, or name-the-condition + validate, which is
+  exactly what Feature CP did with its expansion condition). Two scope
+  decisions pending: the champion geodesic *ratio* NCM is not covered
+  (scale-invariance neuters naive arguments — v0.1 covers the prototype
+  NCM), and the FCP arm needs the transductive size identity. A found
+  feature: validity pins the true-class term of E|C|, so efficiency is
+  purely the false-class overlap below q_hat — and the theorem's
+  assumptions fail exactly on the datasets where DWT empirically fails
+  (aircraft/cars), which is itself a checkable-scope result.
 - **The label-free homophily gate is THE deployability blocker** for the
   pool-neighbor lever: kNN label homophily (the dial) needs labels;
   candidate proxies are margin-tail and pool self-consistency. If Step A
