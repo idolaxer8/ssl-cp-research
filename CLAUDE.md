@@ -115,8 +115,9 @@ numerically unchanged, it just warns.
 
 ### Active experiment scripts
 - `src/exchangeable_fcp_experiment.py` -- main exchangeable FCP runner (pool transform + MS-CS)
-- `src/pool_ablation_hightrial.py` / `src/pool_source_comparison.py` / `src/pool_source_limits.py` -- unlabeled-pool ablations (+ cal+test transduction, findings 4d; plots via `src/plot_pool_source.py`)
+- `src/pool_ablation_hightrial.py` / `src/pool_source_comparison.py` / `src/pool_source_limits.py` -- unlabeled-pool ablations (+ cal+test transduction, findings 4d/4e; plots via `src/plot_pool_source.py`, `src/plot_unlabeled_pool_ablation.py`)
 - `src/mscs_unlabeled_experiment.py` -- MS-CS with unlabeled data (also the `run_fcp_with_mscs` library)
+- `src/mscs_softmax_experiment.py` -- MS-CS penalty sweep on prototype_softmax vs geodesic NCMs (hard datasets, e.g. aircraft)
 - `src/macs_experiment.py` -- MA-CS binary superclass penalty (Fargion et al. 2025)
 - `src/mscs_vs_macs_experiment.py` -- MS-CS vs MA-CS head-to-head on the exchangeable engine
 - `src/cs_ablation.py` -- reduction x MS-CS ablation (legacy engine)
