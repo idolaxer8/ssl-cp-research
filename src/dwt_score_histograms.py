@@ -156,6 +156,68 @@ def run_dataset(name, emb_dir):
     return h, arms
 
 
+def make_overlay_fig(store, out_dir, results):
+    """Second figure: empirical forms of Prop C's two hypotheses, zoomed on
+    the quantile region R_alpha. Col 1: true-class score CDF F_true (raw vs
+    DWT) -- condition (i) is 'DWT curve above raw'. Col 2: mean false-count
+    G(r) = E[#{c != y : s(x,c) <= r}] -- condition (ii) is 'DWT below raw'."""
+    datasets = list(store.keys())
+    fig, axes = plt.subplots(len(datasets), 2,
+                             figsize=(12, 4.2 * len(datasets)), squeeze=False)
+    colors = {"raw": "#4c72b0", "dwt": "#dd8452"}
+    for r, ds in enumerate(datasets):
+        arms = store[ds]
+        qs = {a: arms[a]["q_hat"] for a in arms}
+        x0 = min(qs.values()) - 0.15
+        x1 = max(qs.values()) + 0.15
+        grid = np.linspace(x0, x1, 400)
+        curves = {}
+        for arm in ["raw", "dwt"]:
+            st = arms[arm]
+            n_test = len(st["true"])
+            F = np.searchsorted(np.sort(st["true"]), grid, side="right") / n_test
+            G = np.searchsorted(np.sort(st["false"]), grid, side="right") / n_test
+            curves[arm] = (F, G)
+        # dominance checks on the shown region
+        dom_i = float((curves["dwt"][0] >= curves["raw"][0]).mean())
+        dom_ii = float((curves["dwt"][1] <= curves["raw"][1]).mean())
+        results[ds]["dominance_on_region"] = {
+            "frac_F_dwt_above_raw": dom_i, "frac_G_dwt_below_raw": dom_ii,
+            "region": [float(x0), float(x1)]}
+
+        axF, axG = axes[r][0], axes[r][1]
+        for arm in ["raw", "dwt"]:
+            lab = "raw" if arm == "raw" else "DWT"
+            axF.plot(grid, curves[arm][0], color=colors[arm], lw=2, label=lab)
+            axG.plot(grid, curves[arm][1], color=colors[arm], lw=2, label=lab)
+            for ax in (axF, axG):
+                ax.axvline(qs[arm], color=colors[arm], ls="--", lw=1.2)
+        axF.axhline(1 - ALPHA, color="gray", ls=":", lw=1,
+                    label=f"{1-ALPHA:.0%} level")
+        axF.set_title(f"{ds} — true-class score CDF F_true\n"
+                      f"condition (i): DWT above raw on "
+                      f"{dom_i:.0%} of the region", fontsize=10)
+        axF.set_ylabel("F_true(r) = P(s(x,y) <= r)")
+        gq = {a: float(np.interp(qs[a], grid, curves[a][1])) for a in qs}
+        axG.set_title(f"{ds} — mean false-count G(r)\n"
+                      f"condition (ii): DWT below raw on {dom_ii:.0%};  "
+                      f"G(q_hat): {gq['raw']:.2f} -> {gq['dwt']:.2f}",
+                      fontsize=10)
+        axG.set_ylabel("G(r) = E[# false classes with s <= r]")
+        for ax in (axF, axG):
+            ax.set_xlabel("score r   (dashed lines: each arm's q_hat)")
+            ax.set_xlim(x0, x1)
+            ax.legend(fontsize=8, loc="upper left")
+    fig.suptitle("Prop C hypotheses on the quantile region: (i) true-score "
+                 "CDF dominance sets q_hat earlier; (ii) false-count "
+                 "dominance means fewer classes below any threshold",
+                 fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    path = os.path.join(out_dir, "dwt_cdf_G_overlays.png")
+    fig.savefig(path, dpi=150)
+    print(f"overlay figure -> {path}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--emb_dir", default="output/from_cluster/embeddings")
@@ -165,6 +227,7 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     results = {}
+    store = {}
     fig, axes = plt.subplots(len(args.datasets), 2,
                              figsize=(12, 4.2 * len(args.datasets)),
                              squeeze=False)
@@ -172,6 +235,7 @@ def main():
         print(f"[{ds}] running ...", flush=True)
         h, arms = run_dataset(ds, args.emb_dir)
         results[ds] = {"homophily_k10": h}
+        store[ds] = arms
         lo = min(arms[a]["true"].min() for a in arms) - 0.02
         hi = max(np.percentile(arms[a]["false"], 99.9) for a in arms) + 0.02
         bins = np.linspace(lo, hi, 120)
@@ -204,6 +268,7 @@ def main():
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig_path = os.path.join(args.out_dir, "dwt_score_histograms.png")
     fig.savefig(fig_path, dpi=150)
+    make_overlay_fig(store, args.out_dir, results)
     with open(os.path.join(args.out_dir, "dwt_score_histograms.json"), "w") as f:
         json.dump(results, f, indent=2)
     print(json.dumps(results, indent=2))

@@ -65,6 +65,37 @@ What to see, panel by panel:
   neutral-to-harmful. The claim the panel supports is "no separation to
   harvest", not "harm".)
 
+**0.2b The CDF / G(r) overlays (the Prop-C hypotheses, directly).**
+Second figure `output/dwt_histograms/dwt_cdf_G_overlays.png`: per dataset,
+the true-class score CDF F_true (condition (i): DWT curve ABOVE raw near
+the quantiles) and the mean false-count G(r) (condition (ii): DWT curve
+BELOW raw there), zoomed on the quantile region, both arms' q_hat marked.
+Findings (window fractions in the JSON; note the window is deliberately
+wide, so the fractions are conservative — the binding region is at/left of
+the arms' q_hats):
+
+- cifar100 (h=.79): BOTH hypotheses hold where they bind. (i) holds on 79%
+  of the window — all failures sit right of q_raw, outside the binding
+  region; the DWT CDF reaches the 90% level 0.09 earlier (q_hat -0.24 ->
+  -0.33). (ii) holds throughout the decision region (G curves cross only
+  far left among near-zero values); G(q_hat): 2.68 -> 0.86. Prop C's
+  premises are empirically TRUE on-gate, and the conclusion (sets 3.59 ->
+  1.76) follows as the theorem says.
+- aircraft (h=.30): **condition (i) FAILS almost everywhere (DWT CDF above
+  raw on only 1% of the window): the true-class scores get stochastically
+  WORSE** — the impurity drag of Lemma A at low homophily, visible as
+  q_hat moving right (-0.238 -> -0.205). Meanwhile (ii) holds on 100%:
+  false-class mass is pushed right anyway (the affine W/T metric
+  normalization does not need homophily), which is why this run still
+  shows a mild size reduction (26.4 -> 22.3) despite the gate being off.
+
+Refinement this buys the theory: **the homophily gate governs condition
+(i) specifically** — the D stage's improvement condition (Lemma A) is what
+breaks at low h(k), while condition (ii) (false side, driven mostly by
+W/T) is regime-robust. The gate is not "DWT works/fails" but "the
+true-class side of the overlap improves/degrades". (Single seed; the
+multi-seed/multi-dataset battery is Section 9 item 4.)
+
 The whole formal draft below is an annotation of this picture. Ladder:
 
 **Rung 1 — name what the picture shows (-> Section 2, eq. 2.1).**
