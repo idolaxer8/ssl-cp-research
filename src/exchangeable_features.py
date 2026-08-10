@@ -130,7 +130,8 @@ class UnlabeledTransform:
                  projection="pca", rp_seed=None,
                  pre=None, qe_k=10, qe_alpha=3.0, lpp_graph_k=15,
                  qe_mode="both", qe_beta=None, qe_reciprocal=False,
-                 qe_stage="pre", ldapool_rank="total"):
+                 qe_stage="pre", ldapool_rank="total",
+                 qe_hub_gamma=None, qe_iters=1, qe_znorm=False):
         assert whiten in ("cluster", "global", "lw_global", "lw_cluster",
                           "lw_cluster_soft", None)
         assert projection in ("pca", "pca_tail", "random", "lpp", "ldapool",
@@ -139,6 +140,13 @@ class UnlabeledTransform:
         assert qe_mode in ("both", "fit_only", "apply_only")
         assert qe_stage in ("pre", "post")
         assert ldapool_rank in ("total", "between")
+        assert qe_iters >= 1
+        # multi-hop needs the smoothed pool of the previous hop as the next
+        # neighbor bank; apply_only never smooths the pool, post has no
+        # refit downstream of the smoothing
+        assert qe_iters == 1 or (qe_stage == "pre"
+                                 and qe_mode != "apply_only"), \
+            "qe_iters>1 requires qe_stage='pre' and qe_mode in (both, fit_only)"
         self.ldapool_rank = ldapool_rank
         self.pca_dim = pca_dim
         self.whiten = whiten
@@ -161,6 +169,21 @@ class UnlabeledTransform:
                                         # (default); 'post' = PCA/whiten then
                                         # smooth in the transformed space
                                         # (order-ablation arm)
+        self.qe_hub_gamma = qe_hub_gamma  # None = off; else subtract
+                                        # gamma * (pool point's mean top-k
+                                        # sim to the rest of the pool) from
+                                        # the similarity used for neighbor
+                                        # SELECTION (CSLS gamma=0.5 / NNN
+                                        # lineage hub debias); weights stay
+                                        # on the raw cosine
+        self.qe_iters = qe_iters        # >1 = iterated smoothing, hop i uses
+                                        # the (i-1)-times-smoothed pool as its
+                                        # bank (first-order pieces of the
+                                        # Tikhonov graph filter (I+lam L)^-1)
+        self.qe_znorm = qe_znorm        # neighbor selection in per-vector
+                                        # z-scored space (Pearson metric,
+                                        # hubness-reducing); aggregation and
+                                        # weights stay in the raw space
         self.lpp_graph_k = lpp_graph_k
         self.qe_radius_ = None          # per-pool-point k-th-NN similarity
         # fitted state
@@ -180,6 +203,11 @@ class UnlabeledTransform:
         self.yj_mean_ = None
         self.yj_std_ = None
         self.qe_pool_ = None             # L2-normed raw pool ('qe' pre)
+        self.qe_pools_ = []              # per-hop neighbor banks (stage i =
+                                         # pool smoothed i times, L2-normed)
+        self.qe_radii_ = []              # per-hop reciprocity radii (or None)
+        self.qe_hubs_ = []               # per-hop hub biases (or None)
+        self.qe_zpools_ = []             # per-hop z-scored banks (or None)
         self.soft_mus_ = None            # (C, d) cluster means ('lw_cluster_soft')
         self.soft_As_ = None             # (C, d, d) per-cluster ZCA whiteners
         self.soft_tau2_ = None           # responsibility scale (pool statistic)
@@ -192,12 +220,14 @@ class UnlabeledTransform:
         if self.pre == "yj":
             X = self._fit_apply_yj(X)
         elif self.pre == "qe" and self.qe_stage == "pre":
-            self.qe_pool_ = X / (np.linalg.norm(X, axis=1,
-                                                keepdims=True) + 1e-12)
-            if self.qe_reciprocal:
-                self.qe_radius_ = self._pool_radii(self.qe_pool_)
+            self.qe_pools_, self.qe_radii_ = [], []
+            self.qe_hubs_, self.qe_zpools_ = [], []
+            self._register_qe_pool(X)
             if self.qe_mode in ("both", "fit_only"):
-                X = self._qe_smooth(X, fitting_pool=True)
+                X = self._qe_smooth(X, fitting_pool=True, stage=0)
+                for it in range(1, self.qe_iters):
+                    self._register_qe_pool(X)
+                    X = self._qe_smooth(X, fitting_pool=True, stage=it)
 
         # 1) projection (fit on unlabeled)
         reduce = self.pca_dim is not None and self.pca_dim < X.shape[1]
@@ -401,12 +431,12 @@ class UnlabeledTransform:
             # the RAW pool; smoothing now happens in the TRANSFORMED space,
             # with the (unsmoothed) transformed pool as the neighbor bank.
             Zu = self.Xu_transformed_
-            self.qe_pool_ = Zu / (np.linalg.norm(Zu, axis=1,
-                                                 keepdims=True) + 1e-12)
-            if self.qe_reciprocal:
-                self.qe_radius_ = self._pool_radii(self.qe_pool_)
+            self.qe_pools_, self.qe_radii_ = [], []
+            self.qe_hubs_, self.qe_zpools_ = [], []
+            self._register_qe_pool(Zu)
             if self.qe_mode in ("both", "fit_only"):
-                self.Xu_transformed_ = self._qe_smooth(Zu, fitting_pool=True)
+                self.Xu_transformed_ = self._qe_smooth(Zu, fitting_pool=True,
+                                                       stage=0)
         return self
 
     # -- apply to cal/test --------------------------------------------------
@@ -416,7 +446,8 @@ class UnlabeledTransform:
             Xp = self._apply_yj(Xp)
         elif (self.pre == "qe" and self.qe_stage == "pre"
               and self.qe_mode in ("both", "apply_only")):
-            Xp = self._qe_smooth(Xp, fitting_pool=False)
+            for it in range(self.qe_iters):
+                Xp = self._qe_smooth(Xp, fitting_pool=False, stage=it)
         if self.pca_ is not None:
             Xp = self.pca_.transform(Xp)
         elif self.rp_ is not None:
@@ -468,31 +499,63 @@ class UnlabeledTransform:
         Xt = (Xt - self.yj_mean_) / self.yj_std_
         return Xt / (np.linalg.norm(Xt, axis=1, keepdims=True) + 1e-12)
 
-    def _qe_smooth(self, X, fitting_pool=False):
-        """alpha-QE smoothing against the frozen pool. Classic form
-        (qe_beta=None):  T(x) = L2norm( x + sum_{i in NN_k(x)} s_i^alpha u_i ),
+    def _register_qe_pool(self, M):
+        """L2-norm + cache one neighbor-bank stage (hop) together with the
+        selection-metric statistics the enabled variants need. Everything is
+        derived from the pool alone -> the transform stays a fixed map."""
+        P = M / (np.linalg.norm(M, axis=1, keepdims=True) + 1e-12)
+        self.qe_pools_.append(P)
+        Pz = self._znorm_rows(M) if self.qe_znorm else None
+        self.qe_zpools_.append(Pz)
+        self.qe_radii_.append(self._pool_radii(P)
+                              if self.qe_reciprocal else None)
+        # hub bias lives in the SELECTION metric (z-scored if qe_znorm)
+        self.qe_hubs_.append(self._pool_hub(Pz if Pz is not None else P)
+                             if self.qe_hub_gamma is not None else None)
+        self.qe_pool_ = self.qe_pools_[0]      # back-compat aliases
+        self.qe_radius_ = self.qe_radii_[0]
+
+    def _qe_smooth(self, X, fitting_pool=False, stage=0):
+        """alpha-QE smoothing against the frozen pool (bank of hop `stage`).
+        Classic form (qe_beta=None):
+        T(x) = L2norm( x + sum_{i in NN_k(x)} s_i^alpha u_i ),
         s_i = max(cos(x, u_i), 0). With qe_beta=b the self-weight is explicit:
         T(x) = L2norm( (1-b) x + b * weighted-neighbor-mean ). With
         qe_reciprocal, neighbor u_i contributes only if x falls inside u_i's
         own qe_k-NN pool radius (s_i >= r_i) — a label-free wrong-neighbor
         filter (k-reciprocal / QB-Norm activation-gate lineage); points with
-        no surviving neighbors pass through unsmoothed. When smoothing the
-        pool itself (fitting_pool=True) each point's own entry is excluded."""
-        P = self.qe_pool_                      # (N, D) float64, L2-normed
+        no surviving neighbors pass through unsmoothed. Neighbor SELECTION
+        (never the weights) can be modified by qe_hub_gamma (subtract
+        gamma * pool-point hub bias, CSLS/NNN lineage) and/or qe_znorm
+        (Pearson metric). When smoothing the pool itself (fitting_pool=True)
+        each point's own entry is excluded."""
+        P = self.qe_pools_[stage]              # (N, D) float64, L2-normed
         k, a = self.qe_k, self.qe_alpha
+        radius = self.qe_radii_[stage]
+        hub = self.qe_hubs_[stage]
+        Pz = self.qe_zpools_[stage]
         Xn = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-12)
+        Xz = self._znorm_rows(X) if self.qe_znorm else None
         out = np.empty_like(X)
         for i0 in range(0, len(Xn), 1024):
             ch = Xn[i0:i0 + 1024]
-            S = ch @ P.T                       # (m, N)
+            S = ch @ P.T                       # (m, N) raw cosine
             if fitting_pool:
                 rows = np.arange(len(ch))
                 S[rows, i0 + rows] = -np.inf   # exclude self
-            idx = np.argpartition(-S, k, axis=1)[:, :k]
+            if Xz is not None:
+                S_sel = Xz[i0:i0 + 1024] @ Pz.T
+                if fitting_pool:
+                    S_sel[rows, i0 + rows] = -np.inf
+            else:
+                S_sel = S
+            if hub is not None:
+                S_sel = S_sel - self.qe_hub_gamma * hub[None, :]
+            idx = np.argpartition(-S_sel, k, axis=1)[:, :k]
             s = np.take_along_axis(S, idx, axis=1)
             w = np.clip(s, 0.0, None) ** a     # (m, k)
-            if self.qe_radius_ is not None:
-                w = np.where(s >= self.qe_radius_[idx], w, 0.0)
+            if radius is not None:
+                w = np.where(s >= radius[idx], w, 0.0)
             nb = P[idx]                        # (m, k, D)
             wsum = w.sum(axis=1, keepdims=True)
             wnb = (w[:, :, None] * nb).sum(axis=1)
@@ -505,6 +568,31 @@ class UnlabeledTransform:
             out[i0:i0 + 1024] = v / (np.linalg.norm(v, axis=1,
                                                     keepdims=True) + 1e-12)
         return out
+
+    @staticmethod
+    def _znorm_rows(X):
+        """Per-vector z-score (subtract row mean, divide row std), then
+        L2-norm: cosine in this space = Pearson correlation. Hubness-reducing
+        (Fei et al., ICCV 2021)."""
+        mu = X.mean(axis=1, keepdims=True)
+        sd = X.std(axis=1, keepdims=True) + 1e-12
+        Z = (X - mu) / sd
+        return Z / (np.linalg.norm(Z, axis=1, keepdims=True) + 1e-12)
+
+    def _pool_hub(self, P):
+        """Per-pool-point hub bias: mean similarity to its own qe_k nearest
+        OTHER pool points (chunked). Subtracting gamma * this from the
+        selection score demotes hubs (CSLS gamma=0.5 / NNN lineage)."""
+        N = len(P)
+        k = self.qe_k
+        h = np.empty(N)
+        for i0 in range(0, N, 1024):
+            S = P[i0:i0 + 1024] @ P.T
+            rows = np.arange(S.shape[0])
+            S[rows, i0 + rows] = -np.inf       # exclude self
+            top = np.partition(S, S.shape[1] - k, axis=1)[:, -k:]
+            h[i0:i0 + 1024] = top.mean(axis=1)
+        return h
 
     def _pool_radii(self, P):
         """Per-pool-point reciprocity radius: cosine similarity to its own
@@ -589,6 +677,12 @@ class UnlabeledTransform:
                 pre += f", qe_beta={self.qe_beta:g}"
             if self.qe_reciprocal:
                 pre += ", qe_reciprocal=True"
+            if self.qe_hub_gamma is not None:
+                pre += f", qe_hub_gamma={self.qe_hub_gamma:g}"
+            if self.qe_iters != 1:
+                pre += f", qe_iters={self.qe_iters}"
+            if self.qe_znorm:
+                pre += ", qe_znorm=True"
         return (f"UnlabeledTransform(pca_dim={self.pca_dim}, whiten={self.whiten!r}, "
                 f"n_clusters={self.n_clusters}{proj}{pre}{lw})")
 

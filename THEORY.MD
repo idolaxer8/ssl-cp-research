@@ -252,6 +252,26 @@ floor guarantee) as the primary novelty pilot, unmerged on
   where AE could still matter: pairing with the nonlinear RBF NCM (the
   combination that won at medium cal on CIFAR-100) — low priority.
 
+- **qe-upgrade pilots: neighbor SELECTION is a lever independent of dose; one
+  hop is optimal** (2026-08-10, `docs/qe_upgrade_pilots.md`). Piloting the
+  citation-sweep shortlist on the champion pipelines: (a) hub-debiased
+  selection (subtract gamma * pool-point mean top-k similarity from the
+  selection score, CSLS/NNN lineage; gamma~1) improves qe on 3/3 datasets —
+  new best starved aircraft cell (26.55 vs 27.38 @200 geodesic), safe+hub
+  dominates safe, and every miniimagenet cell wins (closes qe's
+  saturated-regime deficit) — the first harm-regime lever that works through
+  neighbor CHOICE rather than dose reduction (k-reciprocal filtering, the
+  dose-reducing alternative, loses to beta-dilution everywhere). (b) 2-hop
+  smoothing (2nd Neumann term of the Tikhonov pool-graph filter) loses at
+  EVERY cell in BOTH regimes: the deployed one-hop qe is not a truncation
+  compromise, it is the optimum — a datum the DWT denoise lemma should state
+  (first-order filter suffices; the second hop compounds wrong-class
+  contamination quadratically). (c) At large gamma the hub-debiased map
+  self-gates toward identity (selected low-hub neighbors have ~0 clipped
+  weight) — a soft OFF switch. Related: under the prototype NCM on aircraft,
+  OFF beats every smoothing mode (no-qe ldapool512 18.22 vs champion 19.81
+  @800) — the label-free gate needs an OFF setting, not just dilution.
+
 ## Open Questions
 
 - Pool-only surrogate for the banded-1NN profile: banded cluster-structure

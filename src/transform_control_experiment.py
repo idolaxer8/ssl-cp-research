@@ -168,6 +168,12 @@ def build_arm_transforms(arm, Xu, args):
             kw["qe_reciprocal"] = True
         if args.qe_stage is not None:
             kw["qe_stage"] = args.qe_stage
+        if args.qe_hub_gamma is not None:
+            kw["qe_hub_gamma"] = args.qe_hub_gamma
+        if args.qe_iters is not None:
+            kw["qe_iters"] = args.qe_iters
+        if args.qe_znorm:
+            kw["qe_znorm"] = True
     if kw.get("projection") == "random":
         return [UnlabeledTransform(rp_seed=args.seed + 7919 * r, **kw).fit(Xu)
                 for r in range(args.rp_repeats)]
@@ -240,6 +246,15 @@ def main():
                     help="smoothing order for pre='qe' arms: 'pre' (default, "
                          "smooth then transform) or 'post' (transform then "
                          "smooth -- order-ablation arm).")
+    ap.add_argument("--qe_hub_gamma", type=float, default=None,
+                    help="hub-debias strength for neighbor SELECTION in "
+                         "pre='qe' arms (CSLS=0.5 / NNN lineage; None = off).")
+    ap.add_argument("--qe_iters", type=int, default=None,
+                    help="smoothing hops for pre='qe' arms (default 1; hop i "
+                         "uses the i-times-smoothed pool as its bank).")
+    ap.add_argument("--qe_znorm", action="store_true",
+                    help="neighbor selection in per-vector z-scored (Pearson) "
+                         "space for pre='qe' arms (hubness reduction).")
     ap.add_argument("--proto_temperature", default="auto")
     ap.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
     ap.add_argument("--seed", type=int, default=42)
