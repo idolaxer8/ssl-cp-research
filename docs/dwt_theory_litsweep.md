@@ -230,6 +230,43 @@ Thm 1 (kNN bridge), SNAPS Prop 2 (documents the gap), Denis & Hebiri Thm 2
 (K/sqrt(N_pool) pool price), Feature CP Thm 6 (quantile-cost architecture +
 empirical condition-validation protocol).
 
+## Structure of the DWT map (linearity audit, 08-10; from code)
+
+Is DWT linear? No — but it decomposes as (nonlinear conditionally-convex
+smoother) then (one global affine map), and each half is usable as-is.
+
+- **W + T = ONE global affine map.** `UnlabeledTransform.transform` = PCA
+  projection then elementwise multiply by a FIXED inv_std vector:
+  T_WT(x) = A x + b, A = D_w P'. Clusters enter only the FIT of the diagonal
+  (pooled within-cluster residual variance); application is cluster-free.
+  Exact consequences for the proof: prototypes transform covariantly
+  (empirical mean commutes with affine), Gaussian mixtures closed under the
+  map (noise covariance -> A Sigma A', where spiked-cov/RCA anchors plug
+  in), whitened distance = fixed quadratic metric.
+- **D (qe) is nonlinear** four ways: input L2-norm, kNN selection vs pool
+  (piecewise / k-th-order Voronoi), cos^alpha weights (alpha=3, x-dependent
+  within a cell), output L2-norm. NOT fatal: DAPS Thm 2 never uses
+  linearity of the map — it bounds a CONVEX combination with fixed
+  coefficients by triangle inequality. Same move works conditionally
+  (pool independent of cal/test => condition on realized neighbors+weights):
+  ||x_hat - mu_y|| <= (1-lam)||x - mu_y|| + lam*[avg same-class neighbor
+  error + (1-h(k))*Delta_mu + r_k(x)], i.e. the nonlinearity converts into
+  exactly two extra terms — the impurity bias (1-h(k))*Delta_mu (the DAPS
+  Delta analogue, WANTED: derives the gate) and the selection-locality bias
+  r_k ~ (k/N_pool)^{1/d_eff} (neighbors are the closest points, noise tilts
+  toward x; vanishes with pool size at the Bahri-Jiang rate; needs its OWN
+  lemma — the term a naive linear-smoother analysis silently drops).
+  alpha>0 weights stay nonnegative => convexity intact; effect = replace k
+  by k_eff = (sum w)^2 / sum w^2 in the variance term. Sphere
+  normalizations free: embeddings pre-L2-normed + both scores
+  scale-invariant.
+- **Code alignment**: the `qe_beta` knob (T(x) = (1-b)x + b*neighbor-mean)
+  with alpha=0 is LITERALLY DAPS Eq. 2 in representation space — state the
+  theorem for the beta-form, champion classic-alphaQE inherits via k_eff.
+- Linearity irrelevant for: exchangeability (needs only fixed-pool-function
+  applied pointwise) and Step C (Dhillon/Conrad accept any measurable
+  transform).
+
 ## Assembled proof skeleton (target for dwt_theory.md)
 
 (i) Model embeddings as cluster signal + noise; pool-kNN homophily h plays
