@@ -110,6 +110,19 @@ regression) does not transfer. A structural bonus: Step A's improvement
 condition would *derive* the empirical hom(k) >= ~0.7 gate instead of
 postulating it, unifying the deployability blocker with the theory.
 
+The 08-10 lit sweep (`docs/dwt_theory_litsweep.md`) confirmed the niche is
+open — no post-DAPS work ports Theorem 2 to feature-similarity neighbors
+(SNAPS's lone efficiency result assumes perfectly pure neighborhoods), and
+DAPS itself flags the kNN-graph setting as future work — and supplied a
+converter for each step: CSBM neighborhood-averaging separability for A;
+for C, either Dhillon et al.'s exact expected-size identity (stochastic
+dominance of score CDFs orders expected sizes, finite-n) or the
+linear-in-score-error distance-to-oracle-length bounds (Conrad et al.,
+Sadinle et al.), with Behboodi et al.'s transductive KL-linear penalty as
+the FCP-arm variant. W and T ride classical optimality (RCA whitening,
+spiked-covariance truncation). Notably the alpha-QE retrieval literature
+has zero theory — the D stage must be argued as graph-signal denoising.
+
 The standing empirical campaign hardens the two live levers into method
 components rather than lucky points. (a) The SNAPS pool correction: show the gain is a
 surface, not a point — eta x k x neighbor-weighting sweeps across datasets,
