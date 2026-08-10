@@ -14,6 +14,7 @@ Arms (uniform-random split => exactly exchangeable; NCM unwhitened_topk_mean):
   no-pool centroid-MSCS  identity feats, cal-centroid M        (CPU)
   pool cluster-MSCS      PCA+whiten feats, unlabeled-cluster M (CPU)
 """
+# ARCHIVE-CANDIDATE (review 2026-08-24): high-trial rerun recorded in findings §4e (all four arms valid at every cal; pool cuts sets 48/54/29%); question settled, no §10 item pending, no substantive commit since 2026-06-10.
 import sys, os, time, json, math, argparse
 sys.path.insert(0, "src")
 import numpy as np, torch

@@ -17,6 +17,7 @@ of the pipeline).
 Usage:  python src/plot_unlabeled_pool_ablation.py [results_dir]
         (default output/unlabeled_pool_ablation)
 """
+# ARCHIVE-CANDIDATE (review 2026-08-24): plots only the settled §4e pool-ablation results; archive together with pool_ablation_hightrial.py.
 import sys, os, json, glob
 import matplotlib
 matplotlib.use("Agg")

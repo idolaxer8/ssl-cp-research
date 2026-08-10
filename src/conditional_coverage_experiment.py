@@ -18,6 +18,7 @@ Usage:
         --datasets cifar100 --cal_sizes 400 --test_size 500 --n_trials 2 \
         --output_dir output/conditional_coverage_smoke
 """
+# ARCHIVE-CANDIDATE (review 2026-08-24): results recorded in findings §2b (CovGap + ClusterCP baseline, 2026-05-26); §10 item 8 (per-class coverage diagnostics) done; no substantive commit since. Re-flagged: the 2026-07-10 sweep's note never merged to main.
 
 import argparse
 import csv

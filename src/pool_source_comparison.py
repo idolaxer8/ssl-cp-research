@@ -31,6 +31,7 @@ the headroom from simply having more unlabeled samples.
 Reads embeddings / writes results by ABSOLUTE path into the main checkout's output/
 (the .pt files are gitignored, so they live only there, not in this worktree).
 """
+# ARCHIVE-CANDIDATE (review 2026-08-24): pool-source question settled (findings §4d, 2026-06-10: cal+test transduction ~= separate pool); no substantive commit since. Re-flagged: the 2026-07-10 sweep's note never merged to main.
 import sys, os, time, json, math, argparse
 
 REPO = r"C:\Users\IDO\Desktop\Ido_student\Msc\ssl-cp-research"

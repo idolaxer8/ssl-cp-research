@@ -54,6 +54,7 @@ python src/ridge_softmax_cluster_experiment.py --device cuda --plot
 python src/ridge_softmax_cluster_experiment.py --datasets cifar100 \
     --device cpu --n_trials 5 --cal_sizes 200 400 800
 """
+# ARCHIVE-CANDIDATE (review 2026-08-24): superseded by fca_family_cluster_experiment.py (same ladder incl. ridge_softmax as rung 4, both splits, more metrics); ridge-vs-geodesic verdict recorded (output/ridge_softmax_compare fig); no commit on any branch since 2026-06-22.
 import os
 import sys
 import json
