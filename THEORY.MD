@@ -106,9 +106,18 @@ coverage — the proof architecture of Feature CP's Theorem 6 (Teng et al.,
 ICLR 2023, "cubic conditions"), whose mechanism (the quantile step costs
 less in a space where scores concentrate around their quantile) is our
 Step C even though its statement (feature- vs output-space bands,
-regression) does not transfer. A structural bonus: Step A's improvement
-condition would *derive* the empirical hom(k) >= ~0.7 gate instead of
-postulating it, unifying the deployability blocker with the theory.
+regression) does not transfer. **Step A is now delivered
+(`docs/dwt_denoise_theorem.md`, 08-12): Theorem D1 mirrors DAPS-2 verbatim
+(deterministic, gap-free); Theorem D3 states the operative gate at the
+MARGIN level — d' changes by [1 - 2*beta*kappa*(1-h)]/rho(beta,k_eff), so
+improvement iff h > h* = 1 - (1-rho)/(2*beta*kappa), a scale-free condition
+with zero fitted constants.** Measured on all five datasets
+(`src/dwt_gate_constants.py`): h* ~ 0.27-0.40, every tested dataset on the
+predicted side; the folklore "hom >= ~0.7" gate was an interpolation across
+the h in (0.46, 0.80) data gap using the SNAPS *score* correction — a
+different operator. Registered discriminating prediction: qe should GAIN on
+stanford_cars (h_w = 0.46, predicted d'-ratio 1.52) where folklore predicts
+harm.
 
 The 08-10 lit sweep (`docs/dwt_theory_litsweep.md`) confirmed the niche is
 open — no post-DAPS work ports Theorem 2 to feature-similarity neighbors
@@ -209,29 +218,54 @@ them would silently change experiment semantics.
   statement compares two score spaces for one model; ours compares two
   representations under one score family, so we reuse the skeleton, not
   the theorem.
+- **The homophily gate lives at the margin level, not the norm level**
+  (08-12, `docs/dwt_denoise_theorem.md`). In expectation, norm-level
+  "denoising" ALWAYS helps at some smoothing weight — no gate exists there
+  (Theorem D2); the gate appears only when the smoothing identity is
+  projected onto a confusable-pair axis, where signal damage and noise
+  reduction are both first-order in beta (Theorem D3). Corollaries fell
+  out for free: the gate is scale-free (sigma and Delta cancel — hence one
+  threshold across datasets, the sweep's "one law"), harm below the gate
+  is not tunable (no small-beta rescue), one hop is optimal (drift
+  compounds, variance is already at its floor), and classic alpha-QE's
+  implicit self-weight beta_hat = W/(1+W) rises with neighborhood
+  similarity — adapting the WRONG way on fine-grained data (0.86 on
+  aircraft vs 0.62 on cifar100). Measured with zero fitted constants,
+  every tested dataset lands on the predicted side, and the measured gate
+  h* ~ 0.27-0.40 says the folklore "0.7" was two operators conflated: the
+  D-stage smoother and the SNAPS score correction do NOT share a
+  break-even.
 
 ## Open Questions
 
+- **The cars discriminating run** (registered 08-12 before the
+  experiment): Theorem D3 predicts qe GAINS on stanford_cars (h_w = 0.46 >
+  h* = 0.29, d'-ratio 1.52) while the folklore 0.7 gate predicts harm; qe
+  was never run there. One champion-pipeline experiment decides which gate
+  story ships. Both known (I)-violations push the true gate UP from the
+  measured h*, so a cars failure has a ready mechanism (G2) — a cars
+  success has none in the folklore direction.
 - **Closing the two medium gaps in the DWT proof draft**
-  (`docs/dwt_theory.md` v0.1, gap ledger G1-G10). The chain is complete at
-  proved-or-cited level except: G2 — selection-noise correlation (the kNN
-  graph is built from the features it averages; route = mean-shift
-  small-ball expansion), and G6 — right-tail stochastic dominance of score
-  CDFs (moments alone don't give it; route = Anderson's inequality under
-  conditional Gaussianity, or name-the-condition + validate, which is
-  exactly what Feature CP did with its expansion condition). Two scope
+  (`docs/dwt_theory.md` + `docs/dwt_denoise_theorem.md`, gap ledger
+  G1-G10). G2 — selection-noise correlation — now has SIGNED directions
+  ((V1) retained-own-noise = effective beta shrink; (V2) error-aligned
+  foreign selection = kappa inflation; both push h* up) but still needs
+  its remainder lemma (route = mean-shift small-ball expansion). G6 —
+  right-tail stochastic dominance of score CDFs (moments alone don't give
+  it; route = Anderson's inequality under conditional Gaussianity, or
+  name-the-condition + validate, the Feature-CP precedent). Two scope
   decisions pending: the champion geodesic *ratio* NCM is not covered
-  (scale-invariance neuters naive arguments — v0.1 covers the prototype
-  NCM), and the FCP arm needs the transductive size identity. A found
-  feature: validity pins the true-class term of E|C|, so efficiency is
-  purely the false-class overlap below q_hat — and the theorem's
-  assumptions fail exactly on the datasets where DWT empirically fails
-  (aircraft/cars), which is itself a checkable-scope result.
-- **The label-free homophily gate is THE deployability blocker** for the
-  pool-neighbor lever: kNN label homophily (the dial) needs labels;
-  candidate proxies are margin-tail and pool self-consistency. If Step A
-  closes, the gate becomes a theorem-checking diagnostic rather than a
-  heuristic.
+  (scale-invariance neuters naive arguments — the theorem covers the
+  prototype NCM), and the FCP arm needs the transductive size identity. A
+  found feature: validity pins the true-class term of E|C|, so efficiency
+  is purely the false-class overlap below q_hat — and the theorem's
+  assumptions fail exactly where DWT empirically fails (aircraft),
+  quantitatively so since 08-12.
+- **The label-free gate is THE deployability blocker** for the
+  pool-neighbor lever — now with a theorem-shaped target: predict
+  sign(d'-ratio) = sign of [1 - 2*beta*kappa*(1-h)] - rho without pool
+  labels. beta and k_eff are label-free already; only (h_w, kappa) need
+  surrogates (candidates: margin-tail, pool self-consistency, hub-skew).
 - Is the headline arm (eta=0.5, k=10) genuinely robust, or does the optimal
   arm drift with homophily and cal? The cars k=10-vs-20 ordering hints harm
   grows with neighborhood size; the sweep will tell.

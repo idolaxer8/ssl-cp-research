@@ -96,62 +96,83 @@ W/T) is regime-robust. The gate is not "DWT works/fails" but "the
 true-class side of the overlap improves/degrades". (Single seed; the
 multi-seed/multi-dataset battery is Section 9 item 4.)
 
-The whole formal draft below is an annotation of this picture. Ladder:
+The whole formal draft below is an annotation of this picture. The proof
+is a five-stage ladder. Each stage has exactly ONE headline to prove and
+feeds the next; this map states only that headline and why the stage is
+needed — the elaborate proof lives in the cited section. Read bottom-up as
+mechanism (Rung 4 -> 1), top-down as logic (Rung 1 needs 2 needs ...).
 
-**Rung 1 — name what the picture shows (-> Section 2, eq. 2.1).**
-Green histogram = true-class score law, CDF F_true; its calibration
-version determines q_hat (the ceil((1-alpha)(n+1))-th smallest cal score
-— an order statistic of n draws from F_true). Red histogram = false-class
-score law; define G(r) = expected number of false classes with score <= r
-(the mean false-count curve). Then, with coverage pinned by validity:
-
-```
-E|C| = (1-alpha) + O(1/(n+1)) + E[G(q_hat)]
-```
-
-so "tighter sets" IS "smaller E[G(q_hat)]": less red mass left of the
-dashed line. Nothing else matters.
-
-**Rung 2 — the comparison principle (-> Proposition C, Section 6).**
-If the transform (a) pulls the calibration-relevant right tail of the
-green histogram in (F^T_true >= F_true near the quantile region R_alpha,
-so q_hat^T <=_st q_hat), and (b) pushes red mass right (G^T <= G on
-R_alpha), then E|C^T| <= E|C|. Proof is complete (order-statistic law +
-monotone coupling; machinery of [D24]). The figure's cifar100 row is the
-empirical form of (a)+(b) simultaneously.
-
-**Rung 3 — why the histograms move (-> Lemma B, Section 5).** The score
-gap decomposes as s(x,c) - s(x,y) = <z_bar, m_y - m_c> = fixed
-class-separation term + noise projection. T does not touch the separation
-term (W/T affine, prototypes covariant — Section 4a) and shrinks the noise
-projection, so green moves left and red moves right TOGETHER — one
-geometric event, two histogram moves.
-
-**Rung 4 — why the noise shrinks (-> Lemma A, Section 3; W/T, Section 4).**
-qe averages each point with its k pool neighbors: the same-class fraction
-h(k) cancels noise like k repeated measurements (~1/k_eff variance); the
-(1-h(k)) wrong-class fraction drags toward foreign means by up to
-Delta_max. Net improvement iff
+**Rung 1 — the size identity.** Proved: Section 2, eq. 2.1.
 
 ```
-variance removed by averaging  >  (1-h(k)) * Delta_max drag  (+ G2 remainder)
+HEADLINE:  E|C| = (1-alpha) + O(1/(n+1)) + E[G(q_hat)]
+           where G(r) = mean # false classes scoring <= r.
 ```
 
-— DAPS Theorem 2 [Z23] transplanted from scores to representations; the
-empirical h(k) >= ~0.7 gate is this inequality's solved form. W/T then
-equalize noise directions and drop pure-noise dimensions (RCA + spiked
-covariance, cited in Section 4b) so that "cosine to prototype" measures
-the right metric.
+WHY: validity pins the first two terms for BOTH arms, so they cancel in
+any comparison. Set size is therefore ENTIRELY the false-class overlap
+E[G(q_hat)] — "tighter sets" = "less red mass left of q_hat". This is the
+only quantity every later stage aims at.
 
-**Rung 5 — assemble, and the two IOUs (-> Sections 7-8).** Rungs 1-2 are
-proved; rung 3 is proved given rung 4; rung 4 is proved up to G2 (neighbor
-selection uses the noisy features themselves — the echo-chamber effect;
-route: mean-shift small-ball expansion) and the rung-2 hypotheses need
-distributional (right-tail) versions of rung 3-4's moment statements —
-G6 (route: Anderson/conditional Gaussianity, or name-the-condition and
-validate). The histogram protocol of 0.2 IS the validation instrument for
-G6's named condition, per the [T23] precedent (their Table 5 validates
-their expansion condition the same way).
+**Rung 2 — the comparison principle.** Proved: Proposition C, Section 6.
+
+```
+HEADLINE:  IF (a) F^T_true >= F_true on R_alpha  (true tail pulled left, so q_hat^T <= q_hat)
+           AND (b) G^T <= G on R_alpha           (false mass pushed right)
+           THEN E|C^T| <= E|C| (+ O terms).
+```
+
+WHY: it is the only place set SIZE is actually compared — it converts two
+one-sided histogram MOVES into the size inequality (order-statistic law +
+monotone coupling, [D24]). Rungs 3-4 exist solely to supply premises (a)
+and (b); the figure's cifar100 row is (a)+(b) seen empirically.
+
+**Rung 3 — why both histograms move at once.** Proved: Lemma B, Section 5
+(given Rung 4).
+
+```
+HEADLINE:  s(x,c) - s(x,y) = <z_bar, m_y - m_c> = [fixed class-separation] + [noise projection]
+           with T fixing the separation term and shrinking the noise projection.
+```
+
+WHY: it reduces premises (a)+(b) to a SINGLE fact about representation
+noise — one geometric event (noise shrinks) moves green left AND red right
+together, because the same error sits in both scores with opposite sign.
+
+**Rung 4 — why the noise shrinks.** Proved: Lemma A, Section 3 (+ W/T,
+Section 4). **UPGRADED 2026-08-12 to a theorem package with a measured
+gate: `docs/dwt_denoise_theorem.md`** (D1 = deterministic DAPS-2 mirror,
+gap-free; D2 = norm-level expectation — and the negative result that the
+norm level has NO homophily gate; D3 = margin-level, the operative one).
+
+```
+HEADLINE (D3):  d'_smoothed/d'_raw = [1 - 2*beta*kappa*(1-h)] / rho(beta,k_eff),
+                improvement iff h > h* = 1 - (1-rho)/(2*beta*kappa)  — scale-free.
+```
+
+WHY: qe averages each point with its k pool neighbors — same-class mass
+cancels noise (rho ~ 1/sqrt(k_eff+1) on the margin axis), wrong-class mass
+drags the class means toward each other by beta*kappa*(1-h) per side. Both
+effects are multiplicative, so sigma and Delta CANCEL: one gate for all
+datasets (the sweep's "one law"), first-order in beta on both sides (so
+"harm not tunable" below the gate), and one hop optimal (drift compounds,
+variance is already at its floor). Measured on all five datasets with zero
+fitted constants (dwt_denoise_theorem.md §6): h* ~ 0.27-0.40, every tested
+dataset on the predicted side; the folklore "~0.7" break-even was an
+interpolation across the h in (0.46, 0.80) data gap using the SNAPS SCORE
+correction — a different operator. W/T (Section 4) then re-expresses the
+contraction in the metric the cosine score reads (RCA + spiked covariance,
+4b). Supplies Rung 3's "noise shrinks".
+
+**Rung 5 — assemble, and the two IOUs.** Sections 7-8. Rungs 1-2 proved;
+Rung 3 proved given Rung 4; Rung 4 proved up to two medium gaps — G2
+(neighbors are selected using the very noisy features being averaged;
+route: mean-shift small-ball expansion) and G6 (Rung 2 needs right-tail
+DISTRIBUTIONAL dominance, but Rungs 3-4 deliver only the moment
+statements; route: Anderson/conditional Gaussianity, or name-the-condition
+and validate). Both match where DAPS and Feature-CP [T23] respectively
+stopped; the histogram protocol of 0.2 IS G6's validation instrument (the
+[T23] Table-5 precedent).
 
 ---
 
@@ -244,6 +265,16 @@ much false-class score mass lies below it.
 ---
 
 ## 3. Lemma A — the D stage contracts representation error (DAPS-2 analogue)
+
+> **UPGRADE (2026-08-12): this section is superseded by
+> `docs/dwt_denoise_theorem.md`**, which restates it as Theorem D1
+> (deterministic per-point mirror of [Z23, Thm 2], gap-free), Theorem D2
+> (the expectation identity below made exact, with the finding that the
+> norm level cannot produce the homophily gate), and Theorem D3 (the
+> margin-level scale-free gate h* = 1 - (1-rho)/(2*beta*kappa), measured
+> against all five datasets in `src/dwt_gate_constants.py`). The text
+> below is kept as the original derivation context; G2/G3 discussions
+> remain current.
 
 Write e = x - mu_y, and for the smoothed point e_hat = T_D(x) - mu_y
 (pre-normalization form). Condition on x and on the pool; the neighbor set
@@ -527,8 +558,12 @@ size:      E|C^T| <= E|C| + K*delta_n + O(1/(n+1)),            (Prop C)
 with strict size improvement whenever the Lemma-A inequality is strict.
 Interpretation: DWT improves expected set size at fixed exact coverage
 precisely when pool-kNN homophily is high enough that averaging removes
-more noise than wrong-class contamination injects — the derived form of
-the empirical h(k) >= ~0.7 gate.
+more noise than wrong-class contamination injects. The derived, measured
+form of the gate is Theorem D3 (`dwt_denoise_theorem.md`): h > h* =
+1 - (1-rho)/(2*beta*kappa) ~ 0.27-0.40 on our data — LOWER than the
+folklore ~0.7, which came from the SNAPS score correction across a data
+gap; stanford_cars (h_w = 0.46) is the registered discriminating
+prediction (D3 says qe gains there).
 
 Dependency graph: (M1) -> Lemma A [G1,G2,G3] -> Lemma W/T [G4,G5] ->
 Lemma B [G6,G7] -> Prop C [G8,G9] -> Theorem. Proposition 1 (validity)
@@ -541,7 +576,7 @@ has NO gaps and stands alone.
 | # | Where | What is missing | Severity | Route |
 |---|-------|-----------------|----------|-------|
 | G1 | (M1) | mixture/homoscedastic sub-Gaussian model for DINOv2 embeddings is an idealization | modeling | report per-class covariance spectra; state theorem as model-relative |
-| G2 | Lemma A | selection-noise correlation: kNN graph built from the very features being averaged; no off-the-shelf theorem (kNN-regression bounds assume design/response independence) | MEDIUM (main math gap) | mean-shift small-ball expansion [FH75; ACMP16] + bounded density ratio on the kNN ball; own lemma |
+| G2 | Lemma A | selection-noise correlation: kNN graph built from the very features being averaged; no off-the-shelf theorem (kNN-regression bounds assume design/response independence) | MEDIUM (main math gap) | mean-shift small-ball expansion [FH75; ACMP16] + bounded density ratio on the kNN ball; own lemma. Both violation directions now SIGNED (dwt_denoise_theorem.md §8): (V1) same-class tilt = retained own noise = effective beta shrink; (V2) foreign selection aligned with own error = kappa inflation; both push h* UP, so the (I)-model h* is a floor |
 | G3 | Lemma A | empirical h(k) vs population posterior purity h_pop | mild | state theorem conditionally on measured h(k) |
 | G4 | Lemma W/T | diagonal-in-PCA whitening != full RCA; k-means clusters != classes | mild, checkable | two label-free diagnostics (off-diagonal energy; cluster/class covariance match) |
 | G5 | (M3) | spiked model fails on low-PR data (aircraft) | none (scope, predicted) | PR rule = checkable form of (M3); theorem excludes that regime by assumption |
@@ -580,7 +615,17 @@ Each checkable assumption gets a measured pre/post-DWT panel:
    [T23] cubic metric analogue: mean |score - q_hat| pre/post DWT.
 6. G4: off-diagonal energy of within-class covariance in the pool-PCA
    basis; within-cluster vs within-class covariance distance.
+7. **DONE 08-12 — Theorem D3 gate constants** (`src/dwt_gate_constants.py`,
+   `output/dwt_theory/gate_constants.json`): (h_w, beta_hat, k_eff, kappa)
+   -> h* and predicted d'-ratio per dataset, zero fitted knobs. All tested
+   datasets land on the predicted side (cifar100/mini/cifar10 gain,
+   aircraft harm); **OPEN: the cars discriminating run** — qe arm on
+   stanford_cars in the champion pipeline (D3 predicts d'-ratio 1.52 =
+   gain at h_w = 0.46; the folklore 0.7 gate predicts harm).
 Expected picture per the regime map: panels 1-5 favorable on
 cifar100/mini/cifar10, condition (M2) or (M3) visibly violated on
 aircraft/cars — the theorem's assumptions should FAIL exactly where the
-method empirically fails; that alignment is itself a result.
+method empirically fails; that alignment is itself a result. Panel 7
+sharpens this: on the D stage the aircraft failure is predicted
+QUANTITATIVELY, and cars is predicted to be a (mild) success, not a
+failure — the two low-homophily datasets are no longer one regime.
