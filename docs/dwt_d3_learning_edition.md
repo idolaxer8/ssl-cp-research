@@ -61,7 +61,7 @@ and the punchline is that **only the third level gets the physics right**:
 |---|---|---|---|
 | 1. Per-point distance | $\lVert x - \mu_y \rVert$ for one point, worst case | only certifies repair of unusually noisy points | D1 |
 | 2. Average distance | $\mathbb{E}\lVert x - \mu_y\rVert^2$ | says *some* amount of qe always helps — **too optimistic**, contradicts the data | D2 |
-| 3. Class separation | signal-to-noise of the margin between two classes | help iff $h > h^\*$, a threshold with no tunable constants — **matches the data** | D3 |
+| 3. Class separation | signal-to-noise of the margin between two classes | help iff $h > h^\ast$, a threshold with no tunable constants — **matches the data** | D3 |
 
 The progression is itself the lesson: the quantity CP set size responds to
 is not "how far points sit from their class mean" but "how well two
@@ -161,7 +161,7 @@ Fix an ego $x$ of class $y$ and its realized neighborhood. Define:
 | $\kappa$ | "kappa, drift concentration" | $\dfrac{D_y + D_c}{\big((1-h_y) + (1-h_c)\big)\,\Delta_{\mathrm{pair}}}$ | what fraction of the impurity's *potential* damage is realized on this axis. $\kappa = 1$: every foreign neighbor is the partner class, pulling exactly along $v$. $\kappa < 1$: impurity is spread over other classes whose pull is partly off-axis (measured: $0.59$–$0.76$). $\kappa > 1$ is possible outside the idealization (Section 9). |
 | $\rho$ | "rho, the noise-shrink factor" | $\sqrt{(1-\beta)^2 + \beta^2/k_{\mathrm{eff}}}$ | by how much smoothing multiplies the noise standard deviation. Always $< 1$ for $\beta \in (0,1]$ — smoothing *always* reduces noise. The question is only whether the signal shrinks *less*. |
 | $d'$ | "d-prime" | $\dfrac{\text{mean separation}}{\text{common sd}}$ along $v$ | the **standardized margin** = signal-to-noise ratio of the two classes on the pair axis. Borrowed from signal detection theory [GS66]; identical to the two-class Fisher discriminant ratio [F36] evaluated on the *fixed* axis $v$. For equal-variance Gaussians the Bayes accuracy of the pair is $\Phi(d'/2)$ — so $d'$ *is* pair distinguishability. |
-| $h^\*$ | "the gate" | $1 - \dfrac{1-\rho}{2\beta\kappa}$ | the homophily threshold: qe improves $d'$ iff $h > h^\*$. The entire theorem D3 exists to derive and interpret this one formula. |
+| $h^\ast$ | "the gate" | $1 - \dfrac{1-\rho}{2\beta\kappa}$ | the homophily threshold: qe improves $d'$ iff $h > h^\ast$. The entire theorem D3 exists to derive and interpret this one formula. |
 
 ---
 
@@ -318,9 +318,9 @@ compute in the clean model.
 > $$
 >
 > Writing $R = \frac{1}{k_{\mathrm{eff}}} + \frac{\lVert\bar d\rVert^2}{\sigma^2}$:
-> the error improves, $\mathbb{E}[\hat\varepsilon^2|C] < \sigma^2$, **iff**
+> the error improves, $\mathbb{E}[\hat\varepsilon^2 \mid C] < \sigma^2$, **iff**
 > $0 < \beta < \frac{2}{1+R}$; the best choice is
-> $\beta^\* = \frac{1}{1+R}$, achieving contraction factor $\frac{R}{1+R} < 1$.
+> $\beta^\ast = \frac{1}{1+R}$, achieving contraction factor $\frac{R}{1+R} < 1$.
 
 Read the right side of (D2) as a bias–variance decomposition:
 
@@ -371,10 +371,10 @@ noise enters at $\sigma^2/k_{\mathrm{eff}}$, not $\sigma^2$.*
 
 **Step 4 — optimize over $\beta$.** $f(\beta) = (1-\beta)^2 + \beta^2 R$ is
 a parabola; $f(\beta) < 1$ solves to $\beta < 2/(1+R)$, and
-$f'(\beta^\*) = 0$ gives $\beta^\* = 1/(1+R)$, $f(\beta^\*) = R/(1+R)$.
+$f'(\beta^\ast) = 0$ gives $\beta^\ast = 1/(1+R)$, $f(\beta^\ast) = R/(1+R)$.
 $\blacksquare$
 
-(The $\beta^\*=\frac{1}{1+R}$ form is the textbook shrinkage-estimator
+(The $\beta^\ast=\frac{1}{1+R}$ form is the textbook shrinkage-estimator
 weighting — same shape as Ledoit–Wolf's optimal shrinkage intensity or a
 Jacobi step of graph-Laplacian denoising [MA21]; the variance-contraction
 mechanism is the same one proved for graph convolutions in the CSBM model
@@ -459,7 +459,7 @@ the re-optimized post-smoothing axis: the transform must help the
 > and, in the symmetric case $h_y = h_c = h$, improves ($> 1$) **iff**
 >
 > $$
-> h \;>\; h^\* \;=\; 1 - \frac{1 - \rho}{2\beta\kappa}.
+> h \;>\; h^\ast \;=\; 1 - \frac{1 - \rho}{2\beta\kappa}.
 > \tag{D3}
 > $$
 
@@ -547,10 +547,10 @@ $$
 1 - 2\beta\kappa(1-h) > \rho
 \iff 2\beta\kappa\,(1-h) < 1-\rho
 \iff 1 - h < \frac{1-\rho}{2\beta\kappa}
-\iff h > \underbrace{1 - \frac{1-\rho}{2\beta\kappa}}_{h^\*}. \qquad\blacksquare
+\iff h > \underbrace{1 - \frac{1-\rho}{2\beta\kappa}}_{h^\ast}. \qquad\blacksquare
 $$
 
-**Interpretation of $h^\*$'s anatomy.** $1-\rho$ is the *noise dividend*
+**Interpretation of $h^\ast$'s anatomy.** $1-\rho$ is the *noise dividend*
 (how much sd you saved); $2\beta\kappa$ is the *price of impurity* (how fast
 each unit of $(1-h)$ eats the mean separation). The gate says: your
 homophily deficit $1-h$ must not exceed the dividend divided by the price.
@@ -565,7 +565,7 @@ homophily deficit $1-h$ must not exceed the dividend divided by the price.
    ratio $= \sqrt{k_{\mathrm{eff}}}$ — the textbook $\sqrt{k}$ gain of
    averaging $k$ points.
 4. **Toy, $h = 3/4$:** ratio $= \frac{1 - 2(0.8)(1)(0.25)}{0.447}
-   = \frac{0.6}{0.447} \approx 1.34 > 1$. Gate: $h^\* = 1 -
+   = \frac{0.6}{0.447} \approx 1.34 > 1$. Gate: $h^\ast = 1 -
    \frac{1-0.447}{1.6} = 0.654 < 0.75$. ✓ helps ($d'$: $4 \to 5.4$; pair
    accuracy $97.7\% \to 99.6\%$).
 5. **Toy, $h = 2/4$:** ratio $= \frac{1-0.8}{0.447} \approx 0.45$ — sharp
@@ -581,7 +581,7 @@ homophily deficit $1-h$ must not exceed the dividend divided by the price.
 
 ## 7. The six corollaries — each in one breath
 
-**C1 — Scale-freeness ("one law").** $h^\*$ depends only on
+**C1 — Scale-freeness ("one law").** $h^\ast$ depends only on
 $(\beta, k_{\mathrm{eff}}, \kappa)$ — no $\sigma_v$, no
 $\Delta_{\mathrm{pair}}$, hence *no dataset-specific scale*. One threshold
 should govern all datasets. This is exactly what the eta×k sweep found
@@ -591,17 +591,17 @@ $\lVert\bar d\rVert^2/\sigma^2$, which varies per dataset.
 
 **C2 — No small-$\beta$ rescue.** As $\beta \to 0$,
 $\rho \approx 1 - \beta$, so $\frac{1-\rho}{2\beta\kappa} \to
-\frac{1}{2\kappa}$ and $h^\*(0^+) = 1 - \frac{1}{2\kappa}$ ($= 0.5$ at
+\frac{1}{2\kappa}$ and $h^\ast(0^+) = 1 - \frac{1}{2\kappa}$ ($= 0.5$ at
 $\kappa = 1$; $\approx 0.2$ at measured $\kappa \approx 0.6$). At the margin
 level, signal damage and noise dividend are *both first-order in $\beta$*,
 so turning the knob down rescues nothing below the gate — matching "harm
 not tunable" and "aircraft champion = no qe". Contrast D2, where the damage
 is second-order ($\beta^2\lVert\bar d\rVert^2$) and small $\beta$ always
 wins. *This one contrast is the whole norm-vs-margin story.* Moreover
-$h^\*(\beta)$ is **increasing** in $\beta$ (proof sketch: $\rho(\beta) =
+$h^\ast(\beta)$ is **increasing** in $\beta$ (proof sketch: $\rho(\beta) =
 \lVert(1-\beta,\ \beta/\sqrt{k_{\mathrm{eff}}})\rVert$ is a norm along an
 affine path, hence convex, with $\rho(0)=1$; so the chord slope
-$\frac{1-\rho(\beta)}{\beta}$ is nonincreasing, and $h^\* = 1 -
+$\frac{1-\rho(\beta)}{\beta}$ is nonincreasing, and $h^\ast = 1 -
 \frac{1}{2\kappa}\cdot\frac{1-\rho(\beta)}{\beta}$ is nondecreasing).
 More smoothing demands more homophily — the sane direction for a gate.
 
@@ -652,7 +652,7 @@ anchors = labeled class means; `output/dwt_theory/gate_constants.json`).
 Everything else is *computed* from the four measured numbers — zero fitted
 constants:
 
-| dataset | $h_w$ | $\beta$ | $k_{\mathrm{eff}}$ | $\kappa$ | $\rho$ | $h^\*$ | $d'$-ratio | axis SNR |
+| dataset | $h_w$ | $\beta$ | $k_{\mathrm{eff}}$ | $\kappa$ | $\rho$ | $h^\ast$ | $d'$-ratio | axis SNR |
 |---|---|---|---|---|---|---|---|---|
 | cifar100 | 0.809 | 0.615 | 9.38 | 0.629 | 0.434 | 0.269 | 1.96 | 3.63 |
 | miniimagenet | 0.919 | 0.693 | 9.30 | 0.717 | 0.382 | 0.378 | 2.41 | 4.22 |
@@ -667,7 +667,7 @@ $$
 \rho = \sqrt{(1-0.615)^2 + \tfrac{0.615^2}{9.38}} = \sqrt{0.148 + 0.040} = 0.434,
 $$
 $$
-h^\* = 1 - \frac{1 - 0.434}{2(0.615)(0.629)} = 1 - \frac{0.566}{0.774} = 0.269,
+h^\ast = 1 - \frac{1 - 0.434}{2(0.615)(0.629)} = 1 - \frac{0.566}{0.774} = 0.269,
 $$
 $$
 \frac{d'_s}{d'_r} = \frac{1 - 2(0.615)(0.629)(1 - 0.809)}{0.434} = \frac{0.852}{0.434} = 1.96 .
@@ -675,10 +675,10 @@ $$
 
 How to read the columns:
 
-- **$h_w$ vs $h^\*$ is the verdict.** cifar100/mini/cifar10: $h_w \gg h^\*$
+- **$h_w$ vs $h^\ast$ is the verdict.** cifar100/mini/cifar10: $h_w \gg h^\ast$
   → predicted strong gains ($d'$-ratio 2.0–2.4); observed: qe was the first
   non-{PCA, whitening} lever that made the menu. aircraft: $h_w = 0.258 <
-  h^\* = 0.346$ → predicted degradation (0.70); observed: champion requires
+  h^\ast = 0.346$ → predicted degradation (0.70); observed: champion requires
   qe OFF, harm not tunable. **Every tested dataset sits on its predicted
   side.**
 - **$h_w$ reproduces the logged `purity`** (.80/.92/.26/.46 map) — the
@@ -690,7 +690,7 @@ How to read the columns:
   representation smoother, the theory puts break-even far lower.
 - **stanford_cars is the discriminating cell.** qe has never been run on
   cars. Folklore ($0.46 < 0.7$) predicts harm; D3 predicts a **gain**
-  ($d'$-ratio 1.52, $h_w$ comfortably above $h^\* = 0.292$). One experiment
+  ($d'$-ratio 1.52, $h_w$ comfortably above $h^\ast = 0.292$). One experiment
   decides between two live hypotheses — registered *before* the experiment,
   with the caveat that the known idealization violations both push the true
   gate UP (Section 9), so a cars failure has a mechanism while a cars
@@ -737,7 +737,7 @@ Assumption (I) fails in exactly two ways, *both with known sign*:
   corrections act on the selection distribution, i.e. directly on the
   V1/V2 tilt.)
 
-Both cracks push $h^\*$ up, so the (I)-model values ($0.27$–$0.40$) are a
+Both cracks push $h^\ast$ up, so the (I)-model values ($0.27$–$0.40$) are a
 **floor**: the observed harm boundary must lie between the theory floor and
 the folklore $0.7$ — and cars ($h_w = 0.46$) sits right in the contested
 strip, which is what makes it the discriminating experiment.
@@ -769,7 +769,7 @@ remaining theory work, split setting; gaps G6–G8 in `dwt_theory.md`):
    quantile).
 3. **Stochastically better scores ⇒ smaller expected sets** (Prop C, via
    [D24]): the expected set size has the exact representation
-   $\mathbb{E}|C(X)| = \sum_{c} \Pr\big(s(X, c) \le \hat q\big)$
+   $\mathbb{E}\lvert C(X)\rvert = \sum_{c} \Pr\big(s(X, c) \le \hat q\big)$
    — sum over labels of "how often label $c$'s score sneaks under the
    quantile". First-order stochastic dominance of wrong-label scores
    (plus the quantile's own shift, the "quantile-step" lemma) drives every
@@ -788,7 +788,7 @@ setting first, FCP transfer as exact-validity + empirical tie).
 |---|---|---|---|
 | [Z23] | Zargarbashi, Antonelli, Bojchevski, *Conformal Prediction Sets for GNNs*, ICML 2023 ([PMLR v202](https://proceedings.mlr.press/v202/h-zargarbashi23a.html)) | Theorem 2 = D1's template (triangle inequality, convex smoother, homophily budget); Prop 2 = validity-for-free template; footnote 5 (score-vs-probability-space gap, *"easy (but notationally more cumbersome)"*); §5.3 leaves self-built kNN graphs to future work; $\lambda \approx 0.5$ typical optimum. | **Verified verbatim from the PDF, 2026-08-12.** All four passages match our claimed readings. |
 | [T23] | Teng et al., *Predictive Inference with Feature Conformal Prediction*, ICLR 2023 (arXiv 2210.00173) | precedent for CP theory *in representation space*; Thm 6 = conditional efficiency scaffold for our Lemma B/Prop C step. | located + read (08-10 sweep); scaffold role only in this doc. |
-| [D24] | Dhillon et al., *On the Expected Size of Conformal Prediction Sets*, AISTATS 2024 | the exact identity $\mathbb{E}|C| = \sum_c \Pr(s(X,c) \le \hat q)$ powering Prop C. | statement re-used from litsweep; derivation is elementary (Fubini over labels). |
+| [D24] | Dhillon et al., *On the Expected Size of Conformal Prediction Sets*, AISTATS 2024 | the exact identity $\mathbb{E}\lvert C\rvert = \sum_c \Pr(s(X,c) \le \hat q)$ powering Prop C. | statement re-used from litsweep; derivation is elementary (Fubini over labels). |
 | [K65] | Kish, *Survey Sampling*, 1965 | $k_{\mathrm{eff}} = W^2/\sum w_u^2$ = effective sample size of weighted averaging (D2 step 3, D3 variance). | standard; re-derived inline (one line). |
 | [GS66] | Green & Swets, *Signal Detection Theory and Psychophysics*, 1966 | $d'$ as THE two-distribution discriminability index; $\Phi(d'/2)$ accuracy link. | standard. |
 | [F36] | Fisher 1936 | $d'^2$ = two-class Fisher criterion along a fixed axis. | standard. |
@@ -799,12 +799,12 @@ setting first, FCP transfer as exact-validity + empirical tie).
 | [FH75], [ACMP16] | Fukunaga & Hostetler 1975; Arias-Castro, Mason, Pelletier, JMLR 2016 | mean-shift reading of kNN averaging → V1's sign (selection tilt = effective $\beta$ shrinkage). | litsweep; used for direction, not magnitude. |
 | [R19] | Radenović, Tolias, Chum, TPAMI 2019 (arXiv 1711.02512) | alpha-QE: the deployed operator itself ($w = \cos^a$ weighted neighbor average). No theory exists in that literature (08-10 citation sweep: CP slot empty). | operator identity checked vs `_qe_smooth`. |
 | [S24] | SNAPS, NeurIPS 2024 (arXiv 2405.14303) | its Prop 2 (only efficiency statement) = the $h = 1$, $\Delta = 0$ corner of this framework — sanity check 6.6(1); no impurity tolerance exists there. | litsweep bucket 4. |
-| [MA21] | Ma et al., CIKM 2021 (arXiv 2010.01777) | qe = one Jacobi/gradient step of MAP denoising under a cluster prior — variational framing behind the $\beta^\* = 1/(1+R)$ shrinkage shape. | litsweep 3.4. |
+| [MA21] | Ma et al., CIKM 2021 (arXiv 2010.01777) | qe = one Jacobi/gradient step of MAP denoising under a cluster prior — variational framing behind the $\beta^\ast = 1/(1+R)$ shrinkage shape. | litsweep 3.4. |
 
 Independent checks performed for this edition (2026-08-12): D1 proof
 re-derived (steps 1–4); D2 expansion re-derived including all vanishing
 cross terms; D3 mean (m1–m5), variance (v1–v2), and gate algebra (g1–g2)
-re-derived; $h^\*(\beta)$ monotonicity proof sketch added (convexity of
+re-derived; $h^\ast(\beta)$ monotonicity proof sketch added (convexity of
 $\rho$); C3's variance-optimality of $\beta = k/(k+1)$ re-derived; all five
 table rows recomputed from $(h_w, \beta, k_{\mathrm{eff}}, \kappa)$ — match
 to rounding. No errors found in the research edition.
@@ -815,12 +815,12 @@ to rounding. No errors found in the research edition.
 
 1. Why does $\Delta_{\mathrm{pair}}$ cancel out of the $d'$-ratio, and why
    is that cancellation scientifically important?
-2. D2 says small $\beta$ always helps; D3 says below $h^\*(0^+) = 1 -
+2. D2 says small $\beta$ always helps; D3 says below $h^\ast(0^+) = 1 -
    \frac{1}{2\kappa}$ no $\beta$ helps. Both are theorems. What exactly is
    different about the *quantity* each one tracks?
 3. In the toy at $h = 1/2$, compute the $d'$-ratio for $\beta = 0.3$
    ($k_{\mathrm{eff}} = 4$, $\kappa = 1$). Does the sign of the conclusion
-   match C2's prediction $h^\*(0^+) = 0.5$?
+   match C2's prediction $h^\ast(0^+) = 0.5$?
 4. Why is $\kappa$ measured as $\approx 0.6$ rather than $1$, and in which
    direction would a $\kappa$ of $1.2$ move the gate?
 5. Aircraft has the *largest* $\beta$ (0.862) of all datasets. Why is that
@@ -837,7 +837,7 @@ to rounding. No errors found in the research edition.
 <details><summary>Answers</summary>
 
 1. Both the mean-separation shrink and the noise shrink are *multiplicative*
-   in the same units, so absolute scales divide out; $h^\*$ then depends
+   in the same units, so absolute scales divide out; $h^\ast$ then depends
    only on machine-measurable neighborhood statistics. Importance: it
    predicts ONE gate for ALL datasets ("one law"), which is falsifiable —
    and matches the sweep.
@@ -849,12 +849,12 @@ to rounding. No errors found in the research edition.
    decisive on the one axis where classification is decided.
 3. $\rho = \sqrt{0.49 + 0.09/4} = \sqrt{0.5125} \approx 0.716$; numerator
    $= 1 - 2(0.3)(1)(0.5) = 0.7$; ratio $\approx 0.978 < 1$: still harm,
-   just milder. Matches C2: $h = 0.5$ is exactly $h^\*(0^+)$ at $\kappa=1$,
+   just milder. Matches C2: $h = 0.5$ is exactly $h^\ast(0^+)$ at $\kappa=1$,
    so *no* $\beta > 0$ strictly helps (the ratio $\to 1$ only as $\beta \to 0$).
 4. Impurity is spread over several foreign classes whose anchor offsets are
    partly orthogonal to $v$, so only a fraction of the drag projects onto
    the axis. $\kappa = 1.2$ (possible under V2's selection alignment or
-   far anchors with big projections) *raises* $h^\*$ — a stricter gate.
+   far anchors with big projections) *raises* $h^\ast$ — a stricter gate.
 5. $\beta = W/(1+W)$ grows with neighborhood similarity; Aircraft's
    near-duplicate but impure neighborhoods maximize it. C3: the self-tuning
    knob smooths hardest where homophily is lowest, and C2 says you can't
