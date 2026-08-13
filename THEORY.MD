@@ -253,11 +253,21 @@ them would silently change experiment semantics.
   `src/cars_qe_gate_experiment.py`): qe harms; the (I)-model mis-sorted
   the cell (measured d'-ratio 0.735 vs predicted 1.52) via the
   pre-registered V1/V2 mechanism; the margin->size link held and the
-  measured d'-ratio sign calls the verdict 5/5 across datasets.** What
-  remains is not another data cell but the G2 remainder lemma: a
-  quantitative V1/V2 damping factor that maps composition constants to
-  the MEASURED d'-ratio (the five predicted-vs-measured pairs are now its
-  calibration data). Until then the deployable gate stays empirical
+  measured d'-ratio sign calls the verdict 5/5 across datasets.**
+  ~~Where does the overprediction live?~~ **LOCALIZED same day
+  (`src/dprime_overprediction_diagnostic.py`, research edition §8b):
+  in the DENOMINATOR — the sqrt(k) averaging dividend does not exist
+  (measured noise shrink 0.90-0.98 vs modeled 0.31-0.43), because
+  Var(nu_v) ~ sigma_v^2 with corr(e_v, nu_v) ~ 0.85-0.90: the kNN mean is
+  the mean-shift local mean, and within-class variance along confusable
+  axes is ~80-95% shared structured field (phi ~ 0.78-0.96), only the iid
+  shell averages. Numerator damage also overpredicted (S ~ 1.0-1.05 at
+  high h — mode-sharpening). Revised mechanism: qe = mean-field mover,
+  not variance reducer; helps iff the local field flows toward the
+  own-class mode.** The G2 remainder lemma now has a concrete shape: a
+  two-component noise model (shared field + iid shell) with the single
+  new constant phi, replacing 1/k_eff by phi + (1-phi)/k_eff and
+  re-deriving the gate. Until then the deployable gate stays empirical
   (qe OFF below h ~ 0.8).
 - **Closing the two medium gaps in the DWT proof draft**
   (`docs/dwt_theory.md` + `docs/dwt_denoise_theorem.md`, gap ledger

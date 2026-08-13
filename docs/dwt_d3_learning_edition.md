@@ -804,6 +804,25 @@ the V1/V2 damping is real and first-order at mid-homophily, and the
 all-datasets predicted-vs-measured comparison shows the damping is
 universal while the measured sign still calls the CP verdict 5/5.**
 
+**Follow-up — the overprediction localized (same day,
+`src/dprime_overprediction_diagnostic.py`; research edition §8b).**
+Decomposing the measured ratio into D3's own factors $S/N$ shows the
+error lives almost entirely in the **denominator**: the promised
+$\sqrt{k}$ noise dividend does not exist ($N \approx 0.90$–$0.98$
+measured vs $\rho \approx 0.31$–$0.43$ modeled). Directly measured,
+$\operatorname{Var}(\nu_v) \approx \sigma_v^2$ (not $\sigma_v^2/k$) and
+$\operatorname{corr}(e_v, \nu_v) \approx 0.85$–$0.90$: the neighbor mean
+is the *local density mean* (mean shift, [FH75]), and the within-class
+displacement is ~80–95% a smooth structured field (pose/sub-cluster
+geometry) that ego and neighbors share — only a thin iid shell averages
+away. The numerator damage is also overpredicted (at high $h$ the
+separation doesn't shrink at all, $S \approx 1.0$–$1.05$). Corrected
+mechanism: **qe is a mean-field mover, not a variance reducer** — it
+helps when the local field flows toward the own-class mode and harms when
+it flows toward the confusable class. The G2 repair is now shaped: a
+two-component noise model with structured fraction $\phi$
+($N^2 = \phi + (1-\phi)(1-\beta)^2$, measured $\phi \approx 0.78$–$0.96$).
+
 Note the honesty budget here vs the template: DAPS assumes homophily *into*
 the given graph and explicitly leaves the self-built kNN-graph case to
 future work (verified: *"Assuming that the graph is constructed based on

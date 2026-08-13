@@ -443,6 +443,71 @@ in exactly two ways, both with a KNOWN SIGN — this is gap G2 of
   measured ratio sits below its prediction; the measured sign still calls
   the verdict 5/5) — the G2 remainder lemma is now the single blocker for
   a quantitative gate.
+
+### 8b. The overprediction localized (2026-08-13): there is no averaging dividend — the noise is a shared local field
+
+`src/dprime_overprediction_diagnostic.py` +
+`output/cars_qe_gate/dprime_overprediction.{json,png}` decompose the
+measured ratio into D3's own two factors, ratio = S/N (signal shrink over
+noise shrink), per dataset, plus the exact empirical decomposition of the
+denominator
+
+```
+N^2 = (1-beta)^2 + beta^2 * Var(nu_v)/sigma_v^2
+      + 2*beta*(1-beta) * Cov(e_v, nu_v)/sigma_v^2
+```
+
+(under (I): Var(nu_v)/sigma_v^2 = 1/k_eff ~ 0.10, Cov = 0). Sanity: the
+reconstructed N^2 matches the directly measured N^2 on all five datasets,
+S/N reproduces the measured full ratios, and the per-ego h_w reproduces
+the Section-6 gate constants. Measured (c10/mini/c100/cars/aircraft):
+
+```
+S:  model 0.97/0.92/0.85/0.48/0.21   measured 1.05/1.04/1.00/0.69/0.60
+N:  model 0.41/0.38/0.43/0.32/0.31   measured 0.90/0.93/0.98/0.98/0.96
+Var(nu_v)/sigma_v^2:  model ~0.10    measured 0.76/0.80/1.02/1.02/0.96
+Cov(e_v,nu_v)/sigma_v^2:  model 0    measured 0.77/0.77/0.89/0.91/0.91
+```
+
+**Finding 1 — the denominator carries the overprediction, and the
+mechanism is mean-shift, not sampling noise.** The promised sqrt(k)
+dividend does not exist: N ~ 0.90-0.98 everywhere instead of rho ~ 0.31-
+0.43. The neighbor mean nu has the variance of a SINGLE point (not 1/k of
+it) and is ~0.85-0.90 correlated with the ego's own error: nu(x) is the
+local density mean at x ([FH75]), and the within-class displacement e is
+dominated by a smooth structured field (sub-cluster/pose/viewpoint
+geometry) that the ego and its pool neighbors SHARE. Averaging cancels
+only the thin iid shell around that field. Writing sigma_v^2 =
+phi*Var(field) + (1-phi)*Var(iid), the corrected noise law is N^2 = phi +
+(1-phi)*(1-beta)^2, and inverting the measured N^2 gives phi ~ 0.78-0.96
+across the five datasets — the within-class variance along confusable
+axes is ~80-95% shared structure. This is (V1) made precise and
+quantified: "retained own noise" is in fact the entire local field.
+
+**Finding 2 — the numerator damage is ALSO overpredicted, in the helpful
+direction.** S_meas > S_pred everywhere; on the three gain datasets the
+mean separation does not shrink at all (S ~ 1.00-1.05 — mild
+mode-sharpening: pool neighbors pull egos toward class-conditional
+density modes, which are better separated than means). The composition
+kappa overcounts damage because part of the foreign "drift" is itself
+absorbed into the shared-field move. On cars/aircraft the residual
+signal damage (S = 0.69/0.60) is real and, with no noise dividend to pay
+for it, is the entire mechanism of harm.
+
+**Consequence for the theory.** The (I)-model got both factors of the
+high-h regime wrong in compensating directions (big fake dividend, big
+fake damage), which is why its SIGN predictions held at high h while both
+its factors were off; at mid h the errors stop compensating and the sign
+flips (cars). The corrected mechanism story: **qe is not a variance
+reducer; it is a mean-field mover** — it trims the ~5-20% iid shell and
+shifts egos along the shared local field, helping when that field flows
+toward the own-class mode (high h) and harming when it flows toward the
+confusable class (low h). The G2 remainder lemma therefore has a concrete
+target shape: a two-component noise model (shared field m(x) + iid
+shell), with phi as its one new measurable constant, replacing 1/k_eff by
+phi + (1-phi)/k_eff in the variance term and re-deriving the gate. V2
+alignment is confirmed but secondary (corr(e_v, dbar_v) = 0.23-0.70,
+largest where drift is smallest).
 - Remaining formal debt (unchanged from the `dwt_theory.md` ledger): a
   rigorous (V1)/(V2) remainder lemma (G2 — route: [ACMP16] small-ball +
   bounded density ratio on the kNN ball; note [BJ21]-style kNN-regression
