@@ -177,6 +177,15 @@ model assumptions at all) and the same two limits, which [Z23] inherit too:
   not adversarial — it is zero-mean, and VECTOR AVERAGING CANCELS it. That
   cancellation is invisible to any triangle-inequality argument. Fixing (L2)
   is Theorem D2; DAPS stops at the template.
+  **[Post-cars note, 2026-08-13 (§8b): this criticism aged badly. The
+  measured same-class neighbor displacements are ~0.85-0.90 correlated
+  with the ego's own displacement (shared local field), so the
+  cancellation D2 "fixes in" barely exists — D1's adversarial-alignment
+  accounting of the same-class term is empirically near-exact, and it was
+  D2's optimism that the data rejected. D1 itself is untouched: it is
+  assumption-free, and the repair it certifies (above-typical-noise egos
+  pulled toward the neighborhood) is exactly the iid-shell trim that
+  survives in the revised mean-field-mover mechanism.]**
 
 ---
 

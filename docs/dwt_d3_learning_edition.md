@@ -326,6 +326,18 @@ direction. In reality they are independent and mostly *cancel*. A triangle
 inequality is blind to cancellation, by construction. DAPS stops here; our
 D2 exists precisely to see the cancellation.
 
+> **Post-cars irony (2026-08-13).** Point (b) is the one paragraph of
+> this file the data later *rejected in reverse*: the measured neighbor
+> displacements are ~0.85–0.90 correlated with the ego's own
+> displacement (they share the local structured field, Section 9 /
+> research edition §8b), so the cancellation D2 was built to capture
+> barely exists. D1's "pessimistic" aligned-mass accounting turned out to
+> be nearly the *typical* case, not the worst case — D1 is the one
+> theorem of the three whose content took no damage from the cars run.
+> Keep reading D2 as the *logical* next rung (it is how one would fix
+> (L2) if the noise were iid); just know that empirically the fix
+> over-fixed.
+
 ---
 
 ## 5. Level 2 — Theorem D2: averaging in expectation, and why it's still the wrong level
