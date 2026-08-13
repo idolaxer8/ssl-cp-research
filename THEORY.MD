@@ -115,9 +115,20 @@ with zero fitted constants.** Measured on all five datasets
 (`src/dwt_gate_constants.py`): h* ~ 0.27-0.40, every tested dataset on the
 predicted side; the folklore "hom >= ~0.7" gate was an interpolation across
 the h in (0.46, 0.80) data gap using the SNAPS *score* correction — a
-different operator. Registered discriminating prediction: qe should GAIN on
-stanford_cars (h_w = 0.46, predicted d'-ratio 1.52) where folklore predicts
-harm.
+different operator. The registered discriminating prediction — qe should
+GAIN on stanford_cars (h_w = 0.46, predicted d'-ratio 1.52) where folklore
+predicts harm — **RESOLVED 08-13 against the (I)-model: qe HARMS on cars
+(+11/+28/+40% at 2/4/8 shots/class, coverage on target), and the measured
+margin d'-ratio is 0.735, not 1.52. The pre-registered escape hatch fired
+exactly as written: the (V1)/(V2) selection effects are first-order at
+mid-homophily. The structural finding survives and sharpens — measuring
+the d'-ratio directly on all five datasets (1.05/1.18/1.21/0.74/0.64 vs
+predicted 1.96/2.41/2.35/1.52/0.70) shows the (I)->measured damping is
+universal, the measured ratio is monotone in homophily, and its sign
+calls the qe verdict 5/5. So D3's margin->size link is validated
+everywhere; what needs repair is only the composition-constants
+prediction of d' (the G2 remainder). Empirical gate bracket:
+h_w in (0.46, 0.81).**
 
 The 08-10 lit sweep (`docs/dwt_theory_litsweep.md`) confirmed the niche is
 open — no post-DAPS work ports Theorem 2 to feature-similarity neighbors
@@ -238,13 +249,16 @@ them would silently change experiment semantics.
 
 ## Open Questions
 
-- **The cars discriminating run** (registered 08-12 before the
-  experiment): Theorem D3 predicts qe GAINS on stanford_cars (h_w = 0.46 >
-  h* = 0.29, d'-ratio 1.52) while the folklore 0.7 gate predicts harm; qe
-  was never run there. One champion-pipeline experiment decides which gate
-  story ships. Both known (I)-violations push the true gate UP from the
-  measured h*, so a cars failure has a ready mechanism (G2) — a cars
-  success has none in the folklore direction.
+- ~~The cars discriminating run~~ **RESOLVED 08-13 (commit 84336d8,
+  `src/cars_qe_gate_experiment.py`): qe harms; the (I)-model mis-sorted
+  the cell (measured d'-ratio 0.735 vs predicted 1.52) via the
+  pre-registered V1/V2 mechanism; the margin->size link held and the
+  measured d'-ratio sign calls the verdict 5/5 across datasets.** What
+  remains is not another data cell but the G2 remainder lemma: a
+  quantitative V1/V2 damping factor that maps composition constants to
+  the MEASURED d'-ratio (the five predicted-vs-measured pairs are now its
+  calibration data). Until then the deployable gate stays empirical
+  (qe OFF below h ~ 0.8).
 - **Closing the two medium gaps in the DWT proof draft**
   (`docs/dwt_theory.md` + `docs/dwt_denoise_theorem.md`, gap ledger
   G1-G10). G2 — selection-noise correlation — now has SIGNED directions
