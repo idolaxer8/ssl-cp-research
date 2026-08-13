@@ -15,6 +15,32 @@ everything by hand.
 > must read in a terminal, use the ASCII research edition
 > (`dwt_denoise_theorem.md`) side by side; the two use identical symbols.
 
+> **STATUS AFTER THE CARS RUN (2026-08-13) — read this first.** Sections
+> 1–7 teach the theorems as originally derived under idealization (I).
+> They are still the right thing to learn — but the cars experiment and
+> the follow-up diagnostics (Sections 8–9 and research edition §8b)
+> changed the standing of the *quantitative* claims:
+>
+> - **Validated:** D3's *level* and *link* — the margin $d'$ is the right
+>   quantity (its measured sign predicts the qe gain/harm verdict 5/5
+>   across datasets), harm-not-tunable, one-hop optimality, and the
+>   wrong-way self-tuning of $\beta$ all hold empirically.
+> - **Falsified:** the (I)-model's *numbers*. The $\sqrt{k}$ noise
+>   dividend does not exist (measured noise shrink 0.90–0.98, not
+>   0.31–0.43): within-class "noise" is ~80–95% a structured local field
+>   shared with pool neighbors, so averaging cancels almost nothing. The
+>   drift damage is also overcounted at high homophily (the field absorbs
+>   it; effective $\kappa$ drops from ~0.6–0.75 to ~0 at $h \ge 0.8$
+>   while staying ~0.31–0.35 at $h \le 0.46$).
+> - **Revised mechanism:** qe is a **mean-field mover**, not a variance
+>   reducer — it helps iff the local field flows toward the own-class
+>   mode. The corrected theorem (D3′, two-component noise model with
+>   structured fraction $\phi$) is scoped but NOT yet derived: its
+>   variance law is settled ($N^2 = \phi + (1-\phi)(1-\beta)^2$,
+>   $\phi \approx 0.78$–$0.96$ measured), its signal law is open (needs
+>   the field-absorption/mode-sharpening term). See Section 7.1 for
+>   which corollaries survive.
+
 **Verification note.** Before writing this file, three checks were run
 (2026-08-12): (1) DAPS Theorem 2, Proposition 2, footnote 5, and the
 "self-built kNN graph left for future work" passage were extracted verbatim
@@ -667,6 +693,22 @@ tune your way through a frontier you are constrained to.
 `dwt_histograms` figure) is not two effects: $d'$ is the single scalar whose
 rise means both at once, and its failure mode at low $h$ (numerator dies
 first) localizes the observed failure to the true-class side.
+
+### 7.1 Corollary survival audit (post-cars, under the field model)
+
+The cars run falsified the (I)-model's *magnitudes* (see the status box
+and Section 9), so each corollary must be re-checked against the revised
+mechanism ($N \approx 1$, damage first-order in $\beta$, field-absorbed
+at high $h$):
+
+| Corollary | Status | Why |
+|---|---|---|
+| C1 one law (scale-free gate) | **weakened** | the *formula* $h^\ast(\beta, k_{\mathrm{eff}}, \kappa)$ mispredicts (it needs $\phi$ and the field-absorption of $\kappa$); but the *empirical* one-law survives — the measured $d'$-ratio is monotone in $h_w$ with a single crossing in $(0.46, 0.81)$. |
+| C2 no small-$\beta$ rescue | **survives, stronger** | with no noise dividend at all ($N \approx 1$), smoothing at low $h$ is pure damage at *every* $\beta$ — the rescue is even more impossible than D3 said. |
+| C3 wrong-way self-tuning | **survives unchanged** | it is a statement about measured $\beta = W/(1+W)$, independent of (I). |
+| C4 one hop optimal | **survives, stronger** | there was never variance to harvest; hop 2 is pure accumulated drift. |
+| C5 $(a,k)$ one frontier | **survives qualitatively** | knobs still trade $h_w$ against $k_{\mathrm{eff}}$, but $k_{\mathrm{eff}}$ now matters much less (it only trims the thin iid shell). |
+| C6 one event | **survives** | $d'$ remains the single quantity; its sign called the verdict 5/5. |
 
 ---
 

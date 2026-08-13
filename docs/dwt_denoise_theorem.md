@@ -492,7 +492,29 @@ density modes, which are better separated than means). The composition
 kappa overcounts damage because part of the foreign "drift" is itself
 absorbed into the shared-field move. On cars/aircraft the residual
 signal damage (S = 0.69/0.60) is real and, with no noise dividend to pay
-for it, is the entire mechanism of harm.
+for it, is the entire mechanism of harm. Made quantitative via the
+effective drift concentration kappa_2 = (1 - S_meas)/(2*beta*(1-h))
+(the kappa that would reproduce the measured S in the D3 numerator):
+
+```
+                 kappa_2 (from S_meas)   kappa (composition, (I)-model)
+cifar100         0.02                    0.63
+miniimagenet    -0.37                    0.72
+cifar10         -1.35                    0.76
+stanford_cars    0.35                    0.59
+aircraft         0.31                    0.62
+```
+
+kappa_2 ~ 0.31-0.35 at low/mid h but ~0 or NEGATIVE at high h: the field
+absorbs the drift entirely (and mode-sharpening overshoots it). This is
+why a naive plug-in repair FAILS: keeping the (I) numerator and only
+correcting the variance law (N^2 = phi + (1-phi)(1-beta)^2) yields a
+gate h*' = 1 - (1-N)/(2*beta*kappa) ~ 0.95+ with cars's constants —
+contradicting the observed gain at h = 0.81. The damage term is itself
+h-gated (field absorption), beyond the explicit (1-h) factor. D3-prime
+therefore needs BOTH corrected laws: the settled variance law AND a
+field-aware signal law S(h) with an absorption factor — the latter is
+the open half of G2.
 
 **Consequence for the theory.** The (I)-model got both factors of the
 high-h regime wrong in compensating directions (big fake dividend, big
