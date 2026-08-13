@@ -29,15 +29,20 @@ K_EFF_TOY = 4.0
 BETA_TOY = 0.8
 KAPPA_TOY = 1.0
 
-# Measured gate constants (Section 8): h_w, beta, k_eff, kappa, tested verdict
+# Measured gate constants (Section 8): h_w, beta, k_eff, kappa, tested verdict.
+# stanford_cars was the registered out-of-sample cell; the run (2026-08-13,
+# src/cars_qe_gate_experiment.py) came back HARM (+11/28/40% at 2/4/8
+# shots/class; measured d'-ratio 0.735 vs (I)-model 1.52) -- the one cell the
+# (I)-model mis-sorts; its marker keeps the star shape to stay identifiable.
 DATASETS = {
     "cifar100": (0.809, 0.615, 9.38, 0.629, "gain"),
     "miniimagenet": (0.919, 0.693, 9.30, 0.717, "gain"),
     "cifar10": (0.969, 0.644, 9.58, 0.755, "gain"),
-    "stanford_cars": (0.461, 0.827, 9.83, 0.585, "untested"),
+    "stanford_cars": (0.461, 0.827, 9.83, 0.585, "harm"),
     "aircraft": (0.258, 0.862, 9.87, 0.615, "harm"),
 }
-VERDICT_COLOR = {"gain": "tab:green", "harm": "tab:red", "untested": "tab:orange"}
+VERDICT_COLOR = {"gain": "tab:green", "harm": "tab:red"}
+STAR = {"stanford_cars"}  # the registered-prediction cell
 
 
 def rho(beta, k_eff):
@@ -155,19 +160,26 @@ def fig_regime_map():
         curve = [dprime_ratio(h, beta, k_eff, kappa) for h in hs]
         ax1.plot(hs, curve, color="0.75", lw=1, zorder=1)
         y = dprime_ratio(h_w, beta, k_eff, kappa)
-        ax1.scatter([h_w], [y], s=70, color=VERDICT_COLOR[verdict], zorder=3,
-                    marker="*" if verdict == "untested" else "o",
+        ax1.scatter([h_w], [y], s=90 if name in STAR else 70,
+                    color=VERDICT_COLOR[verdict], zorder=3,
+                    marker="*" if name in STAR else "o",
                     edgecolor="k", linewidth=0.6)
         leader = dict(arrowprops=dict(arrowstyle="-", color="0.6", lw=0.7)) if name in ("miniimagenet", "cifar10") else {}
         ax1.annotate(name, (h_w, y), xytext=label_at_1[name], fontsize=8, **leader)
+    ax1.annotate(
+        "cars ran 2026-08-13: qe HARMED (+11-40%)\n"
+        "measured $d'$-ratio 0.73, not 1.52 —\n"
+        "the (I)-model's one mis-sorted cell (V1/V2)",
+        xy=(0.461, 1.52), xytext=(0.06, 2.35), fontsize=8, color="tab:red",
+        arrowprops=dict(arrowstyle="->", color="tab:red", lw=0.9))
     ax1.axhline(1.0, color="k", lw=1)
     ax1.text(0.02, 1.03, "help", fontsize=8, color="0.3")
     ax1.text(0.02, 0.90, "harm", fontsize=8, color="0.3")
     ax1.axvline(0.7, color="tab:red", ls="--", lw=1.2)
     ax1.text(0.705, 2.7, "folklore gate 0.7\n(wrong operator)", fontsize=8, color="tab:red")
     ax1.set_xlabel("measured weighted homophily $h_w$")
-    ax1.set_ylabel("predicted $d'$-ratio")
-    ax1.set_title("Each dataset on its own law curve — every tested one\non the predicted side; cars ($\\star$) = the registered prediction")
+    ax1.set_ylabel("(I)-model predicted $d'$-ratio")
+    ax1.set_title("(I)-model law curves. The registered cars cell ($\\star$) came back\nHARM — the empirical gate sits between $h$ = 0.46 and 0.81")
     ax1.set_xlim(0, 1)
 
     # Panel 2: the (beta, h) plane with the h*(beta) gate frontier
@@ -187,15 +199,20 @@ def fig_regime_map():
         "aircraft": (0.795, 0.295),
     }
     for name, (h_w, beta, k_eff, kappa, verdict) in DATASETS.items():
-        ax2.scatter([beta], [h_w], s=70, color=VERDICT_COLOR[verdict],
-                    marker="*" if verdict == "untested" else "o",
+        ax2.scatter([beta], [h_w], s=90 if name in STAR else 70,
+                    color=VERDICT_COLOR[verdict],
+                    marker="*" if name in STAR else "o",
                     edgecolor="k", linewidth=0.6, zorder=3)
         ax2.annotate(name, (beta, h_w), xytext=label_at_2[name], fontsize=8)
     ax2.axhline(0.7, color="tab:red", ls="--", lw=1.2)
     ax2.text(0.51, 0.715, "folklore 0.7", fontsize=8, color="tab:red")
+    ax2.annotate("cars: HARM despite sitting above the\n(I)-model frontier — the frontier is a FLOOR;\nthe true gate lies in (0.46, 0.81)",
+                 xy=(0.827, 0.461), xytext=(0.512, 0.30), fontsize=8,
+                 color="tab:red",
+                 arrowprops=dict(arrowstyle="->", color="tab:red", lw=0.9))
     ax2.set_xlabel("self-tuned smoothing strength $\\beta = W/(1+W)$")
     ax2.set_ylabel("measured homophily $h_w$")
-    ax2.set_title("The gate frontier rises with $\\beta$ (C2) — and the self-tuning\npushes fine-grained data the wrong way (C3)")
+    ax2.set_title("The (I)-model frontier is a floor, not the boundary (§8/§9):\ncars confirms V1/V2 push the true gate up")
     ax2.set_xlim(0.5, 0.95)
     ax2.set_ylim(0, 1)
     ax2.legend(fontsize=8, loc="lower left")

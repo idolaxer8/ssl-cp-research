@@ -370,19 +370,28 @@ Reading:
   correction — a different operator (score-space, per-class column, no
   variance-optimal self-weight). For the representation smoother, D3 puts
   the break-even far lower.
-- **stanford_cars (h_w = 0.461) is the discriminating cell.** qe was never
-  run on cars (layers-file format kept it out of the menu round). The
-  shared-gate folklore predicts harm (0.46 < 0.7); Theorem D3 predicts a
-  GAIN (d'-ratio 1.52, h_w comfortably above h* = 0.292). One experiment
-  decides: run the qe arm on cars in the champion pipeline. If it gains,
-  the theorem beats the folklore gate and the deployable rule becomes
-  "gate the D stage at h* (beta, k_eff, kappa), not at 0.7". If it harms,
-  the (I)-violations (Section 8) are first-order at mid-homophily and the
-  theorem's kappa needs its selection-alignment correction — also
-  informative. Caveat noted in advance: G2 inflates kappa at low h, and
-  both G2 effects push the true gate UP from the (I)-model h*, so a cars
-  failure has a ready mechanism; a cars success has none in the folklore
-  direction.
+- **stanford_cars (h_w = 0.461) was the discriminating cell — OUTCOME
+  (2026-08-13, `src/cars_qe_gate_experiment.py`, `output/cars_qe_gate/`):
+  qe HARMS.** Champion pipeline, paired splits, 20 trials, balanced
+  2/4/8 shots/class (cal 392/784/1568; cal=200 is degenerate at K=196 —
+  1 shot/class collapses the LOO prototype): wt -> qe_wt set size
+  57.1 -> 62.8 / 21.9 -> 28.1 / 13.3 -> 18.6 (+11/+28/+40%), coverage on
+  target in every arm (validity free, as §7 promises). The registered
+  escape hatch fired exactly as written: measured margin d'-ratio 0.735
+  (1% of 196 pairs improved) vs the (I)-model 1.52 — the (V1)/(V2)
+  selection effects are first-order at mid-homophily and cross the sign
+  boundary there. D3's margin->size link HELD (d' fell, sets grew); what
+  failed is the (I)-idealized prediction of d' from composition constants.
+  Companion measurement on all five datasets (`src/measure_dprime_all.py`,
+  `output/cars_qe_gate/dprime_predicted_vs_measured.json`): measured
+  ratios 1.05/1.18/1.21/0.74/0.64 (cifar100/mini/cifar10/cars/aircraft)
+  vs predicted 1.96/2.41/2.35/1.52/0.70 — the (I)-model overpredicts
+  EVERYWHERE (the damping is universal, not cars-specific), the measured
+  ratio is monotone in h_w, and its sign predicts the qe verdict 5/5.
+  Net: the empirical gate lies in h_w in (0.46, 0.81); h* is a floor
+  only; the quantitative gate needs the G2 remainder lemma (V1/V2
+  damping), not more data cells. Deployment rule unchanged in practice:
+  qe stays OFF below h ~ 0.8 until G2 is quantitative.
 - The axis-SNR column quantifies the norm-vs-margin lesson: aircraft's
   nearest pairs sit 1.2 noise-sd apart along the pair axis (vs 3.6-4.8 on
   the gate-ON datasets) — the bias dbar competes with sigma_v, not with
@@ -426,8 +435,14 @@ in exactly two ways, both with a KNOWN SIGN — this is gap G2 of
   qe-upgrade pilots' one confirmed upgrade) helps: hubness corrections act
   on the selection distribution, i.e. directly on the (V1)/(V2) tilt.
 - Both violations push h* UP: the measured h* ~ 0.3-0.4 is a FLOOR. The
-  observed harm boundary must sit between the (I)-model h* and the folklore
-  0.7; cars (Section 6) is the experiment that locates it.
+  cars run (Section 6, 2026-08-13) CONFIRMED the floor reading: harm at
+  h_w = 0.46 despite the (I)-model predicting gain, with the measured
+  d'-ratio (0.735 vs predicted 1.52) exhibiting the damping directly. The
+  five-dataset predicted-vs-measured comparison bounds the empirical gate
+  in h_w in (0.46, 0.81) and shows the damping is universal (every
+  measured ratio sits below its prediction; the measured sign still calls
+  the verdict 5/5) — the G2 remainder lemma is now the single blocker for
+  a quantitative gate.
 - Remaining formal debt (unchanged from the `dwt_theory.md` ledger): a
   rigorous (V1)/(V2) remainder lemma (G2 — route: [ACMP16] small-ball +
   bounded density ratio on the kNN ball; note [BJ21]-style kNN-regression

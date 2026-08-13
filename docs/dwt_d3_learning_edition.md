@@ -714,13 +714,27 @@ How to read the columns:
   a data gap, and *for a different operator* (the SNAPS score-space
   correction, which has no variance-optimal self-weight). For the
   representation smoother, the theory puts break-even far lower.
-- **stanford_cars is the discriminating cell.** qe has never been run on
-  cars. Folklore ($0.46 < 0.7$) predicts harm; D3 predicts a **gain**
-  ($d'$-ratio 1.52, $h_w$ comfortably above $h^\ast = 0.292$). One experiment
-  decides between two live hypotheses — registered *before* the experiment,
-  with the caveat that the known idealization violations both push the true
-  gate UP (Section 9), so a cars failure has a mechanism while a cars
-  success would have none in the folklore direction.
+- **stanford_cars was the discriminating cell — OUTCOME (2026-08-13,
+  `src/cars_qe_gate_experiment.py`, `output/cars_qe_gate/`): qe HARMS.**
+  Paired champion-pipeline runs (20 trials, balanced 2/4/8 shots/class):
+  set size $57.1 \to 62.8$, $21.9 \to 28.1$, $13.3 \to 18.6$
+  (+11/+28/+40%), coverage on target everywhere. The measured margin
+  $d'$-ratio is $0.735$ (only 1% of 196 pairs improved) versus the
+  (I)-model's predicted $1.52$ — so the *pre-registered escape hatch fired
+  exactly as written*: the (V1)/(V2) selection effects are first-order at
+  mid-homophily and cross the sign boundary there. Crucially, D3's
+  **margin→size link held** ($d'$ fell and sets grew); what failed is the
+  (I)-idealized *prediction of* $d'$ from composition constants. A
+  companion measurement on all five datasets
+  (`src/measure_dprime_all.py`) makes the pattern exact: measured ratios
+  1.05/1.18/1.21/0.74/0.64 vs predicted 1.96/2.41/2.35/1.52/0.70 — the
+  (I)-model overpredicts *everywhere* (V1/V2 always damp), the measured
+  ratio is monotone in $h_w$, and **its sign predicts the CP verdict 5/5**.
+  Net standing: the empirical gate lies in $h_w \in (0.46, 0.81)$ — the
+  (I)-model $h^\ast$ is confirmed as a floor only, and the folklore 0.7,
+  while inside the bracket, was still an interpolation with no mechanism.
+  The quantitative gate now needs the G2 remainder lemma (V1/V2 damping)
+  rather than more data cells.
 - **axis SNR** $= \Delta_{\mathrm{pair}}/\sigma_v$ quantifies the
   norm-vs-margin lesson: Aircraft's nearest class pairs sit 1.2 noise-sd
   apart on the pair axis (vs 3.6–4.8 for the gate-ON datasets). The drift
@@ -729,20 +743,20 @@ How to read the columns:
 
 ![regime map](figs/dwt_learning_regime_map.png)
 
-*Figure 3 — the measured regime map, two views, zero fitted constants.
-Left: each gray line is one dataset's law $d'\text{-ratio}(h)$ computed
-from its own $(\beta, k_{\mathrm{eff}}, \kappa)$; the dot marks its
-measured homophily $h_w$. Green = tested, qe gained; red = tested, qe
-harmed; orange star = stanford_cars, never tested. Every tested dataset
-sits on its predicted side of the $y = 1$ line, and the folklore 0.7
-threshold (dashed red) visibly mis-sorts cars — that is the registered
-out-of-sample prediction. Right: the same datasets in the $(\beta, h)$
-plane against the gate frontier $h^{\ast}(\beta)$ (drawn at the typical
-$\kappa = 0.62$, $k_{\mathrm{eff}} = 9.6$; each dataset's exact $h^\ast$
-uses its own constants). The frontier rises with $\beta$ (C2), and note
-where the self-tuned $\beta = W/(1+W)$ *puts* the datasets: the
-fine-grained ones (cars, aircraft) get pushed hardest right — smoothed
-most exactly where homophily is lowest (C3).*
+*Figure 3 — the regime map, two views, zero fitted constants (updated
+after the cars run). Left: each gray line is one dataset's (I)-model law
+$d'\text{-ratio}(h)$ computed from its own
+$(\beta, k_{\mathrm{eff}}, \kappa)$; the dot marks its measured homophily
+$h_w$. Green = qe gained; red = qe harmed; the star is stanford_cars, the
+registered out-of-sample cell — it came back HARM (measured $d'$-ratio
+0.73, not the predicted 1.52), making it the one cell the (I)-model
+mis-sorts and confirming that $h^{\ast}$ is a floor. Right: the same
+datasets in the $(\beta, h)$ plane against the (I)-model frontier
+$h^{\ast}(\beta)$. The frontier still rises with $\beta$ (C2) and the
+self-tuned $\beta = W/(1+W)$ still pushes fine-grained data the wrong way
+(C3) — but cars sits above the drawn frontier and harmed anyway: the true
+boundary lies in $h_w \in (0.46, 0.81)$, above the (I) floor, exactly the
+direction the V1/V2 analysis (Section 9) predicted.*
 
 ---
 
@@ -782,8 +796,13 @@ Assumption (I) fails in exactly two ways, *both with known sign*:
 
 Both cracks push $h^\ast$ up, so the (I)-model values ($0.27$–$0.40$) are a
 **floor**: the observed harm boundary must lie between the theory floor and
-the folklore $0.7$ — and cars ($h_w = 0.46$) sits right in the contested
-strip, which is what makes it the discriminating experiment.
+the empirical gain cells — and cars ($h_w = 0.46$) sat right in the
+contested strip, which is what made it the discriminating experiment.
+**The experiment ran (2026-08-13, Section 8): cars harmed, with measured
+$d'$-ratio 0.735 vs the (I)-model 1.52 — the floor reading is confirmed,
+the V1/V2 damping is real and first-order at mid-homophily, and the
+all-datasets predicted-vs-measured comparison shows the damping is
+universal while the measured sign still calls the CP verdict 5/5.**
 
 Note the honesty budget here vs the template: DAPS assumes homophily *into*
 the given graph and explicitly leaves the self-built kNN-graph case to
