@@ -9,6 +9,139 @@ All experiments: CIFAR-100, DINOv2 embeddings, exchangeable pipeline
 
 ---
 
+## Goals — week 08-17 to 08-21 (planned)
+
+Forward-looking plan, not results. Two threads: finish the DWT theory
+justification (goals 1-4 — simplify the score the theory covers, anchor it in
+non-CP classification literature, extend to the W/T phases, and mine SNAPS
+Prop 2 for the expected-set-size proof device), and start the ICLR 2027 run-up
+(goals 5-6 — backbone generalization + submission schedule). Deadline anchor:
+ICLR 2027 abstracts Sep 18, full papers Sep 25 (AOE) — 5 weeks out.
+
+### 1. D1 score simplification — is the softmax redundant?
+
+**Why.** Theorem D1 (docs/dwt_denoise_theorem.md) is stated for scores built
+from raw similarities in representation space, but the empirical champion NCM
+is `prototype_softmax`: cosine-to-prototype logits pushed through a softmax,
+THR score 1 - p_c(x). The softmax couples every class into each score via the
+normalizer, which is exactly the part the theory does NOT model. If a plain
+score s_c(x) = -cos(mu_c, x) (no softmax, no cross-class coupling) matches the
+champion, the theory-method gap closes for free and the paper's score is
+simpler; if it doesn't, the normalizer is load-bearing and the theory needs a
+term for it.
+- Implement the ablation arm: raw negative-cosine-to-prototype NCM (same
+  prototypes, same pipeline, softmax removed). Note softmax at fixed T is NOT
+  a monotone per-class transform (the denominator depends on all logits), so
+  the sets can genuinely differ — this is a real ablation, not a reparam.
+- Head-to-head on the standard grid: cifar100 / mini / aircraft / cars / CUB,
+  cal 200-800, balanced default + random-validity arm. Judge on size, CovGap,
+  singleton-hit; check whether the verdict interacts with the qe/homophily
+  regime map.
+- Deliverable = a verdict: softmax redundant (drop it — theory covers the
+  deployed score verbatim) or load-bearing (quantify the gap and state where
+  it lives: coupling, temperature, or tail behavior).
+
+### 2. Non-CP classification literature for the theory
+
+**Why.** The DWT anchors so far are CP/graph-CP-local (DAPS, SNAPS, CSBM
+averaging). The lemma chain (denoise / Lipschitz / quantile-step) is really a
+classification-geometry argument, and general classification theory may
+already have the missing pieces — especially for goal 1 (prototype vs softmax)
+and goal 3 (W/T).
+- Sweep the obvious veins: neural collapse (prototype geometry of trained
+  features), kNN classifier consistency (Cover-Hart, Chaudhuri-Dasgupta),
+  margin + Lipschitz generalization bounds, mean-shift / denoising theory
+  (qe is already identified as a mean-shift step), spiked-covariance / RMT
+  results for whitening and truncation, metric-learning bounds (RCA line).
+- Deliverable: annotated shortlist in `docs/` mapping each candidate result to
+  the lemma it would anchor (D / W / T / quantile-step), with a
+  transplantable-statement-or-not verdict per item. Feeds `literature.md`.
+
+### 3. W and T phases — prove or bound their contribution
+
+**Why.** The Denoise phase now has D1-D3 plus the empirical d'-ratio dial;
+Whiten and Truncate — empirically the BIGGER levers (PCA-128 is the main size
+win on separable data; full-rank LW cluster-whitening is the aircraft
+champion) — still have zero formal justification. Symmetric treatment: per
+phase, a lemma (or explicit bound) saying when the transform shrinks the
+relevant score gap, plus the condition under which it flips harmful.
+- Whiten: use the RCA / metric-learning frame — whitening as the closed-form
+  Mahalanobis metric fit on pool second-order stats; bound the effect on
+  within- vs between-class distances under a shared-covariance model (the
+  80-95% shared variance field measured in the qe post-mortem is the
+  empirical input).
+- Truncate: spiked-covariance frame — PCA-k keeps the spike subspace, discards
+  isotropic noise; bound the d' change as a function of spike/noise
+  eigen-separation, and recover the known failure mode (aircraft: signal in
+  the low-variance tail -> truncation harms, PR predicts it).
+- Deliverable: lemma statements W1/T1 (even conditional) mirroring the D1
+  structure + the per-phase empirical diagnostic table (d'-ratio analogue per
+  phase, datasets x transforms), extending docs/dwt_denoise_theorem.md toward
+  a full DWT theorem.
+
+### 4. SNAPS Proposition 2 — the expected-set-size upgrade over DAPS
+
+**Why.** DAPS Theorem 2 is a per-point score-improvement condition and never
+mentions expected set size; SNAPS Prop 2 somehow lifts the same aggregation
+idea to a statement with set-size content. Our D1 mirrors DAPS line by line,
+so whatever device SNAPS used to get from per-point to expectation is the
+exact device we need to turn D1-D3 into an E|C| statement.
+- Re-read Prop 2 with the proof, not the abstract: what is the added
+  assumption (score distribution? homophily in expectation? exchangeability of
+  the aggregated scores?), what quantity is bounded (E|C|, P(smaller set),
+  singleton-hit?), and where does the quantile step enter.
+- Map each ingredient onto our objects (pool-kNN weights w_u, homophily
+  h_w(x), Delta_F) and either transplant the argument or state precisely which
+  ingredient our setting lacks. Cross-check against the Dhillon 24 E|C|
+  identity already in the anchor stack.
+- Deliverable: a short section in docs/dwt_denoise_theorem.md — either the
+  E|C| corollary or a documented obstruction.
+
+### 5. Backbone generalization — beyond DINOv2
+
+**Why.** Every headline number rides DINOv2-base embeddings. The paper's
+regime story (homophily dial for qe/SNAPS, PR for transform selection,
+d'-ratio for denoise) claims to be a property of the embedding geometry, not
+of one backbone — that claim is untested. Backbone transfer is also the
+cheapest reviewer-proofing experiment before the ICLR push.
+- Extract embeddings for 2-3 contrasting backbones (presets exist in
+  `src/extract_features.py`): clip-base (contrastive text-aligned), mae-base
+  (masked-recon, known-weak linear separability), beitv2-base — on cifar100 +
+  aircraft first (the two regime poles), cars/CUB if time. Cluster GPU for
+  extraction; 336px on local 4GB if needed.
+- Re-run the champion pipeline (pool-fit PCA/whiten + geodesic/prototype NCM
+  + qe with the gate) per backbone. The question is NOT "which backbone wins"
+  but: do the label-free dials (h, PR, d'-ratio) still predict the right
+  transform/gate decisions per backbone x dataset cell?
+- Deliverable: backbone x dataset table (size @ cal 200/400/800, coverage,
+  dial values, gate decision correct y/n) — the generalization table for the
+  paper.
+
+### 6. ICLR 2027 run-up — schedule, gap audit, distillation
+
+**Why.** Abstracts Sep 18, papers Sep 25 (AOE): 5 working weeks. The repo has
+~15 result threads, multiple live worktrees with unmerged branches, and a
+THEORY.MD that grew by accretion — the submission needs one distilled story
+with every claim backed by a committed, reproducible experiment.
+- Write `docs/iclr2027_plan.md`: (a) the distilled claim list (working story:
+  exchangeable pool-fit DWT pipeline + FCP at label-starved budgets, with
+  label-free regime dials and theory), (b) claim -> evidence -> gap table
+  (which claims still need experiments — expected gaps: backbone table
+  (goal 5), W/T lemmas (goal 3), gate robustness), (c) the calendar:
+  wk 08-17 gap audit + this week's goals; wk 08-24 freeze method, run main
+  tables + missing experiments; wk 08-31 draft (method + theory sections
+  first); wk 09-07 full draft + internal review pass; wk 09-14 polish,
+  abstract in by 09-18, paper 09-25.
+- Code organization: merge-or-archive every live worktree branch (several
+  hold unmerged results: pool-repr-menu, theory-dwt-justification,
+  g3-semisup, transform-selection uncommitted); one reproduction script per
+  planned table/figure.
+- Theory distillation: compress THEORY.MD + dwt_denoise_theorem.md into a
+  paper-shaped skeleton (assumptions -> D/W/T lemmas -> pipeline theorem ->
+  regime dials), flagging what goals 1-4 must resolve first.
+
+---
+
 ## Goals — week 08-03 to 08-07 (planned)
 
 Forward-looking plan, not results. Two threads: harden the SNAPS pool-score
