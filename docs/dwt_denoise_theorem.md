@@ -186,6 +186,17 @@ model assumptions at all) and the same two limits, which [Z23] inherit too:
   assumption-free, and the repair it certifies (above-typical-noise egos
   pulled toward the neighborhood) is exactly the iid-shell trim that
   survives in the revised mean-field-mover mechanism.]**
+- **Empirical check (2026-08-16, `src/d1_empirical_check.py`,
+  `output/dwt_theory/d1_empirical_check.json`; figure
+  `docs/figs/dwt_learning_d1_check.png`):** bound holds for 100% of egos
+  on all five datasets; certified => improved holds pointwise (100% of
+  certified egos improved, zero exceptions); certification rate is
+  monotone in homophily (63.5/64.7/40.9/7.6/2.4% on
+  c10/mini/c100/cars/aircraft) — an assumption-free echo of the regime
+  map; realized NORM improvement is ~100% everywhere INCLUDING aircraft
+  (where qe harms CP) — the one-number proof that the norm level is the
+  wrong currency (D2's lesson); median relative slack 0.28-0.53,
+  tightest on high-h datasets, consistent with §8b field alignment.
 
 ---
 

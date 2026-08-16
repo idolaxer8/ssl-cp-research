@@ -338,6 +338,36 @@ D2 exists precisely to see the cancellation.
 > (L2) if the noise were iid); just know that empirically the fix
 > over-fixed.
 
+### 4.4 Empirical check of D1 (2026-08-16)
+
+D1 is deterministic, so it cannot fail — but its *pointwise implication*
+and its *conservatism* are both measurable (`src/d1_empirical_check.py`,
+`output/dwt_theory/d1_empirical_check.json`, k=10, a=3, ~60 egos/class):
+
+| dataset | bound holds | certified (margin > 0) | certified → improved | improved overall | median rel. slack |
+|---|---|---|---|---|---|
+| cifar10 | 100% | 63.5% | **100%** | 100.0% | 0.28 |
+| miniimagenet | 100% | 64.7% | **100%** | 100.0% | 0.30 |
+| cifar100 | 100% | 40.9% | **100%** | 100.0% | 0.37 |
+| stanford_cars | 100% | 7.6% | **100%** | 99.5% | 0.53 |
+| aircraft | 100% | 2.4% | **100%** | 99.2% | 0.46 |
+
+![D1 empirical check](figs/dwt_learning_d1_check.png)
+
+*Figure 4 — left: every certified ego improved (the D1-forbidden
+lower-right quadrant is empty across all five datasets — the implication
+is pointwise exact). Right: certification (dashed) fires mostly in the
+far noise tail, exactly the "tail repair" reading of Section 4.3. Three
+bonus lessons: (i) the certification RATE is itself monotone in
+homophily (63/65/41/7.6/2.4%) — a D1-native, assumption-free echo of the
+regime map; (ii) realized NORM improvement is ~100% everywhere —
+including aircraft, where qe wrecks CP sets — the sharpest empirical
+proof that norm-level improvement is the wrong currency (Section 5.4's
+lesson, now visible in one number); (iii) the bound's slack is smallest
+exactly on the high-homophily datasets (0.28 vs 0.53), consistent with
+the field finding that the same-class term is nearly aligned in
+practice.*
+
 ---
 
 ## 5. Level 2 — Theorem D2: averaging in expectation, and why it's still the wrong level
