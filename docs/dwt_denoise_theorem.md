@@ -592,3 +592,176 @@ Owed (the honest debt, tracked in the G-ledger):
   the label-free surrogate for (h_w, kappa) — the deployability blocker
   the gate theorem now gives a precise shape to: predict sign(d'-ratio)
   without pool labels.
+
+---
+
+## 10. SNAPS Proposition 2 dissected: how a DAPS-style pointwise theorem became an E|C| statement, and what transplants (2026-08-16)
+
+Weekly goal 4. Source: Song et al., NeurIPS 2024 ("SNAPS"), Prop 2 +
+Appendix A.2 (docs/SNAPS-...-GNN.pdf, pp. 6, 14-15). DAPS Theorem 2 (our
+Section 0 template) never mentions set size; SNAPS Prop 2 concludes
+E[|C~(x)|] <= E[|C(x)|]. This section extracts how, grades the proof, and
+states what our chain should import.
+
+### 10.1 What Prop 2 actually is
+
+Statement (translated to our notation): assume EVERY aggregated node has
+the ego's label (h = 1, stated upfront). The aggregated score is idealized
+in the proof (their eq. 6) as
+
+```
+S_hat_vk = (1-lam) * S_vk + lam * Ek[S_uk] ,
+```
+
+i.e. the realized neighbor average is replaced by the POPULATION
+class-conditional mean score Ek[.] — a silent infinite-neighbor /
+concentration idealization. Two conditions: (a) Ek[S_uk] < eta (the
+class-mean true-label score sits below the base 1-alpha cal quantile eta);
+(b) for false labels i, Ek[S_ui] >= (1-eps_ki)*Ek[pi_max] + Ek[xi*pi_i],
+where eps_ki = fraction of class-k points whose top prediction is i
+(their Lemma 1 — an unconditional APS identity, the only fully proved
+ingredient). Conclusion: E|C~| <= E|C|.
+
+Proof skeleton — a 2x2 case split at the level of SCORE ENTRIES, i.e. of
+the individual membership events {S_vc <= eta}:
+
+- True-label entry k: if S_vk >= Ek[S_uk], the convex combination LOWERS
+  it (contraction toward a smaller target); else S_hat_vk < Ek[S_uk] < eta
+  by (a) — already safe and stays safe. Direction favorable in both cases,
+  deterministically.
+- False-label entry i: if S_vi <= Ek[S_ui], contraction RAISES it; else
+  S_hat_vi - eta > Ek[S_ui] - eta >= -Delta_S with
+  Delta_S = eta - (Lemma-1 bound), and the proof says Delta_S "is very
+  small", so the probability of the entry dropping below the new quantile
+  "is very low". No bound is given. This is the leak.
+- Quantile: "since false scores corresponding to ground-truth labels will
+  decrease, eta_hat < eta" — asserted from "some cal scores decrease",
+  with no order-statistic argument.
+- Final line: "Finally E|C~| <= E|C|" — the expectation step is literally
+  summing the entry-wise directions; it carries no probabilistic content.
+
+Grading: the upgrade over DAPS Theorem 2 is NOT a new probabilistic tool.
+It is (1) a change of OBJECT — from representation/probability-space error
+to score entries, whose set membership IS a threshold event, so pointwise
+score moves translate directly into |C| moves via
+|C(x)| = sum_c 1[s(x,c) <= eta]; plus (2) assumptions strong enough
+(h = 1, population-mean targets, conditions (a)+(b)) to make the move
+direction of every entry deterministic; plus (3) two unproved steps (the
+residual false-entry case and eta_hat < eta). Measured against our chain:
+**Prop C (dwt_theory.md Section 6) is already strictly more rigorous than
+SNAPS Prop 2** — its Binomial order-statistic monotone coupling IS the
+missing proof of their eta_hat < eta step, its R_alpha restriction is
+their implicit "only the crossing region matters", and its K*delta_n term
+is an explicit version of their "very low probability". The literature
+sweep's placement (litsweep: "SNAPS Prop 2 = h=1 corner") stands, now
+with the proof-level autopsy.
+
+### 10.2 The one device worth importing: contraction-toward-target
+
+What Prop 2 has that our chain lacks: it never touches G6. Our (5c) route
+needs "moments -> stochastic dominance on R_alpha", which moment
+improvements alone cannot give (crossing CDFs). SNAPS sidesteps dominance
+entirely: a convex combination with target m moves every score
+MONOTONICALLY toward m, so conditional on WHICH SIDE of the threshold the
+target sits, the direction of each membership event is known POINTWISE —
+no distributional shape, no Gaussianity, no dominance. The distributional
+question is compressed into a single event: "is the target on the safe
+side?".
+
+This transplants to our setting because the smoother is also a convex
+combination, and D3 already identified the level at which it is LINEAR:
+the pair-margin statistic g(x) = <x, v>,
+
+```
+g(x_hat) = (1-beta) * g(x) + beta * g(nu(x)) .
+```
+
+The ego's margin contracts toward the margin of its pool-local mean. The
+SNAPS case split then runs verbatim per confusable pair — with our
+measured objects in the roles their assumptions played:
+
+| SNAPS ingredient                       | our object |
+|----------------------------------------|------------|
+| target Ek[S_uk] (population class mean) | g(nu(x)) — per-ego local-mean margin, E[g(nu)] = <mu_y,v> - D_y (D3 drift) |
+| h = 1 assumption                        | (1-h) drift D_y, D_c — absorbed as reduced slack, measured |
+| condition (a) Ek[S_uk] < eta            | anchor condition (A) below |
+| Var of target = 0 (population mean)     | Var(g(nu)) ~ phi * sigma_v^2 — the Section-8b shared field; does NOT vanish with k |
+| "very low probability" residual         | explicit Chebyshev remainder (below) |
+| eta_hat < eta assertion                 | Prop C's order-statistic coupling (already proved) |
+
+### 10.3 Corollary D4 (target shape): the contraction-anchor route to E|C|
+
+Proposed statement shape, to be proved on top of D1 (the base lemma) and
+slotted where G6's named condition currently sits:
+
+**Anchor condition (A), per confusable pair (y,c):** with t* the
+pair-threshold image of the cal quantile under Lemma B's score transfer,
+and slack tau > 0:
+
+```
+for y-egos:  g(nu(x)) >= t* + tau     (local mean margin safely accepting)
+for c-egos:  g(nu(x)) <= t* - tau     (local mean margin safely rejecting)
+```
+
+**Claim (shape).** Under (M1) + (A): every ego whose own margin is on the
+safe side STAYS safe (contraction toward a safe target cannot cross);
+egos on the wrong side move toward safety; the only leak is egos whose
+TARGET is itself on the wrong side. Hence, per pair,
+
+```
+E|C^T| <= E|C| + sum_pairs P( g(nu(X)) on the wrong side | class )
+              + K*delta_n + O(1/(n+1)) ,
+```
+
+with the middle term = the FIELD-LEVEL misclassification rate — exactly
+Section 8b's mean-field-mover mechanism ("qe helps iff the local field
+flows toward the own-class mode") appearing in the E|C| accounting. For
+egos in the residual case, the overshoot probability is controlled by
+Chebyshev on the (1-beta)-scaled ego deviation:
+P(cross despite safe target) <= (1-beta)^2 * sigma_v^2 / tau^2 — an
+explicit constant where SNAPS wrote "very low".
+
+What this buys, precisely:
+
+- **G6 reframed, not just discharged-by-assumption.** The named condition
+  "score-margin dominance on R_alpha" is REPLACED by (A) + explicit
+  remainder. (A) is a first-moment condition on measurable objects (D_y,
+  D_c from the D3 instrument; Var(g(nu)) = phi-field variance from 8b) —
+  a far easier target than tail dominance, and checkable with pool labels
+  on every dataset. What remains of G6 is only locating t* in R_alpha
+  (Prop C's condition (iii), unchanged).
+- **Strictly stronger than Prop 2 where it applies:** h = 1 and zero
+  target variance are the corner (A) with infinite slack and empty
+  remainder; drift (h < 1) and field variance (phi > 0) enter as measured
+  slack reductions instead of being assumed away.
+- **The honest new difficulty (not in SNAPS):** our target g(nu) is a
+  per-ego random variable correlated ~0.85-0.90 with the ego's own margin
+  (8b), not a fixed population mean. The remainder is therefore governed
+  by the FIELD distribution, not by 1/k concentration — there is no
+  averaging rescue (the same lesson as 8b, resurfacing in the E|C| step).
+  On cars/aircraft it is (A) that fails, and the field-misclassification
+  term is the mechanism of harm — one more place the two-component noise
+  model (G2's target) is the single missing ingredient.
+- **Score-vs-margin conversion:** SNAPS aggregates scores (affine in
+  scores); we aggregate representations (affine only in g, per pair). The
+  cosine/softmax-LAC score is monotone-Lipschitz in g (Lemma B (5a)), so
+  per-pair threshold events transfer; assembling K-1 pairs costs a union
+  bound or the max-margin form — bookkeeping, not a gap.
+
+### 10.4 Verdict (weekly goal 4)
+
+How SNAPS upgraded a DAPS-style theorem to expected set size: move the
+pointwise argument to score entries where membership is a threshold
+event; assume perfect homophily and population-mean targets so every
+entry's move is deterministic; sum entries and call it an expectation;
+assert the quantile move; leave one case unbounded. The expectation
+carries no probabilistic content, and our Prop C already exceeds the
+proof's rigor on the two steps it does attempt. The importable content is
+the CONTRACTION-ANCHOR DEVICE (10.2-10.3): it converts G6 from a
+stochastic-dominance gap into a first-moment anchor condition (A) plus an
+explicit remainder, both measurable with the instruments this document
+already built (D3 drifts, 8b field variance). Proposed next theorem
+target: Corollary D4 above, proved from D1 + (A), with the Gaussian case
+of (5c) retained as a cross-check. The device also confirms, from an
+independent source, that the R_alpha restriction (5c) is the right
+formulation — SNAPS uses it implicitly and pays for skipping its proof.
