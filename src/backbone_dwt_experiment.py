@@ -69,13 +69,20 @@ N_CLUSTERS = 20
 CAL_SIZES = [200, 400, 800]      # 2 / 4 / 8 shots per class (K=100 poles)
 TEST_SIZE = 2000
 N_TRIALS = 20
-FOLKLORE_GATE = 0.7
+# D1 deploy gate (docs/dwt_denoise_theorem.md): turn qe ON only when the raw
+# neighborhood is homophilous. Empirically the DINOv2 gain regime sits at
+# h ~ 0.79; below ~0.75 qe stops paying on DINOv2. This is the label-free
+# deploy rule whose CROSS-BACKBONE transfer goal 5 tests.
+H_GATE = 0.75
+Z_SIG = 2.0                      # |z| threshold for calling a paired effect real
 
 # backbone -> embedding filename suffix (before ".pt")
 BACKBONE_SUFFIX = {
     "dinov2": "",
-    "mae": "_mae-base",
+    "dinov3": "_dinov3-base",
     "clip": "_clip-base",
+    "clip-large": "_clip-large",
+    "mae": "_mae-base",          # retained (negative control); off by default
 }
 
 
@@ -323,36 +330,44 @@ def run_cell(ds, backbone, emb_dir, n_trials, seed):
                 "sizes": [float(v) for v in s["size"]],
                 "coverages": [float(v) for v in s["cov"]]}
 
-    # ---- paired qe verdict + gate-prediction check ----
+    # ---- paired qe verdict, resolved PER cal (qe sign is cal-dependent -- a
+    #      single-cal verdict hides the CLIP flip) ----
+    gate_on = bool(h >= H_GATE)          # D1 homophily gate decision for this cell
+    out["gate_on_D1_homophily"] = gate_on
     out["verdict"] = {}
+    ever_unsafe = False                  # gate ON but qe SIGNIFICANTLY harms
+    missed_gain = False                  # gate OFF but qe SIGNIFICANTLY gains
     for cal_size in CAL_SIZES:
         d = (np.array(results["qe_wt"][cal_size]["size"])
              - np.array(results["wt"][cal_size]["size"]))
         rel = d / np.array(results["wt"][cal_size]["size"])
+        se = float(d.std(ddof=1) / np.sqrt(len(d)))
+        z = float(d.mean() / se) if se > 0 else 0.0
+        sig_gain = bool(z <= -Z_SIG)
+        sig_harm = bool(z >= Z_SIG)
+        if gate_on and sig_harm:
+            ever_unsafe = True
+        if (not gate_on) and sig_gain:
+            missed_gain = True
         out["verdict"][str(cal_size)] = {
-            "paired_delta_mean": float(d.mean()),
-            "paired_delta_se": float(d.std(ddof=1) / np.sqrt(len(d))),
-            "relative_change_mean": float(rel.mean()),
-            "qe_gains_actual": bool(d.mean() < 0)}
+            "paired_delta_mean": float(d.mean()), "paired_delta_se": se,
+            "z": z, "relative_change_mean": float(rel.mean()),
+            "sig_gain": sig_gain, "sig_harm": sig_harm}
 
-    largest = str(max(CAL_SIZES))
-    actual_gain = out["verdict"][largest]["qe_gains_actual"]
-    d3_pred_gain = bool(gc["d_prime_ratio"] > 1.0)
-    hw_pred_gain = bool(gc["h_w"] >= gc["h_star"])
-    folk_pred_gain = bool(h >= FOLKLORE_GATE)
+    # D1 gate is judged on SAFETY (never turn qe on into a real harm), not on
+    # capturing every gain. d'-ratio / h* kept only as reference diagnostics.
     out["gate_check"] = {
-        "decided_at_cal": int(largest),
-        "actual_qe_gains": actual_gain,
-        "d3_dratio_predicts_gain": d3_pred_gain,
-        "d3_hw_vs_hstar_predicts_gain": hw_pred_gain,
-        "folklore_h07_predicts_gain": folk_pred_gain,
-        "d3_dratio_correct": bool(d3_pred_gain == actual_gain),
-        "d3_hw_correct": bool(hw_pred_gain == actual_gain),
-        "folklore_correct": bool(folk_pred_gain == actual_gain)}
-    print(f"[{backbone}/{ds}] VERDICT@cal{largest}: actual_gain={actual_gain} "
-          f"| D3(d'ratio)->{d3_pred_gain} {'OK' if out['gate_check']['d3_dratio_correct'] else 'MISS'} "
-          f"| folklore(h>=.7)->{folk_pred_gain} {'OK' if out['gate_check']['folklore_correct'] else 'MISS'}",
-          flush=True)
+        "gate": "D1 homophily (qe ON iff h >= %.2f)" % H_GATE,
+        "gate_on": gate_on,
+        "gate_safe": bool(not ever_unsafe),
+        "gate_misses_a_real_gain": bool(missed_gain),
+        "diag_d_prime_ratio": float(gc["d_prime_ratio"]),
+        "diag_hw_ge_hstar": bool(gc["h_w"] >= gc["h_star"])}
+    tag = ("SAFE" if not ever_unsafe else "UNSAFE")
+    if missed_gain:
+        tag += "+misses-gain"
+    print(f"[{backbone}/{ds}] D1 gate: qe {'ON' if gate_on else 'OFF'} (h={h:.2f}) "
+          f"-> {tag}", flush=True)
     return out
 
 
@@ -360,7 +375,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--emb_dir", default="output/from_cluster/embeddings")
     ap.add_argument("--out_dir", default="output/backbone_dwt")
-    ap.add_argument("--backbones", nargs="+", default=["dinov2", "mae", "clip"])
+    ap.add_argument("--backbones", nargs="+",
+                    default=["dinov2", "dinov3", "clip", "clip-large"])
     ap.add_argument("--datasets", nargs="+", default=["cifar100", "aircraft"])
     ap.add_argument("--n_trials", type=int, default=N_TRIALS)
     ap.add_argument("--seed", type=int, default=42)
@@ -383,36 +399,48 @@ def main():
 
     # ---- master table ----
     table = {"alpha": ALPHA, "cal_sizes": CAL_SIZES, "test_size": TEST_SIZE,
-             "n_trials": args.n_trials, "folklore_gate": FOLKLORE_GATE,
+             "n_trials": args.n_trials, "h_gate": H_GATE, "z_sig": Z_SIG,
              "cells": all_cells}
     with open(os.path.join(args.out_dir, "backbone_dwt_table.json"), "w") as f:
         json.dump(table, f, indent=2)
 
-    # ---- console summary table ----
-    print("\n" + "=" * 100)
-    print("BACKBONE x DATASET  DWT gate table  (verdict decided at largest cal)")
-    print("=" * 100)
-    hdr = (f"{'backbone':8s} {'dataset':10s} {'h':>5s} {'PR':>6s} "
-           f"{'h_w':>5s} {'h*':>6s} {'d`rat':>6s} | "
-           f"{'wt@800':>7s} {'qe@800':>7s} {'rel%':>6s} {'act':>4s} "
-           f"{'D3':>4s} {'folk':>5s}")
+    # ---- console summary table: per-cal qe rel% + D1 gate safety verdict ----
+    print("\n" + "=" * 108)
+    print("BACKBONE x DATASET  DWT table   (qe rel% per cal; D1 gate = qe ON iff "
+          f"h>={H_GATE}; d'rat = D3 diagnostic)")
+    print("=" * 108)
+    hdr = (f"{'backbone':10s} {'dataset':10s} {'h':>5s} {'PR':>6s} "
+           f"{'d`rat':>6s} | {'|C|@800':>8s} | "
+           f"{'qe%200':>7s} {'qe%400':>7s} {'qe%800':>7s} | "
+           f"{'gate':>5s} {'verdict':>16s}")
     print(hdr)
-    print("-" * 100)
+    print("-" * 108)
     for c in all_cells:
         g = c["dials"]
-        largest = str(max(CAL_SIZES))
-        wt = c["arms"]["wt"][largest]["size_mean"]
-        qe = c["arms"]["qe_wt"][largest]["size_mean"]
-        rel = c["verdict"][largest]["relative_change_mean"] * 100
+        wt800 = c["arms"]["wt"][str(max(CAL_SIZES))]["size_mean"]
         gk = c["gate_check"]
-        print(f"{c['backbone']:8s} {c['dataset']:10s} "
+
+        def relstr(cs):
+            v = c["verdict"][str(cs)]
+            s = f"{v['relative_change_mean']*100:+.0f}"
+            if v["sig_gain"]:
+                s += "*"
+            elif v["sig_harm"]:
+                s += "!"
+            return s
+        verdict = "SAFE" if gk["gate_safe"] else "UNSAFE"
+        if gk["gate_misses_a_real_gain"]:
+            verdict += "+miss"
+        print(f"{c['backbone']:10s} {c['dataset']:10s} "
               f"{g['h_knn_k10']:5.2f} {g['participation_ratio']:6.1f} "
-              f"{g['h_w']:5.2f} {g['h_star']:6.2f} {g['d_prime_ratio']:6.2f} | "
-              f"{wt:7.2f} {qe:7.2f} {rel:+6.1f} "
-              f"{'gain' if gk['actual_qe_gains'] else 'harm':>4s} "
-              f"{'OK' if gk['d3_dratio_correct'] else 'MISS':>4s} "
-              f"{'OK' if gk['folklore_correct'] else 'MISS':>5s}")
-    print("=" * 100)
+              f"{g['d_prime_ratio']:6.2f} | {wt800:8.2f} | "
+              f"{relstr(200):>7s} {relstr(400):>7s} {relstr(800):>7s} | "
+              f"{'ON' if gk['gate_on'] else 'OFF':>5s} {verdict:>16s}")
+    print("=" * 108)
+    print("  qe% = paired (qe_wt - wt)/wt at that cal;  * = significant gain, "
+          "! = significant harm (|z|>=2)")
+    print("  gate SAFE = D1 gate never turns qe ON into a real harm;  "
+          "+miss = gate OFF but qe had a real gain (conservative)")
     print(f"\nsaved -> {os.path.join(args.out_dir, 'backbone_dwt_table.json')}")
 
 

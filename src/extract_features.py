@@ -13,6 +13,9 @@ MODEL_PRESETS = {
     "dinov2-base": ("vit_base_patch14_dinov2.lvd142m", 518),
     "dinov2-large": ("vit_large_patch14_dinov2.lvd142m", 518),
     "dinov2-giant": ("vit_giant_patch14_dinov2.lvd142m", 518),
+    # Self-Distillation (DINOv3 -- newer/stronger; ViT-B/16 at native 256)
+    "dinov3-base": ("vit_base_patch16_dinov3.lvd1689m", 256),
+    "dinov3-large": ("vit_large_patch16_dinov3.lvd1689m", 256),
     # Vision-Language (CLIP)
     "clip-base": ("vit_base_patch16_clip_224.openai", 224),
     "clip-large": ("vit_large_patch14_clip_224.openai", 224),
