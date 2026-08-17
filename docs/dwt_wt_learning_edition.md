@@ -1,0 +1,526 @@
+# Lemmas W1 and T1, letter by letter — a learning edition
+
+Status: v1.0 (2026-08-16). Companion to `docs/dwt_wt_lemmas.md` (the
+research edition, plain-ASCII) and sibling of
+`docs/dwt_d3_learning_edition.md` (the D-phase learning edition — read that
+one first if you haven't; this file reuses its conventions and its $d'$
+currency). This file is **pedagogical**: every symbol is introduced before
+use, every proof step is annotated with *why* it is legal, and one 2-D toy
+is carried through both lemmas so you can compute everything by hand.
+
+> **How to read this file.** The math is real LaTeX (`$...$`). It will NOT
+> render in a raw terminal — open in **VS Code and press `Ctrl+Shift+V`**,
+> or view on GitHub / Obsidian / Typora. The ASCII research edition
+> (`dwt_wt_lemmas.md`) uses identical symbols if you need a terminal copy.
+
+> **The build principle (decided 2026-08-16).** D1 is the *base lemma* of
+> the Denoise phase: deterministic, assumption-free, one triangle
+> inequality, empirically validated pointwise on all five datasets. W1 and
+> T1 are built the same way: an **exact, one-line-proof core** first
+> (W1a, T1a — no probability, no models), then the statistically loaded
+> refinements as *named, conditional clauses* with signed violations and a
+> measurement instrument (`src/wt_phase_diagnostics.py`). If you remember
+> one design rule: **prove the geometry exactly, then let the statistics
+> be honest about what they add.**
+
+**Verification note.** The W1a and T1a algebra below was re-derived
+independently of the research edition during writing; the Section-4 toy
+numbers ($d'=0.92 \to 1.90$) were computed by hand and match the figure
+script (`src/plot_wt_learning_figs.py`, closed-form, deterministic); the
+measured table (Section 8) is copied from
+`output/dwt_theory/wt_phase_diagnostics.json` (run 2026-08-16, seed 42).
+
+---
+
+## 1. The story in plain words (no math)
+
+After Denoise (qe), the pipeline applies two more pool-fit transforms:
+**W**hiten, then **T**runcate. Empirically they are the BIGGER levers:
+PCA-128 + cluster-whitening is the champion engine on CIFAR-100-like data,
+while on Aircraft PCA is a no-op-to-harmful and full-rank Ledoit-Wolf
+whitening at 768 dims is the champion. We want lemmas that explain both
+regimes — and the flip between them — as sharply as D1/D3 explain qe.
+
+The two intuitions to hold onto:
+
+- **Whitening makes the noise round so distances tell the truth.** If the
+  within-class scatter is elongated (some directions noisy, some quiet),
+  then raw distances — and the raw pair axis between two class means —
+  mix signal with nuisance. Dividing out the noise shape ($\Sigma^{-1/2}$)
+  makes every direction equally noisy; in that space the straight line
+  between the class means *is* the statistically honest axis. That is the
+  whole W phase.
+- **Truncation is a bet about where the signal lives.** Keeping the top-$m$
+  variance directions of the pool throws away the rest. If class
+  separation lives in the kept directions, you lose nothing and gain a
+  cheaper, *more estimable* space (fewer dimensions = less noise in your
+  few-shot class means). If separation hides in the *low-variance tail* —
+  which really happens; it has been a named theorem-level warning since
+  Chang 1983 — truncation destroys it and **no later step can bring it
+  back**.
+
+And the two surprises the measurement produced (Section 8):
+
+- On fine-grained data, whitening's power is the **rotation** (the
+  off-diagonal covariance structure), not the per-dimension rescale: the
+  deployed diagonal whitening moves pair-$d'$ by $\times 1.00$ everywhere,
+  full-rank whitening by $\times 3.13$ on Aircraft.
+- On easy data, *none* of the transforms moves population $d'$ — the
+  pipeline's set-size wins there are **finite-shot effects** (truncation
+  makes class prototypes estimable from few labels), not geometry. The
+  lemma that explains PCA's payoff is a statement about *estimated*
+  prototypes, not about the population.
+
+---
+
+## 2. The cast of characters
+
+| symbol | meaning | where it lives |
+|---|---|---|
+| $\mu_c$ | class anchor (population class mean) | data model (M1) |
+| $\delta = \mu_y - \mu_c$ | pair separation vector for a confusable pair | per pair |
+| $\Sigma$ | shared within-class covariance ("the noise shape") | (M1) |
+| $A$, $M = A^\top A$ | linear transform and its metric — only $M$ matters | the transform |
+| $d'(M)$ | pair discriminability after the transform | the one currency |
+| $P_m$ | orthogonal projector onto $m$ kept directions | Truncate |
+| $a_m = \|P_m\delta\|^2/\|\delta\|^2$ | **alignment**: fraction of the pair axis kept | T1a |
+| $A_m = \|P_m\delta\|^2$ | kept squared separation (whitened units) | T1b |
+| $s$ | labeled shots per class (prototype sample size) | T1b |
+| $\lambda_j, u_j$ | pool covariance eigenvalues/vectors (variance-sorted) | T1c, Chang |
+| PR | participation ratio $(\sum\lambda_j)^2/\sum\lambda_j^2$ of the pool spectrum | the dial |
+
+The one formula everything revolves around — the pair discriminability in
+the transformed space, along the transformed pair axis:
+
+$$
+d'^2(M) \;=\; \frac{(\delta^\top M\, \delta)^2}{\delta^\top M \Sigma M\, \delta}.
+$$
+
+*Where does this come from?* In the transformed space the two class means
+sit at $A\mu_y$ and $A\mu_c$; project points onto the axis between them,
+$v = A\delta/\|A\delta\|$. The projected separation is $\|A\delta\|$ and
+the projected noise variance is $v^\top A\Sigma A^\top v$; substitute
+$A^\top v = M\delta/\|A\delta\|$ and simplify. Setting $M=I$ gives the raw
+discriminability $d'^2(I) = (\delta^\top\delta)^2/(\delta^\top\Sigma\delta)$.
+Truncation is the degenerate metric $M = P_m$. This is the same $d'$ that
+Theorem D3 uses for the Denoise phase — so the three phases speak one
+currency and their ratios multiply.
+
+---
+
+## 3. A napkin toy (carried through everything)
+
+Two dimensions. Noise shape $\Sigma = \mathrm{diag}(4, \tfrac14)$: the
+horizontal direction is noisy (variance 4), the vertical is quiet
+(variance $\tfrac14$). Pair separation $\delta = (1.2,\, 0.9)$ — mostly
+horizontal in *energy*, but watch what happens.
+
+- Raw: $\delta^\top\delta = 2.25$, $\delta^\top\Sigma\delta = 4(1.44) +
+  \tfrac14(0.81) = 5.96$, so $d'(I) = 2.25/\sqrt{5.96} = 0.92$.
+- Whitened maximum: $\delta^\top\Sigma^{-1}\delta = \tfrac{1.44}{4} +
+  \tfrac{0.81}{1/4} = 0.36 + 3.24 = 3.60$, so $d'(\Sigma^{-1}) =
+  \sqrt{3.60} = 1.90$. A $\times 2.1$ improvement.
+- Where did it come from? Decompose $3.60$: the noisy direction
+  contributes $0.36$ (10%), the quiet direction $3.24$ (**90%**). The
+  quiet component of $\delta$ — only $0.9$ long — carries almost all the
+  discriminative power, because discriminability weights each direction by
+  $1/\lambda_j$. This is Chang's 1983 point, in two dimensions.
+- Now truncate to the top-variance direction ($m=1$, keep horizontal):
+  energy kept $a_1 = 1.44/2.25 = 0.64$ — looks fine! — but the
+  discriminant kept is $0.36/3.60 = 0.10$. **Energy and discriminant are
+  different currencies**, and truncation is judged in the wrong one if you
+  only look at $a_m$.
+
+![W1a in one picture](figs/dwt_wt_learning_whiten_toy.png)
+
+*Left: raw space. The ellipses are the noise; the black arrow is the pair
+axis, which fights the horizontal nuisance. Right: after whitening the
+noise is round, and the honest axis (black) has ROTATED toward the quiet
+direction (the dotted gray arrow is where the raw axis pointed). The gain
+$0.92 \to 1.90$ is real, label-free (W1b), and mostly rides the rotation —
+which is exactly finding F1 in the measured table.*
+
+---
+
+## 4. Lemma W1a — whitening is the best possible metric (exact core)
+
+### 4.1 What it says
+
+For every pair $(y,c)$ and **every** positive semidefinite metric $M$:
+
+$$
+d'^2(M) \;\le\; \delta^\top \Sigma^{-1}\delta,
+$$
+
+with equality iff $M\delta \parallel \Sigma^{-1}\delta$ — in particular at
+$M = \Sigma^{-1}$ (whitening), which attains the maximum **for every pair
+at once**. And whitening never hurts:
+$d'^2(\Sigma^{-1}) \ge d'^2(I)$, with equality iff $\delta$ is an
+eigenvector of $\Sigma$.
+
+Read it twice: it is a statement about *all* linear preprocessing at once.
+Any PCA, any rescaling, any learned linear metric — none of them can beat
+plain within-class whitening on any pair, ever (population-level). The
+entire W/T design space is a search *inside* this bound.
+
+### 4.2 The proof, annotated (one Cauchy-Schwarz)
+
+Define two helper vectors:
+
+$$
+a = \Sigma^{1/2} M \delta, \qquad b = \Sigma^{-1/2}\delta .
+$$
+
+*Why these?* Because they make the three quadratic forms in $d'^2(M)$
+into inner products: $a^\top b = \delta^\top M\delta$ (the numerator's
+root), $a^\top a = \delta^\top M\Sigma M\delta$ (the denominator), and
+$b^\top b = \delta^\top\Sigma^{-1}\delta$ (the claimed maximum). Then
+
+$$
+d'^2(M) = \frac{(a^\top b)^2}{a^\top a} \;\le\; b^\top b
+$$
+
+is literally the Cauchy-Schwarz inequality $(a^\top b)^2 \le
+(a^\top a)(b^\top b)$, divided by $a^\top a$. Equality iff $a \parallel b$,
+i.e. $M\delta \parallel \Sigma^{-1}\delta$. The never-hurts clause is the
+same inequality once more with $M = I$:
+$(\delta^\top\delta)^2 \le (\delta^\top\Sigma\delta)
+(\delta^\top\Sigma^{-1}\delta)$. $\blacksquare$
+
+*What made it this easy?* $\Sigma^{1/2}$ is the change of variables into
+the round-noise world. In that world the noise is isotropic, so the best
+axis for separating two means is trivially the line between them; every
+other choice loses by exactly the angle it makes with that line.
+Cauchy-Schwarz is that sentence in symbols.
+
+*Grade check (vs D1):* deterministic, per-pair, assumption-free (any
+$\Sigma \succ 0$), one line. Same epistemic grade as D1's triangle
+inequality. The instrument verifies it the same way D1 was verified:
+**zero bound violations** across all pairs on all five datasets.
+
+---
+
+## 5. Lemma W1b — the pool can fit it without labels (the SM miracle)
+
+### 5.1 The problem
+
+$\Sigma$ is the *within-class* covariance — it seems to need labels. The
+pool gives us only the *total* covariance
+$\Sigma_T = \Sigma + \Sigma_B$, where $\Sigma_B$ is the between-class
+scatter (how the class means themselves spread). Does whitening by the
+wrong matrix $\Sigma_T$ ruin W1a?
+
+### 5.2 Two classes: no — it is EXACTLY as good
+
+For a two-class mixture, $\Sigma_B = \pi_y\pi_c\,\delta\delta^\top$
+(a rank-one bump *along the pair axis itself*). Apply Sherman-Morrison:
+
+$$
+\Sigma_T^{-1}\delta
+= \left(\Sigma + \pi_y\pi_c\,\delta\delta^\top\right)^{-1}\delta
+= \frac{\Sigma^{-1}\delta}{1 + \pi_y\pi_c\,\delta^\top\Sigma^{-1}\delta}.
+$$
+
+*Annotate the miracle:* the between-class contamination inflates
+$\Sigma_T$ **exactly along $\delta$** — and inverting deflates along that
+same direction. Deflation changes the *length* of $\Sigma_T^{-1}\delta$,
+never its *direction*. But W1a's equality condition only cares about
+direction ($M\delta \parallel \Sigma^{-1}\delta$). So:
+
+$$
+d'^2(\Sigma_T^{-1}) = \delta^\top\Sigma^{-1}\delta = d'^2(\Sigma^{-1}).
+$$
+
+**Pool total-covariance whitening attains the label-oracle maximum with
+zero labels.** This is the strongest no-labels statement anywhere in the
+DWT theory — stronger than anything in the D phase, where selection bias
+is irreducible.
+
+### 5.3 K classes: directions still exact, a low-rank correction appears
+
+With $K$ classes, $\Sigma_B$ has rank $\le K-1$ and points along *other*
+mean differences too; Woodbury leaves a contamination of
+$\Sigma_T^{-1}\delta$ confined to a $(K{-}1)$-dimensional subspace of a
+768-dimensional space. Fukunaga's classical identity says the *discriminant
+directions* of $\Sigma_T^{-1}\Sigma_B$ and $\Sigma^{-1}\Sigma_B$ coincide
+exactly (only eigenvalues re-map, monotonically). The exact per-pair $d'$
+shortfall bound is the named gap **GW1** (severity: low).
+
+### 5.4 Estimation reality (W1c) — and what the data said
+
+Real pool whitening estimates $\Sigma$ from k-means pseudo-clusters,
+Ledoit-Wolf-shrunk (full-rank) or diagonal (deployed engine). Two named
+clauses: **GW2a** (LW's quadratic-loss consistency at $n < d$ must be
+composed with $d'$ continuity — standard) and **GW2b** (impure
+pseudo-clusters leak between-class displacement into $\hat\Sigma$).
+The measurement (Section 8) then said two humbling things:
+
+1. **Diagonal whitening does nothing to population $d'$** ($\times$1.00 on
+   all five datasets). The win of whitening is the eigenbasis rotation —
+   the off-diagonal structure — which a per-dimension rescale cannot see.
+   (In the toy: $\Sigma$ is already diagonal, so the rescale IS the
+   rotation there; in real embeddings the quiet directions are not
+   axis-aligned.)
+2. **Full-rank whitening can mildly hurt in sample** (mini $\times$0.91):
+   when raw $d'$ is already 5.7, LW estimation noise from 20 coarse
+   pseudo-clusters costs more than the rotation buys. W1c is not
+   decorative — it is the reason W is not free on easy data.
+
+---
+
+## 6. Lemma T1a — truncation, the exact accounting
+
+### 6.1 What it says
+
+Work in the whitened metric (the pipeline order: W before T; noise
+isotropic). For any orthogonal projector $P_m$ and every pair:
+
+$$
+\frac{d'_m}{d'} = \sqrt{a_m}, \qquad
+a_m = \frac{\|P_m\delta\|^2}{\|\delta\|^2} \in [0,1].
+$$
+
+*Proof (one line):* projected separation $= \|P_m\delta\|$; isotropic
+noise has sd 1 along every axis, before and after projecting; divide.
+$\blacksquare$
+
+The brutal consequence: **post-whitening, truncation can only lose.**
+Population-wise there is nothing to gain — $a_m \le 1$ always. So the
+empirical fact that PCA-128 is the champion engine on CIFAR-100 *cannot*
+be a population-geometry effect. Something else must pay for it. That
+something is T1b.
+
+### 6.2 Remark T1a′ — un-whitened truncation is crude whitening
+
+Before whitening, dropping a direction with huge nuisance variance and
+tiny $\delta$-content *does* raise $d'$ — it is an infinitely aggressive
+down-weighting of that direction, i.e. a blunt special case of W1a's
+optimal metric. This is why `t128` (PCA alone, no whitening) helps on
+mini/cifar10 ($\times$1.17/$\times$1.09 measured, *above* the
+$\sqrt{a_{128}}$ post-whitening prediction): the discarded 640 dims held
+nuisance, not signal. Truncation-helps is always W1a wearing a cheaper
+coat.
+
+### 6.3 The Chang split — why $a_m$ is the wrong dial alone
+
+![Chang: energy vs discriminant](figs/dwt_wt_learning_chang.png)
+
+*Left: toy spectrum. Blue = how much of the pair axis's ENERGY each PC
+carries (top-heavy). Orange = how much DISCRIMINANT each PC carries —
+the same energies re-weighted by $1/\lambda_j$ (tail-heavy). Right: the
+measured five datasets. Blue ($a_{128}$) is high everywhere — 0.82–0.99,
+including Aircraft at 0.87. Orange (discriminant kept by PC-128) splits
+the regimes: easy data keeps 0.55–0.85, cars/aircraft keep only ~0.2.*
+
+This is measured finding **F4** and it corrects the folklore: Aircraft's
+truncation failure is **not** "the pair axis is orthogonal to the top
+subspace" (it isn't — $a_{128}=0.87$). It is that the axis's
+*discriminant-dense component* — the low-variance 13% of its energy — is
+what truncation discards. Exactly the napkin toy, exactly Chang 1983:
+discriminability weights directions by $1/\lambda$, so the quiet tail can
+dominate, and the variance ordering used by PCA "bears no relation" (his
+phrase) to the discriminant ordering. Whitening would have up-weighted
+that tail; truncating first destroys it — hence measured finding **F3**:
+on Aircraft, truncate-then-whiten recovers only $\times$1.77 of
+full-rank whitening's $\times$3.13. **Order matters, and W-before-T is
+the theorem-consistent order.**
+
+---
+
+## 7. Lemma T1b — what truncation actually buys: estimable prototypes
+
+### 7.1 The setup
+
+Prototypes are *estimated* from $s$ shots per class:
+$\hat\mu = \mu + \varepsilon/\sqrt{s}$ with isotropic $\varepsilon$ in the
+whitened, $m$-dimensional retained space. The estimated pair axis is
+
+$$
+\hat v \;\propto\; P_m\delta + \eta,
+\qquad \mathbb{E}\|\eta\|^2 = \frac{2m}{s}
+$$
+
+($\eta$ = the difference of two prototype errors: variance $1/s$ each,
+per dimension, $m$ dimensions, two classes). The axis you *use* wobbles
+around the axis you *want*, and the wobble grows with the dimension you
+kept.
+
+### 7.2 What it says
+
+$$
+\mathbb{E}\!\left[\cos^2(\hat v, v)\right] \approx \frac{A_m}{A_m + 2m/s},
+\qquad
+d'^2_{\mathrm{eff}}(m,s) \;\approx\; \frac{A_m^2}{A_m + 2m/s},
+$$
+
+with $A_m = \|P_m\delta\|^2$ (kept squared separation, whitened units).
+The first factor is signal-energy over signal-plus-wobble-energy (the
+standard "alignment of a noisy direction estimate"); the effective $d'$
+multiplies the population $\sqrt{A_m}$ by the alignment $\cos(\hat v, v)$
+while the projected noise stays 1 by isotropy.
+
+### 7.3 Read the formula — it derives the whole PCA phenomenology
+
+![T1b curves](figs/dwt_wt_learning_t1b.png)
+
+$m$ enters **twice with opposite signs**: $A_m$ rises with $m$ (keep more
+of the axis) while $2m/s$ rises with $m$ (estimate more coordinates from
+the same few shots). Consequences, each a known empirical fact:
+
+- **Interior optimum $m^\ast$.** If the class-mean subspace sits in the
+  top spikes of the pool spectrum (Vempala-Wang: between-class scatter IS
+  a rank-$(K{-}1)$ spike of the total covariance), $A_m$ saturates by
+  $m \approx K \ll d$ — and everything kept beyond that pays the $2m/s$
+  tax for nothing. At $s=2$, $d=768$: going from 768 to 128 dims cuts the
+  tax six-fold at no alignment cost. *That* is the PCA-128 win.
+- **The win vanishes as $s$ grows** (the dashed $s=\infty$ curve is
+  monotone — no interior optimum). Matches "PCA payoff largest at small
+  cal" and finding F2: on CIFAR-100 all population ratios are
+  $\times$1.00; the pipeline's gain lives entirely in this finite-shot
+  channel.
+- **No $m$ rescues a dead numerator.** On Aircraft the discriminant-dense
+  component is outside every top-$m$ choice (Section 6.3), so the
+  numerator $A_m$ (in *discriminant* currency) is small at every $m$ —
+  truncation harm is not tunable, the T-twin of D3's corollary C2.
+
+*Status:* conditional (Gaussian isotropic prototype noise; axis-wobble
+dominant) — gap **GT2**. The raw-space instrument confirms the ordering
+and the $s$-scaling (cos² rises with $s$ on every dataset, Aircraft lowest
+at fixed $s$); the whitened-metric quantitative check is a registered
+follow-up.
+
+---
+
+## 8. Reading the measured table
+
+`src/wt_phase_diagnostics.py`, five datasets, all transforms pool-fit
+(k-means 20, seed 42), nearest-prototype pairs fixed from raw class means:
+
+```
+dataset        d'raw  wdiag  wlw    t128   t128w | a_128  sqrt  changTail  PR    s=2cos2 s=8cos2
+cifar100       3.93   x1.00  x1.03  x1.00  x1.00 | 0.82   0.91  0.45       243   0.32    0.63
+miniimagenet   5.66   x1.00  x0.91  x1.17  x1.11 | 0.93   0.96  0.24       255   0.50    0.77
+cifar10        5.45   x1.00  x1.05  x1.09  x1.07 | 0.99   1.00  0.15       119   0.32    0.63
+stanford_cars  2.85   x1.01  x1.87  x0.89  x1.34 | 0.85   0.92  0.79       24    0.23    0.54
+aircraft       1.67   x1.03  x3.13  x0.89  x1.77 | 0.87   0.93  0.83       16    0.15    0.33
+```
+
+![phase map](figs/dwt_wt_learning_phase_map.png)
+
+Walk one cell by hand — **aircraft, t128**: T1a predicts
+$d'_{128}/d' = \sqrt{a_{128}} = \sqrt{0.87} = 0.93$; measured $0.89$.
+The identity is nearly exact, and the small shortfall has the predicted
+sign (the *sample* PCs chase the structured bulk, GT1). Now the same
+dataset, **wlw**: $\times 3.13$ — the same information that truncation
+threw away, harvested instead by the $1/\lambda$ re-weighting. One
+dataset, two opposite verdicts, one mechanism (the Chang tail,
+`changTail` 0.83).
+
+The verdict pattern in one sentence each:
+
+- **wdiag $\approx$ 1.00 everywhere** — the deployed diagonal rescale
+  does not move population geometry; whitening's power is off-diagonal
+  (F1).
+- **wlw** — the fine-grained lever ($\times$1.87 cars, $\times$3.13
+  aircraft), mildly negative on mini (estimation cost, W1c).
+- **t128 vs $\sqrt{a_{128}}$** — matches on the harm side (0.89 vs
+  0.92/0.93), exceeds on the easy side (T1a′ crude whitening).
+- **t128w** — recovers part of wlw but never all of it on fine-grained
+  data: truncation first, then whitening = the tail is already gone (F3).
+- **PR** separates the regimes (243/255/119 vs 24/16); the crude
+  Marchenko-Pastur spike count does **not** (233–281 everywhere) — the
+  bulk is structured on every dataset, which is GT1's point made by a
+  failed instrument.
+- **Headroom (F6):** pool whitening reaches only 23–44% of the labeled
+  Mahalanobis oracle everywhere, and the fraction is NOT ordered by
+  homophily — so cluster *impurity* is not the limiter; either the oracle
+  flatters itself (inverted small eigenvalues) or finer/purer clustering
+  has a real 2–4$\times$ unclaimed $d'$. Discriminating experiment
+  registered in the research edition.
+
+---
+
+## 9. What is assumed where — the honest ledger
+
+| gap | clause | in words | severity |
+|---|---|---|---|
+| GW1 | W1b | $K$-class: bound the $d'$ shortfall of total-vs-within whitening (directions exact, rank-$(K{-}1)$ rescale) | low |
+| GW2a | W1c | compose Ledoit-Wolf consistency with $d'(\hat M)$ continuity | low-med |
+| GW2b | W1c | pseudo-cluster impurity → $\hat\Sigma$ leakage; per F6, reframe toward *granularity*, not just purity | medium |
+| GT1 | T1c | the pool bulk is a structured field, not white noise — sample PCs chase it; restate in Chang-functional terms (F4/F5) | medium |
+| GT2 | T1b | finite-shot constants beyond Gaussian-isotropic; whitened-metric quantitative check | low-med |
+
+What needs NO ledger entry: W1a and T1a themselves. They are exact, and
+the instrument confirms them the way D1 was confirmed (zero bound
+violations; $\sqrt{a_m}$ identity within 0.04 on the harm side).
+
+---
+
+## 10. The forward link (why CP cares)
+
+All three phases output the same number: a multiplier on the pair margin
+$d'$. In the composed metric the pipeline ratio factorizes,
+
+$$
+\frac{d'_{\mathrm{DWT}}}{d'_{\mathrm{raw}}} \;=\;
+\underbrace{\text{(W ratio)}}_{\le\, \text{W1a max}} \times
+\underbrace{\text{(T ratio)}}_{\sqrt{a_m}\ \text{or T1b}} \times
+\underbrace{\text{(D ratio)}}_{\text{D3 gate}},
+$$
+
+and everything downstream — Lemma B (margin $\to$ score distribution),
+Proposition C / Corollary D4 (score dominance or contraction-anchor $\to$
+smaller expected sets at exact coverage) — consumes only that product.
+The G6 work is agnostic to *which* phase moved $d'$. That is the payoff
+of insisting on one currency from D1 onward.
+
+---
+
+## 11. Literature map (tags → what was actually borrowed)
+
+Full annotated stack with links and reading order:
+`docs/classification_theory_anchors.md` (§4–5). The load-bearing five here:
+
+- **Chang 1983** [C83]: low-variance PCs can dominate the discriminant —
+  Section 6.3's split is his theorem, measured.
+- **Bar-Hillel et al. 2005 (RCA)** + **Fukunaga ch. 10**: W1a's optimality
+  in its published forms; the total-vs-within identity behind W1b.
+- **Paul 2007 / BBP 2005**: sample-PC overlap and the detectability
+  threshold — T1c's conditional layer (used qualitatively here; the
+  white-bulk version demonstrably fails on our data, see PR/spike row).
+- **Ledoit-Wolf 2004**: the $n<d$ license for full-rank whitening (W1c).
+- **Vempala-Wang 2004** / **Loffler-Zhang-Zhou 2021**: means-in-top-spikes
+  and the end-to-end unlabeled projection bound — T1b's saturation story.
+
+---
+
+## 12. Self-test (think first, then check)
+
+1. Why does W1a's proof need no assumption about the *distribution* of the
+   noise, only its covariance?
+2. In the napkin toy, compute $d'$ if you whiten but then truncate to the
+   (whitened) top-variance direction. Is it better or worse than raw?
+3. Diagonal whitening equals full whitening exactly when — ? (Hint: what
+   must be true of $\Sigma$'s eigenbasis?)
+4. T1a says truncation can't help after whitening. `t128` measured
+   $\times$1.17 on miniImageNet. Contradiction?
+5. Why does the T1b optimum $m^\ast$ move RIGHT (toward larger $m$) as $s$
+   grows?
+6. Aircraft: $a_{128} = 0.87$ yet truncation is harmful and whitening
+   gives $\times$3.13. Reconcile in one sentence.
+
+*Answers (sketch):* (1) $d'$ is defined from means and variances only;
+Cauchy-Schwarz is algebra on quadratic forms. (2) Whitened top direction
+is the QUIET-noise axis rescaled — post-whitening both directions have
+equal variance and the toy's whitened $\delta_w=(0.6,1.8)$ has most energy
+in the second coordinate; truncating to the *first* keeps $a_1 =
+0.36/3.60 = 0.10$, $d' = \sqrt{0.36} = 0.6$ — worse than raw's 0.92.
+Truncation choices are made in whitened currency or they lie. (3) When
+$\Sigma$ is diagonal in the data's coordinate basis — real embeddings
+aren't, hence F1. (4) No: T1a is post-whitening; `t128` acts on the
+UN-whitened space where truncation moonlights as crude whitening (T1a′).
+(5) The wobble tax $2m/s$ flattens as $s$ grows, so keeping more of
+$A_m$ wins; at $s=\infty$ the curve is monotone (population limit). (6)
+Truncation keeps 87% of the axis's energy but only 17% of its
+discriminant, while full-rank whitening re-weights exactly the
+low-variance component that carries the other 83%.
