@@ -41,6 +41,30 @@ term for it.
   deployed score verbatim) or load-bearing (quantify the gap and state where
   it lives: coupling, temperature, or tail behavior).
 
+**RESULT (2026-08-16) — VERDICT: LOAD-BEARING, and regime-dependent.** Ran the
+ablation (`src/d1_softmax_ablation.py`, new `PrototypeCosineNCM`; balanced, 20
+trials, 5 datasets, paired splits, exchangeable PCA-128+cluster-whiten). Two
+regimes, tracking the qe/homophily map:
+- **Separable backbone (high h, or low h at high cal): softmax load-bearing.**
+  Dropping it inflates sets +5% (mini h.92) to +67% (cub200@800) and ~halves the
+  correct-singleton rate (cifar100@800 0.70->0.48; cub200@800 0.56->0.32). The
+  normalizer's cross-class competition tightens confident sets — a
+  separability-gated efficiency lever. cifar100 +28-37% across cal.
+- **Non-separable + starved (low h, small cal): softmax INVERTS to a liability.**
+  aircraft@200 softmax sz=72.9/K=100 vs cosine 30.2 (-59%); cars@400 softmax
+  degenerates to the FULL set sz=196 vs cosine 59.9 (-70%). Near-uniform softmax
+  posterior flattens the p-values; plain -cos still ranks by similarity. Softmax
+  recovers its edge by cal=800 (aircraft +13%, cars +21%).
+Coverage valid for both arms throughout; `prototype_cosine` is strictly
+exchangeable with NO cal-fit term (drops even the fixed-T knob); GPU path
+bit-exact vs CPU. **Consequence for D1:** stated for plain -cos, D1 does NOT cover
+the champion verbatim — the gap is the softmax normalizer Z(x)=sum_c exp(f_c/T)
+(cross-class coupling), ~30% in our headline separable regime. Recommendation:
+state D1 for the plain score + present `prototype_cosine` as the theory-faithful
+NCM, cite this as the quantified, regime-gated softmax gap (a coupling/temperature
+term, not tail behavior). Full write-up: `docs/d1_softmax_ablation.md`; plot
+`output/d1_softmax_ablation/d1_ablation_balanced_both.png`.
+
 ### 2. Non-CP classification literature for the theory
 
 **Why.** The DWT anchors so far are CP/graph-CP-local (DAPS, SNAPS, CSBM

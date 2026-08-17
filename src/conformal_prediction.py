@@ -1510,6 +1510,10 @@ class PrototypeSoftmaxNCM(NonconformityMeasure):
         self.cosine = (logit == "cosine")
         self.eps = float(eps)
         self.allow_nonexchangeable = allow_nonexchangeable
+        # score-map hook constant (overridden by the softmax-free subclass): the
+        # score for an empty own-class prototype = max nonconformity. softmax LAC
+        # -> 1 - p with p = 0 -> 1.0.
+        self._empty_score = 1.0
         # fitted state
         self.classes_ = None
         self._cls_to_col = None
@@ -1539,6 +1543,23 @@ class PrototypeSoftmaxNCM(NonconformityMeasure):
         m = logits.max()
         e = np.exp(logits - m)
         return e / e.sum()
+
+    # -- logits -> scores hooks (overridden by PrototypeCosineNCM) -----------
+    # The ONLY place the softmax lives. fit() and updated_calibration_scores_for()
+    # both map a full logit matrix F -> per-row OWN-class scores via _scores_from_F;
+    # score_x maps the test logit vector -> the candidate-column score via
+    # _test_score. Subclassing these two swaps the softmax LAC for a plain score
+    # with NO cross-class coupling, reusing all the exact-LOO logit machinery.
+    def _scores_from_F(self, F: np.ndarray) -> np.ndarray:
+        """Own-class softmax-LAC scores 1 - p(y_i) from a full logit matrix F."""
+        P = self._softmax_rows(F / self._T)
+        n = len(F)
+        return 1.0 - P[np.arange(n), self.y_col]
+
+    def _test_score(self, f_test: np.ndarray, col: int) -> float:
+        """Softmax-LAC score for candidate column ``col`` of a test logit vector."""
+        p = self._softmax_vec(f_test / self._T)
+        return float(1.0 - p[col])
 
     # -- feature / prototype prep -------------------------------------------
     def _prep(self, X: np.ndarray) -> np.ndarray:
@@ -1621,8 +1642,7 @@ class PrototypeSoftmaxNCM(NonconformityMeasure):
         F[np.arange(n), self.y_col] = f_own
         self.F_base = F
         self._T = self._resolve_T()
-        P0 = self._softmax_rows(self.F_base / self._T)
-        self.alpha0 = 1.0 - P0[np.arange(n), self.y_col]
+        self.alpha0 = self._scores_from_F(self.F_base)
         self._cache_key = None
         self._cache = None
         self.cal_y_hat = None        # reset MS-CS y_hat cache on (re)fit
@@ -1653,12 +1673,11 @@ class PrototypeSoftmaxNCM(NonconformityMeasure):
         yc = int(y)
         if yc not in self._cls_to_col:
             # candidate class absent from cal: the test point is its sole member,
-            # so leaving it out empties class y -> p(y)=0 -> score 1.0. This is
-            # the SAME empty-class rule a singleton cal point gets (exchangeable).
-            return 1.0
+            # so leaving it out empties class y -> max nonconformity. This is the
+            # SAME empty-class rule a singleton cal point gets (exchangeable).
+            return self._empty_score
         col = self._cls_to_col[yc]
-        p = self._softmax_vec(cache["f_test"] / self._T)
-        return float(1.0 - p[col])
+        return self._test_score(cache["f_test"], col)
 
     def _augmented_col_logit(self, x: np.ndarray, y: int) -> np.ndarray:
         """Augmented class-y logit for EVERY cal point j in the bag {cal u (x, y)}:
@@ -1709,8 +1728,7 @@ class PrototypeSoftmaxNCM(NonconformityMeasure):
         else:
             # absent candidate class: append a new column (sole member = test point)
             F = np.concatenate([F, colvec[:, None]], axis=1)
-        P = self._softmax_rows(F / self._T)
-        return 1.0 - P[np.arange(n), self.y_col]
+        return self._scores_from_F(F)
 
     # -- suspected-class y_hat for the MS-CS penalty ------------------------------
     # Enables yhat_mode="ncm" with this NCM (run_fcp_with_mscs) and the prototype
@@ -1765,6 +1783,61 @@ class PrototypeSoftmaxNCM(NonconformityMeasure):
         fb_col = np.where(is_top1, self._yh_top2_col, self._yh_top1_col)
         out_col = np.where(colvec >= thresh, col, fb_col)
         return self.classes_[out_col]
+
+
+class PrototypeCosineNCM(PrototypeSoftmaxNCM):
+    """Softmax-free ablation of PrototypeSoftmaxNCM (goal 1, week 08-17).
+
+    Plain negative-cosine-to-prototype nonconformity
+        s(x, y) = 1 - cos(mu_y^{(-i)}, x)          (cosine logits, own class only)
+    with NO softmax normalizer and NO cross-class coupling -- exactly the
+    raw-similarity score shape Theorem D1 (docs/dwt_denoise_theorem.md) covers
+    verbatim.  Everything is inherited from the parent: identical class-mean
+    prototypes, identical exact leave-one-out logits (F_base /
+    _augmented_col_logit), identical empty-class rule.  The ONLY change is the
+    logits -> scores map:
+
+        parent  (softmax LAC):  s_i = 1 - softmax_c(f_c / T)[y_i]   (all K classes
+                                enter through the normalizer)
+        this NCM (plain):       s_i = 1 - f_{y_i}                    (own class only)
+
+    with f_c = <z, mu_c> in [-1, 1] (cosine mode).  This is a REAL ablation, not a
+    reparam: because softmax at fixed T is not a monotone per-class transform (its
+    denominator couples all logits), the two arms give genuinely different sets.
+    Folding (x, y) into the bag now moves ONLY the class-y members' own scores,
+    not every cal score.
+
+    Temperature is dropped (fixed to 1.0, never used), so the NCM is exactly
+    exchangeable for any fixed feature map with NO O(1/n) cal-fit term at all --
+    unlike the softmax parent, which needs a fixed/pool-sourced T.  An empty
+    own-class prototype scores 2.0 (the max of the [0, 2] range; the parent's 1.0
+    analog), so an absent candidate class is maximally nonconforming.  Validated
+    for logit='cosine' (the deployed champion + FCA default); 'dot' logits are
+    unbounded, so the 2.0 empty sentinel is not a strict dominator there.
+
+    Because 1 - cos is an order-preserving affine map of the -cos score the theory
+    states, the prediction sets are identical to a -cos NCM; the 1 - form is kept
+    so scores are nonnegative and read as "nonconformity = 1 - similarity".
+    """
+
+    def __init__(self, logit: str = "cosine", eps: float = 1e-9,
+                 allow_nonexchangeable: bool = False, **_ignored):
+        # temperature is irrelevant (no softmax) -> fix it to 1.0 so the parent's
+        # _resolve_T returns without warning and the NCM stays exactly exchangeable.
+        super().__init__(temperature=1.0, logit=logit, eps=eps,
+                         allow_nonexchangeable=allow_nonexchangeable)
+        self._empty_score = 2.0
+
+    def _scores_from_F(self, F: np.ndarray) -> np.ndarray:
+        n = len(F)
+        own = F[np.arange(n), self.y_col]
+        s = 1.0 - own
+        s[~np.isfinite(own)] = self._empty_score      # empty own-class prototype
+        return s
+
+    def _test_score(self, f_test: np.ndarray, col: int) -> float:
+        fc = f_test[col]
+        return self._empty_score if not np.isfinite(fc) else float(1.0 - fc)
 
 
 class FullConformalPredictor:
@@ -2375,6 +2448,13 @@ class FullConformalPredictor:
             E_base = torch.exp(F_base / T)                           # (n, Kc) bounded
             D_base = E_base.sum(dim=1)                               # (n,) denominator
             E_true = E_base.gather(1, ycol.view(n, 1)).squeeze(1)    # (n,) own-class exp
+        # softmax-free ablation arm (PrototypeCosineNCM): plain 1 - cos score with
+        # NO normalizer -> folding (x, y) moves ONLY class-y members' own scores;
+        # every non-member keeps its cal-only score alpha0. Requires cosine logits.
+        is_cos_ncm = isinstance(ncm, PrototypeCosineNCM)
+        if is_cos_ncm:
+            alpha0_t = torch.as_tensor(ncm.alpha0, dtype=f, device=dev)  # (n,)
+            EMPTY = torch.tensor(float(ncm._empty_score), dtype=f, device=dev)
 
         Xt = torch.as_tensor(np.asarray(X_test), dtype=f, device=dev)
         n_test = Xt.shape[0]
@@ -2410,19 +2490,30 @@ class FullConformalPredictor:
                     mem = (base - znorm2.view(1, n)) / n_c[c]
                 is_member = (ycol == c).view(1, n)                   # (1, n)
                 col_c = torch.where(is_member, mem, nonmem)          # (B, n)
-                if cosine:
+                if is_cos_ncm:
+                    # softmax-free ablation: non-members keep their cal-only score
+                    # alpha0; members take the augmented own-class score 1 - mem
+                    # (empty leave-one-out prototype -> EMPTY). Test point scores
+                    # 1 - cos(z_x, mu_c) directly (no normalizer).
+                    mem_score = torch.where(torch.isfinite(mem), 1.0 - mem, EMPTY)
+                    s_cal = torch.where(is_member, mem_score,
+                                        alpha0_t.view(1, n))         # (B, n)
+                    fc = f_test[:, c]                                # (B,)
+                    s_test = torch.where(torch.isfinite(fc), 1.0 - fc, EMPTY)
+                elif cosine:
                     # denominator swap: only class c's exp term moves per cal point
                     e_new = torch.exp(col_c / T)                     # (B, n) bounded
                     D = D_base.view(1, n) - E_base[:, c].view(1, n) + e_new
                     num = torch.where(is_member, e_new, E_true.view(1, n))
                     s_cal = 1.0 - num / D                            # (B, n)
+                    s_test = 1.0 - Ptest[:, c]                       # (B,)
                 else:
                     # dot logits unbounded -> stable full softmax over (B, n, Kc)
                     L = F_base.unsqueeze(0).expand(B, n, Kc).clone()
                     L[:, :, c] = col_c
                     s_cal = 1.0 - torch.softmax(L / T, dim=2).gather(
                         2, ycol_idx).squeeze(2)                      # (B, n)
-                s_test = 1.0 - Ptest[:, c]                           # (B,)
+                    s_test = 1.0 - Ptest[:, c]                       # (B,)
                 ng = (s_cal >= s_test.view(B, 1)).sum(dim=1)         # (B,)
                 p_b[:, ci] = (ng.to(f) + 1.0) / (n + 1.0)
             p_chunks.append(p_b.cpu().numpy())
@@ -2887,6 +2978,11 @@ def create_ncm(ncm_type: str, k: int = 5,
         # Exact for fixed temperature; temperature=None warns.
         return PrototypeSoftmaxNCM(temperature=temperature, logit=logit,
                                    allow_nonexchangeable=nx)
+    elif ncm_type == "prototype_cosine":
+        # Softmax-free ablation of prototype_softmax (goal 1, week 08-17): plain
+        # 1 - cos(mu_y, x), no normalizer, no cross-class coupling -- the score
+        # shape Theorem D1 covers verbatim. No temperature (exactly exchangeable).
+        return PrototypeCosineNCM(logit=logit, allow_nonexchangeable=nx)
     else:
         raise ValueError(f"Unknown NCM type: {ncm_type}")
 
