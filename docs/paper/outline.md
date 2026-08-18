@@ -301,8 +301,51 @@ ars-outline space catch.)
 
 ## Block 6 — §6 Discussion & limitations (~0.5 page) `[SOLID — writing only]`
 
+### 6a. Easy vs hard datasets — the performance discussion (user note 08-18)
+
+A dedicated discussion contrasting the two dataset families the whole paper
+straddles — "easy" (cifar100, miniImageNet: DINOv2 separates the classes;
+high PR ~240, homophily .8-.92) vs "hard" (aircraft, stanford_cars:
+fine-grained variants the backbone does not separate; PR ~16-24, homophily
+.26-.46). Content points (all measured; R1 delivers the shots-matched
+head-to-head):
+
+- **Absolute performance splits by separability, validity does not.** Easy:
+  sets reach ~1.2-3 of K=100 at 8 shots/class. Hard: sets stay ~13-75 of
+  K (aircraft) / up to ~60-196 (cars) — yet coverage holds ~0.90
+  everywhere. The honest one-liner: the method degrades gracefully on SIZE,
+  never on coverage (Prop 1 is regime-independent).
+- **Every pipeline choice inverts between the families** — the regime map
+  IS this contrast: (a) transform: truncation (pca128_cw) wins easy /
+  is a no-op-to-harmful hard, where full-rank lw_cluster768 wins (signal
+  in the low-variance spectral tail, Chang-type); (b) denoise: qe gains
+  easy / harms hard (homophily below the gate; harm not tunable);
+  (c) NCM: prototype_softmax dominates easy, geodesic asym is the honest
+  choice hard (best CovGap; prototype over-covers/bloats at small shots);
+  (d) the softmax normalizer itself flips sign — load-bearing on easy
+  (+28-67% without it), a LIABILITY on hard at starved shots
+  (aircraft@2-shot 72.9 -> 30.2 without softmax). One label-free statistic
+  (PR) sorts every one of these decisions.
+- **Why hard is hard (mechanism, not hand-waving):** DINOv2 collapses
+  fine-grained variants into a tiny dominant subspace (pose/livery
+  nuisance carries 75% of variance at 1-NN 0.27 on aircraft); the
+  discriminant is thinly spread across hundreds of low-variance
+  directions, so any truncation loses it and neighborhoods are
+  majority-wrong-class (homophily .26) — which simultaneously explains
+  the qe harm, the truncation harm, and the large sets.
+- **Shots-response differs**: on easy data the transform payoff is largest
+  at the fewest shots (T1b: anchor-estimation noise ~ m/s) and saturates;
+  on hard data more shots buy little (the bottleneck is separability, not
+  estimation) — R1's 2-14 shots grid makes this a figure, not a claim.
+- Forward pointer: what would fix hard? A finer backbone (clip-large was
+  TIGHTEST on aircraft in the backbone table — evidence it is a backbone
+  property, not a method ceiling), not more labels or more pipeline.
+
+### 6b. Remaining limitations
+
 - Scope limit: backbone separability — on fine-grained data coverage holds
-  but sets stay large (graceful degradation, stated with numbers).
+  but sets stay large (graceful degradation, stated with numbers; detailed
+  in 6a).
 - Dials are descriptive; automatic transform selection is future work (the
   honest answer to "why no auto gate": diagnosis vs decision, and validity
   never depends on the choice).
@@ -313,7 +356,7 @@ ars-outline space catch.)
 
 ---
 
-## Block 6b — Back matter `[SOLID — writing only]` (ars-outline catch)
+## Block 6c — Back matter `[SOLID — writing only]` (ars-outline catch)
 
 Mandatory ICLR statements after the conclusion (excluded from page limit):
 - **Reproducibility Statement**: seeds/splits/scripts pointer, the
@@ -373,7 +416,9 @@ paper's main text — only run-scale and one dataset addition (cars in R3).
 
 - **Solid today**: NCM story (5.2 incl. CovGap), denoise gate + subsumption
   (5.4), backbone transfer core (5.5), theory-as-scoped (§4 incl. its
-  validation table), all framing text, appendix design-choice backing.
+  validation table), all framing text incl. the easy-vs-hard discussion
+  (6a — every content point already measured; R1 sharpens it to
+  shots-matched figures), appendix design-choice backing.
 - **The critical path is R1+R2** — the headline table is the only main-text
   asset below paper grade. Everything else is assembly and writing.
 - **One substantive wording rule (ars-outline)**: PR is the only LABEL-FREE
