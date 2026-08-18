@@ -113,33 +113,43 @@ numerically unchanged, it just warns.
   `whitened_geodesic`, `mahal_nn_ratio`, `rbf_density`) keep their historical
   cal-fit numeric behavior but require this approval to run warning-free.
 
-### Active experiment scripts
-- `src/exchangeable_fcp_experiment.py` -- main exchangeable FCP runner (pool transform + MS-CS)
-- `src/pool_ablation_hightrial.py` / `src/pool_source_comparison.py` / `src/pool_source_limits.py` -- unlabeled-pool ablations (+ cal+test transduction, findings 4d/4e; plots via `src/plot_pool_source.py`, `src/plot_unlabeled_pool_ablation.py`)
-- `src/mscs_unlabeled_experiment.py` -- MS-CS with unlabeled data (also the `run_fcp_with_mscs` library)
-- `src/mscs_softmax_experiment.py` -- MS-CS penalty sweep on prototype_softmax vs geodesic NCMs (hard datasets, e.g. aircraft)
-- `src/macs_experiment.py` -- MA-CS binary superclass penalty (Fargion et al. 2025)
-- `src/mscs_vs_macs_experiment.py` -- MS-CS vs MA-CS head-to-head on the exchangeable engine
-- `src/cs_ablation.py` -- reduction x MS-CS ablation (legacy engine)
-- `src/semicp_experiment.py` -- SemiCP vs FCP comparison (Zhou et al. 2025)
-- `src/conditional_coverage_experiment.py` -- class-conditional coverage (CovGap, ClusterCP baseline)
-- `src/pca_experiment.py` -- PCA/AE dimensionality reduction
-- `src/transform_control_experiment.py` -- PCA-vs-controls ablation (JL random projection, Ledoit-Wolf full-matrix whitening; every arm pool-fit/exchangeable)
-- `src/embedding_geometry_diagnostic.py` -- hubness / anisotropy / class-contrast diagnostics per transform arm (the "why PCA helps" mechanism figure)
-- `src/ncm_comparison_reduced.py` -- NCM comparison across reductions
-- `src/rbf_ncm_experiment.py` -- RBF density NCM iteration
-- `src/compare_backbones.py` -- SSL backbone comparison
-- `src/ridge_softmax_cluster_experiment.py` -- RidgeSoftmaxNCM (FCA-inspired) cluster benchmark vs geodesic NCMs
-- `src/fca_family_cluster_experiment.py` -- FCA-family vs geodesic NCM cluster comparison (prototype_softmax / ridge_softmax / geodesic, balanced, high-trial)
-- `src/fca_ablation_cluster_experiment.py` -- CIFAR-100 PCA x MS-CS ablation (prototype_softmax vs geodesic mean)
+### Active experiment scripts (post ICLR-2027 reduction round 1, 2026-08-18)
+Organized by the ICLR-2027 claim they back (`docs/iclr2027_plan.md` §1):
+- **Pipeline / C3**: `src/exchangeable_fcp_experiment.py` (main exchangeable
+  FCP runner), `src/transform_control_experiment.py` (pool-fit transform menu
+  incl. qe arms; every arm exchangeable), `src/pca_experiment.py` (PCA/AE
+  reduction, legacy arms)
+- **Baselines / C1**: `src/g3_semisup_experiment.py` (scaled reviewer
+  baselines: SCP-THR, SemiCP, trained probes; plots `src/plot_g3_semisup.py`)
+- **NCM tables / C2**: `src/fca_family_cluster_experiment.py`,
+  `src/fca_ablation_cluster_experiment.py`, `src/d1_softmax_ablation.py`
+  (prototype_cosine vs prototype_softmax)
+- **Backbone transfer / C5**: `src/backbone_dwt_experiment.py` (+
+  `src/plot_backbone_dwt.py`)
+- **Penalty story**: `src/mscs_unlabeled_experiment.py` (also the
+  `run_fcp_with_mscs` library), `src/mscs_softmax_experiment.py`,
+  `src/macs_experiment.py`, `src/mscs_vs_macs_experiment.py`
+- **SNAPS provenance**: `src/snaps_pool_experiment.py`, `src/qe_snaps_runtime.py`
+  (qe-subsumes-SNAPS stacking; plots `src/plot_qe_snaps_stack.py`)
+- **Theory instruments / C6**: `src/d1_empirical_check.py`,
+  `src/dwt_gate_constants.py`, `src/wt_phase_diagnostics.py`,
+  `src/wt_chainfree_diagnostics.py`, `src/dwt_order_experiment.py`,
+  `src/measure_dprime_all.py`, `src/cars_qe_gate_experiment.py`,
+  `src/dprime_overprediction_diagnostic.py`, `src/dwt_score_histograms.py`
+- **Regime-map diagnostics / C4 (descriptive)**:
+  `src/embedding_geometry_diagnostic.py`, `src/spectral_band_diagnostic.py`
 
 ### Archived (in `src/archive/`, see its README.md)
 Completed/failed/superseded investigations: pool augmentation, LATA score
 smoothing, split audit, few-shot, old SSL comparison, rank diagnostic, old
-plots; since 2026-06-10 also the superseded one-off comparisons
-(`run_multi_dataset_experiments`, `compare_ncms`, `fcp_vs_aps_raps`,
-`fcp_vs_scp_mlp`, `pca_vs_semicp`, `visualize_embeddings`) and the RBF NCM
-dev iterations.
+plots; since 2026-06-10 also the superseded one-off comparisons and the RBF
+NCM dev iterations; since 2026-08-18 (ICLR-2027 reduction round 1) the full
+watch list + killed pilots + superseded drivers: `ncm_comparison_reduced`,
+`cs_ablation`, `compare_backbones`, `rbf_ncm_experiment`,
+`conditional_coverage_experiment`, `pool_source_*` + `pool_ablation_hightrial`
+(+ their plots), `ridge_softmax_cluster_experiment` (+ plot),
+`ica_negent_pilot`, `ae_lowpr_pilot`, `transform_selection_pilot`,
+`plot_framework_summary`, `semicp_experiment`.
 
 ## Notes
 

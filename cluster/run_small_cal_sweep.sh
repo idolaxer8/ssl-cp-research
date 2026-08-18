@@ -78,7 +78,7 @@ python -c "import torch; print('torch', torch.__version__, '| CUDA', torch.cuda.
 # ============================================================================
 # Run
 # ============================================================================
-python src/cs_ablation.py \
+python src/archive/cs_ablation.py \
     --cal_sizes $CAL_SIZES \
     --test_size "$TEST_SIZE" \
     --n_trials "$N_TRIALS" \

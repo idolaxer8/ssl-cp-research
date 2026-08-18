@@ -13,31 +13,37 @@ if their review date passes without use. Each carries a matching
 marked HOLD are tied to a pending item in `docs/findings.md` §10 — archive
 them only when that item completes or is dropped, even past the review date.
 
-| File | Why candidate | Condition |
-|---|---|---|
-| `ncm_comparison_reduced.py` | results recorded 2026-05-14 | HOLD: P0.3 (topk_asym cluster confirmation) |
-| `cs_ablation.py` | reduction×MS-CS ablation recorded | HOLD: P0.4 (per-dataset AE retrain) |
-| `compare_backbones.py` | backbone comparison recorded (findings §7) | HOLD: P2.11 (cluster backbone sensitivity) |
-| `rbf_ncm_experiment.py` | RBF result recorded (findings §5) | HOLD: P1.5 (RBF multi-dataset) |
-| `conditional_coverage_experiment.py` | class-conditional results recorded (findings §2b); §10 item 8 done | plain: archive after 2026-08-24 if unused |
-| `pool_source_comparison.py` | pool-source question settled (findings §4d) | plain: archive after 2026-08-24 if unused |
-| `pool_source_limits.py` | pool-source limits arm recorded (findings §4d) | plain: archive after 2026-08-24 if unused |
-| `plot_pool_source.py` | plots only the two pool_source_* result JSONs | plain: archive with the two above (2026-08-24) |
-| `pool_ablation_hightrial.py` | high-trial pool ablation recorded (findings §4e); question settled | plain: archive after 2026-08-24 if unused |
-| `plot_unlabeled_pool_ablation.py` | plots only the §4e pool-ablation results | plain: archive with `pool_ablation_hightrial.py` (2026-08-24) |
-| `ridge_softmax_cluster_experiment.py` | superseded by `fca_family_cluster_experiment.py` (ridge = rung 4 of the same ladder) | plain: archive after 2026-08-24 if unused |
-| `plot_ridge_softmax_compare.py` | plots only the ridge_softmax_compare comparison | plain: archive with `ridge_softmax_cluster_experiment.py` (2026-08-24) |
-
-The four `pool_source_*`/`conditional_coverage` rows were first flagged by the
-2026-07-10 sweep (review 2026-07-24), but that sweep's branch
-(`routine/repo-cleanup-2026-07-10`) never merged, so the notes never reached
-main; the 2026-08-10 sweep re-flagged them with a fresh review window.
+*(empty — the entire 2026-08-10 list was archived early on 2026-08-18 as
+ICLR-2027 code-reduction round 1; see that section below.)*
 
 Never candidates: library modules imported by active code
 (`conformal_prediction`, `split_cp_baselines`, `exchangeable_features`,
-`autoencoder_utils`, `mscs_gpu`, `macs_experiment`, `mscs_unlabeled_experiment`,
-`semicp_experiment`), pipeline infra (`extract_features`, `download_datasets`,
+`autoencoder_utils`, `mscs_gpu`, `macs_experiment`, `mscs_unlabeled_experiment`),
+pipeline infra (`extract_features`, `download_datasets`,
 `run_conformal_experiment`), and anything with uncommitted changes.
+
+## ICLR-2027 code-reduction round 1 (archived 2026-08-18)
+
+Whole watch list archived early (user-directed reduction toward the compact
+publishable version, `docs/iclr2027_plan.md` §3b). The four HOLD conditions
+were retired: their findings-§10 items (2026-05 plan) are superseded by the
+ICLR-2027 plan — P0.3/P2.11 by the champion/backbone tables
+(`backbone_dwt_experiment.py`), P1.5/P0.4 by the closed RBF/AE lines.
+
+| Script | What it was | Superseded by / outcome |
+|---|---|---|
+| `ncm_comparison_reduced.py` | NCM comparison across reductions | champion tables (`fca_family_cluster_experiment.py`, `transform_control_experiment.py`) |
+| `cs_ablation.py` | reduction x MS-CS ablation (legacy engine) | `mscs_vs_macs_experiment.py` + exchangeable engine; `cluster/run_small_cal_sweep.sh` path updated |
+| `compare_backbones.py` | old SSL backbone comparison (findings §7) | `backbone_dwt_experiment.py` (goal-5 backbone x DWT table) |
+| `rbf_ncm_experiment.py` | RBF density NCM iteration | RBF line closed; not in the paper |
+| `conditional_coverage_experiment.py` | class-conditional CovGap + ClusterCP baseline (findings §2b) | results recorded; CovGap now computed inside the active experiment drivers |
+| `pool_source_comparison.py` / `pool_source_limits.py` / `plot_pool_source.py` | pool-source ablations (findings §4d) | question settled |
+| `pool_ablation_hightrial.py` / `plot_unlabeled_pool_ablation.py` | high-trial pool ablation (findings §4e) | question settled |
+| `ridge_softmax_cluster_experiment.py` / `plot_ridge_softmax_compare.py` | ridge-softmax NCM benchmark | `fca_family_cluster_experiment.py` (ridge excluded by default) |
+| `ica_negent_pilot.py` | TAFSSL negentropy dim selection | KILLED 2026-07-08 (few-way tool; see THEORY.MD Open Questions) |
+| `ae_lowpr_pilot.py` | AE on low-PR (aircraft) | KILLED 2026-07-06 (nonlinearity not the missing ingredient) |
+| `transform_selection_pilot.py` / `plot_framework_summary.py` | label-free transform selector pilot | C4 auto-selection DESCOPED 2026-08-18 (future work); provenance on `worktree-transform-selection` |
+| `semicp_experiment.py` | SemiCP vs FCP comparison driver | `g3_semisup_experiment.py` (scaled reviewer-baseline arms; `SemiCP` class stays in `split_cp_baselines.py`) |
 
 ## Watch-list candidates archived 2026-06-24
 
