@@ -172,6 +172,21 @@ Format: citation | statement (compressed) | transplant verdict.
   well-conditioned, distribution-free | **YES** — licenses champion
   lw_cluster768 at n_c << d; remaining step: compose quadratic-loss
   guarantee with Sigma^{-1/2} continuity for the whitened d'.
+- **Simple CNAPS** (Bateni et al., CVPR 2020, arXiv 1912.03432) [added
+  08-18] | replaces the meta-learned classifier head with a parameter-free
+  Mahalanobis prototype rule; per-class covariance = shrinkage blend
+  lambda_k = n_k/(n_k+1) of class-level and task-level estimates; up to
+  +6.1% on Meta-Dataset with 9.2% fewer params | **YES as deployed
+  precedent** — the few-shot literature's own discovery that
+  covariance-corrected (= whitened) prototype metrics on frozen features
+  are load-bearing, with the shot-indexed shrinkage = our W1c clause in
+  deployed form; its Bayes-rule reading (Mahalanobis = Gaussian
+  class-conditional log-likelihood) is the one-line W justification.
+- **Transductive CNAPS** (Bateni et al., WACV 2022) [added 08-18] |
+  refines means AND covariances with unlabeled query examples via soft
+  k-means | **YES as precedent** — unlabeled-data-improved covariance
+  estimation = our pool-fit W, minus exchangeability discipline and
+  validity; positions our contribution precisely.
 - **Jegou-Chum** (ECCV 2012) + **Mu et al. all-but-the-top** (ICLR 2018,
   arXiv 1702.01417) | for cosine scores, top-variance directions are
   bursty/frequency nuisance; whitening is the fix | **NO as theorem,
@@ -439,6 +454,8 @@ Gavish-Donoho 4/sqrt(3)        https://arxiv.org/abs/1305.5870
 Vempala-Wang 2004              https://www.sciencedirect.com/science/article/pii/S0022000003001806
 Bartlett benign overfitting    https://www.pnas.org/doi/10.1073/pnas.1907378117
 Green-Romanov PCR              https://arxiv.org/abs/2405.11676
+Simple CNAPS                   https://arxiv.org/abs/1912.03432
+Transductive CNAPS             https://openaccess.thecvf.com/content/WACV2022/papers/Bateni_Enhancing_Few-Shot_Image_Classification_With_Unlabelled_Examples_WACV_2022_paper.pdf
 Jegou-Chum 2012                https://hal.science/hal-00722622
 Mu et al. all-but-the-top      https://arxiv.org/abs/1702.01417
 Galanti CDNV                   https://arxiv.org/abs/2112.15121  (+ few-shot https://arxiv.org/abs/2212.12532)
