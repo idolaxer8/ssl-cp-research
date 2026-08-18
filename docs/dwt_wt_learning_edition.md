@@ -623,6 +623,21 @@ This is the justification that survives the grounding shift: **W and T
 are the transforms that maximize what the assumption-free part of the
 theory can certify** — no Lemma B, no Prop C, no Gaussian anything.
 
+**Does the order follow?** Conceptually yes — the stages chain by
+precondition (W is unconditional and repairs the metric; D's lemma is
+homophily-gated, and homophily is a property of that metric; T is
+well-posed only after W makes variance order equal discriminant order —
+Chang). That chain reads W $\to$ D $\to$ T, and since W raises $h_w$, we
+tested whether running qe AFTER whitening helps (research edition §7.4).
+It does not: the qe $d'$-ratio moves by $\le 0.1$ in every space and
+never flips a sign — whitening fixes your neighbors' *labels*, but qe's
+fine-grained harm is the *field direction*, which re-selecting neighbors
+does not redirect (the mean-field-mover mechanism, fourth appearance).
+So the order knob joins $\beta$, $k$, $a$, and hop count on the
+no-rescue frontier; the deployed D $\to$ W $\to$ T stands, and the one
+ordering constraint with teeth — whiten before truncating when the tail
+is alive — is enforced by the PR-gated menu choice, not by reordering.
+
 ### 10.2 The aspirational chain (kept, demoted)
 
 All three phases also output a multiplier on the pair margin $d'$, and in

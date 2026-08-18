@@ -539,6 +539,15 @@ theorem target, blocked only on the conditional clauses' constants.
 > throughout: every transform is pool-measurable, so coverage stays
 > exact by construction.
 
+**Order, in one sentence (for the paper):** conceptually the stages
+chain by precondition — W repairs the metric (unconditional), D repairs
+points as measured by that metric (homophily-gated), T shrinks the space
+the anchors are estimated in (well-posed only post-W, by Chang) — and
+empirically the verdicts are order-stable (§7.4: swapping D's position
+moves the qe $d'$-ratio by $\le 0.1$ and never flips a sign), so the one
+binding constraint is whiten-before-truncate when the discriminant lives
+in the spectral tail, which the PR-gated menu enforces by selection.
+
 Everything below this box is the supporting material: the mechanism
 (7.1-7.2), the instruments, and the honest misses. The paper needs the
 box, one table, and citations; the rest is for us and for reviewers who
@@ -657,3 +666,77 @@ Registered predictions, scored:
   reduces the shared-field component of pairwise distances; candidate
   route = the 8b two-component model, where field variance dominates
   raw cosine neighborhoods) — the chain-free analogue of GW2b.
+
+### 7.4 The sequential argument, and the order experiment (2026-08-18)
+
+**The precondition chain (the coherent D-W-T narrative).** Each stage's
+guarantee has a precondition, and the stages order themselves by who
+manufactures whose:
+
+1. **W is unconditional**: its guarantees (W1a optimality, W1b label-free
+   exactness) need only pool second moments — no labels, no
+   neighborhoods, no homophily. And W repairs the measuring instrument
+   itself: neighborhoods (D's primitive) and variance ordering (T's
+   primitive) are both metric-relative.
+2. **D is conditional on homophily** — a property of the metric W
+   repairs. Measured (§7.1): whitening raises $h_w$ exactly where it is
+   low and multiplies D1's certification reach $\times 5.5$ on aircraft.
+3. **T is conditional on variance-order $=$ discriminant-order** — which
+   is exactly what whitening establishes ([C83] is the statement that
+   truncation is ill-posed pre-W; W1a's corollary is that post-W the two
+   orderings coincide). Its payoff (the $m/s$ anchor budget) belongs to
+   the final scoring space. So T runs last, and never before W when the
+   tail is alive (F3: t128w $\times 1.77$ vs wlw $\times 3.13$).
+
+This chain says W $\to$ D $\to$ T, while the deployed pipeline runs
+D $\to$ W $\to$ T — its one defect being that qe's neighborhoods are
+computed in the rawest metric. The user's conjecture: since W raises
+$h_w$, running D after W should help. Tested:
+
+**The order experiment** (`src/dwt_order_experiment.py`; qe with
+neighborhoods in each space, margin $d'$-ratio measured in-space — the
+statistic whose sign predicted the qe verdict 5/5; predictions (P-O1)
+ratio rises on aircraft/cars, (P-O2) ~neutral on separable, registered
+before the run):
+
+```
+qe margin d'-ratio by smoothing space
+dataset        raw (D->W)  wlw (W->D)  t128w (T+W->D)
+cifar100       1.053       1.010       1.070
+miniimagenet   1.178       1.097       1.173
+cifar10        1.209       1.106       1.225
+stanford_cars  0.735       0.763       0.837
+aircraft       0.639       0.617       0.717
+```
+
+Scored: **(P-O1) FAILED on aircraft** ($.639 \to .617$, mildly worse),
+marginal on cars ($+.03$); no cell crosses $1$ (frac-pairs-improved
+stays $\le .08$ on fine-grained). **(P-O2) too optimistic** — W-first is
+consistently mildly WORSE for qe on separable data ($1.053 \to 1.010$
+etc.), while the t128w space is qe's friendliest home everywhere (best
+or tied in 5/5) yet still harmful on fine-grained.
+
+**Reconciliation — the norm/margin split, fourth appearance.** The
+$\times 5.5$ certification gain (§7.1) is a NORM-currency fact (D1's
+level); the order experiment is the MARGIN-currency outcome. Whitening
+fixes the *labels* of your neighbors, but qe's fine-grained harm was
+never a label problem — it is the FIELD DIRECTION (8b: qe is a
+mean-field mover; it harms when the local field flows toward the
+confusable mode, and re-selecting neighbors in a better metric does not
+redirect the field). Meanwhile the whitened metric up-weights exactly
+the discriminant axes, so the surviving foreign minority does
+proportionally MORE damage per unit weight — the two effects
+approximately cancel. Conclusion: **the ORDER knob joins beta, k, a, and
+hop count on the no-rescue frontier** — the gate is not order-tunable
+(C2/C5's family, extended).
+
+**Verdict.** The deployed D $\to$ W $\to$ T stands: on separable data
+(where qe is ON) raw-space qe is as good as any; on fine-grained data qe
+is gated OFF regardless of order, so its position is moot. The only
+ORDER constraint with teeth is **W-before-T when the tail is alive** —
+and the deployed menu enforces it not by reordering but by SELECTION
+(full-rank wlw, no truncation, when PR is low). For the paper: present
+the precondition chain as the conceptual reading, the order experiment
+as a robustness result (verdicts are order-stable, one more no-rescue
+knob), and the menu's PR gate as the enforcement of the one real
+constraint.
