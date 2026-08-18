@@ -497,6 +497,53 @@ theorem target, blocked only on the conditional clauses' constants.
 
 ## 7. The chain-free re-anchoring: W/T as services to D1's own inputs (2026-08-18)
 
+### 7.0 The paper cut (distilled — this is what goes in the paper)
+
+**One-paragraph version (~150 words):**
+
+> The score consumes three objects: the embedding, its pool neighborhood,
+> and the estimated class anchors. Each DWT stage improves exactly one of
+> them, with an elementary, pointwise-checkable guarantee; none affects
+> validity (all transforms are pool-measurable, so exchangeability — and
+> exact coverage — is preserved). **Denoise** moves the point:
+> $\|\hat x - \mu_y\| < \|x - \mu_y\|$ whenever the neighborhood's
+> impurity budget is below the point's own error (Lemma D1, a triangle
+> inequality; certified $\Rightarrow$ improved held for 100% of certified
+> points on five datasets). **Whiten** moves the neighborhood: neighbors
+> are defined by the metric, and raw proximity is dominated by
+> class-irrelevant shared variation; whitening — the Cauchy-Schwarz
+> optimal metric, fittable label-free on the pool exactly
+> (Sherman-Morrison) — turns neighbors into classmates, multiplying D1's
+> certification rate by $5.5$ on the hardest dataset. **Truncate** moves
+> the anchors: with $s$ labeled shots the anchor error carries noise
+> trace $m/s$; cutting $768 \to 128$ provably shrinks it (measured
+> $-25$–$40\%$ at $s{=}2$) while retaining $\ge 82\%$ of the class-axis
+> energy. W and T are the soft and blunt regularizers of one
+> metric-estimation problem; the pool's participation ratio — label-free
+> — selects between them (low PR: the discriminant lives in the spectral
+> tail, whiten full-rank, don't cut; high PR: the tail is dead, cut and
+> bank the estimation savings).
+
+**Three-sentence version (intro grade):**
+
+> DWT improves the three primitives the score uses: Denoise moves each
+> embedding toward its class mean (a deterministic triangle-inequality
+> lemma, certified pointwise on all datasets); Whiten re-defines
+> neighborhoods in the optimal metric — fittable exactly from unlabeled
+> data — so that neighbors become classmates, extending the denoise
+> lemma's reach $5.5\times$ where homophily is lowest; Truncate shrinks
+> estimated-anchor error at the exact rate $m/s$ vs $d/s$. Whitening and
+> truncation are the soft and blunt regularizers of the same
+> metric-estimation problem, and one label-free spectral statistic (the
+> pool participation ratio) selects between them. Validity is unaffected
+> throughout: every transform is pool-measurable, so coverage stays
+> exact by construction.
+
+Everything below this box is the supporting material: the mechanism
+(7.1-7.2), the instruments, and the honest misses. The paper needs the
+box, one table, and citations; the rest is for us and for reviewers who
+dig.
+
 **Premise shift (user decision, 2026-08-18).** D3's quantitative layer is
 empirically unsupported (the (I)-model overpredicts everywhere; D3' is
 open), so the theory's grounding is D1 — and the ideal
