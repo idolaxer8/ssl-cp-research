@@ -562,6 +562,25 @@ smaller expected sets at exact coverage) — consumes only that product.
 The G6 work is agnostic to *which* phase moved $d'$. That is the payoff
 of insisting on one currency from D1 onward.
 
+> **Grounding update (2026-08-18) — the chain above is aspirational, and
+> W/T no longer depend on it.** D3's quantitative layer is empirically
+> unsupported, so the theory's base is D1, and the load-bearing W/T
+> justification is now **chain-free** (research edition §7): W and T are
+> services to the two primitive objects every step uses. **W serves
+> neighborhoods** — whitening raises pool-kNN homophily $h_w$, which is
+> D1's only dataset-dependent input, so it directly extends the reach of
+> the assumption-free base lemma (measured: aircraft's D1 certification
+> rate jumps $.027 \to .150$, $5.5\times$, under full-rank whitening;
+> cars $+50\%$). **T serves anchors** — truncation cuts the $s$-shot
+> prototype error at rate $m/s$ vs $d/s$ (measured: $25$–$40\%$ at
+> $s{=}2$). And the punchline: the per-dataset argmax of the D1
+> certification rate nearly reproduces the deployed champion menu
+> (aircraft/cars $\to$ full-rank W; cifar100 $\to$ truncation family) —
+> **D1 alone, with no distributional assumptions, sorts the W/T menu.**
+> The $d'$ chain of this section remains the route to the ideal
+> $\mathbb{E}|C^T| \le \mathbb{E}|C|$ if its conditions are ever
+> discharged — but the pipeline's justification no longer waits for it.
+
 ---
 
 ## 11. Literature map (tags → what was actually borrowed)

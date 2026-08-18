@@ -1,8 +1,13 @@
 # Lemmas W1 and T1 — Whiten and Truncate, continued from base lemma D1
 
-Status: v0.2 (2026-08-16, weekly goal 3; v0.2 2026-08-18: math converted to
+Status: v0.3 (2026-08-16, weekly goal 3; v0.2 2026-08-18: math converted to
 LaTeX per user preference — open in VS Code `Ctrl+Shift+V` / GitHub to
-render; measured-data tables stay fixed-width). Build principle (framing
+render; measured-data tables stay fixed-width. **v0.3 2026-08-18: GROUNDING
+SHIFT — D3's quantitative layer is unsupported, so the load-bearing
+justification is now the CHAIN-FREE one in Section 7**: W/T as services to
+D1's own inputs — W raises neighborhood homophily hence D1's certification
+reach, T cuts anchor estimation error; the $d'$ chain of Sections 2-4 is
+retained as instruments + the aspirational route to $\mathbb{E}|C|$). Build principle (framing
 decision 08-16): **D1 is the base lemma of the Denoise phase** —
 deterministic, assumption-free, validated pointwise 5/5 — and the W/T
 phases get lemmas of the SAME construction: an exact, gap-free statement
@@ -487,3 +492,121 @@ Sherman-Morrison) — the W-phase has a stronger no-labels story than D
 Owed: the ledger above; plus the composed-pipeline statement (one theorem
 multiplying the three phase ratios with their three gates) — the DWT
 theorem target, blocked only on the conditional clauses' constants.
+
+---
+
+## 7. The chain-free re-anchoring: W/T as services to D1's own inputs (2026-08-18)
+
+**Premise shift (user decision, 2026-08-18).** D3's quantitative layer is
+empirically unsupported (the (I)-model overpredicts everywhere; D3' is
+open), so the theory's grounding is D1 — and the ideal
+$\mathbb{E}|C^T| \le \mathbb{E}|C|$ endpoint may never be reached. This
+section justifies W/T WITHOUT the $d' \to$ Lemma B $\to$ Prop C chain.
+The $d'$-based Sections 2-4 remain correct and useful as instruments, but
+they are no longer the load-bearing justification; they are the
+aspirational chain's material.
+
+**The re-anchoring.** Before any distributional argument, the pipeline
+consumes exactly two primitive objects, and W/T act on both:
+
+- **Neighborhoods** (W's target). D1 is assumption-free, but its
+  improvement condition has one dataset-dependent input: the weighted
+  pool-kNN homophily $h_w(x)$, through the impurity budget
+  $(1-h_w)\,\Delta_F(x)$. Neighborhoods are computed BY the metric —
+  so the metric is a free lever on D1's own reach. Claim **W-N**: raw
+  cosine proximity is dominated by the shared-field nuisance directions
+  (neighbors match pose/background, not class); whitening downweights
+  exactly those directions, raising $h_w$ and hence the D1 certification
+  rate — a per-point, deterministic-given-$h_w$ justification with no
+  distributional model.
+- **Anchors** (T's target). The deployed score's only estimated object is
+  the prototype $\hat\mu_c$. Claim **T-A**: truncation cuts the $s$-shot
+  anchor error exactly (retained noise trace $m/s$ vs $d/s$) at the
+  measured alignment cost $a_m$ — a D1-shaped statement: *the estimated
+  anchor's distance to the true anchor improves, with an exact rate,
+  under a measurable condition.* (This is T1b's content with the $d'$
+  packaging removed.)
+
+### 7.1 Measured (run 2026-08-18, `src/wt_chainfree_diagnostics.py`, `output/dwt_theory/wt_chainfree_diagnostics.json`)
+
+$h_w$ (weighted, $k{=}10$, $a{=}3$, 4000 egos — raw column reproduces the
+gate-constants instrument), D1 certification rate (the D1 inequality
+evaluated in-space), and 2-shot relative anchor error
+$\|\hat\mu-\mu\|/\delta_{\text{pair}}$:
+
+```
+                     h_w                                  D1 cert rate                         anchor err (s=2)
+dataset        raw   wdiag wlw   t128  t128w |  raw   wdiag wlw   t128  t128w |  raw   wdiag wlw   t128  t128w
+cifar100       .809  .810  .784  .818  .821  |  .417  .414  .338  .466  .455  |  1.15  1.16  1.72  0.82  0.85
+miniimagenet   .917  .916  .894  .921  .918  |  .638  .635  .543  .637  .605  |  0.86  0.86  1.50  0.53  0.57
+cifar10        .971  .971  .971  .972  .972  |  .637  .636  .768  .559  .592  |  1.21  1.21  1.53  0.90  0.96
+stanford_cars  .467  .469  .545  .446  .538  |  .077  .077  .116  .068  .091  |  1.52  1.52  1.71  1.51  1.39
+aircraft       .261  .263  .337  .252  .347  |  .027  .029  .150  .023  .026  |  2.67  2.65  2.51  2.72  2.22
+```
+
+Registered predictions, scored:
+
+- **(P-N) held where it matters, with the predicted asymmetry.**
+  Whitening raises $h_w$ exactly on the low-$h$ datasets — aircraft
+  $.261 \to .337$ (wlw) / $.347$ (t128w), cars $.467 \to .545$ — and the
+  D1 certification rate follows: **aircraft $.027 \to .150$, a
+  $5.5\times$ increase in the fraction of egos the assumption-free base
+  lemma certifies**; cars $+50\%$; cifar10 $+20\%$. On the already-high-$h$
+  separable datasets wlw buys nothing and its estimation noise mildly
+  LOWERS $h_w$/cert (cifar100 $.417 \to .338$, mini $.638 \to .543$) —
+  the same estimation cost as the $\times 0.91$ mini cell in Section 4.
+  wdiag moves nothing anywhere (third independent confirmation that the
+  rotation is the entire W phase).
+- **(P-A) held.** t128/t128w cut the 2-shot anchor error 25-40% on every
+  separable dataset (mini $.86 \to .53$) and t128w wins it on
+  cars/aircraft too ($2.67 \to 2.22$); wlw WORSENS anchors on 4/5 (the
+  full-rank metric upweights noisy-estimate directions); t128 alone is
+  slightly worse than raw on aircraft ($2.72$) — the alignment cost
+  eating the $m/s$ saving, Chang once more.
+
+### 7.2 Findings
+
+- **CF1 — division of labor, confirmed:** W serves NEIGHBORHOODS (pays
+  exactly on low-$h$ data, costs slightly on high-$h$), T serves ANCHORS
+  (pays everywhere labels are scarce, at alignment cost on
+  fine-grained); t128w inherits a partial version of both; wdiag serves
+  neither.
+- **CF2 — the headline: the D1 certification rate, computed from D1's
+  own deterministic condition with zero distributional assumptions,
+  nearly reproduces the deployed champion menu.** Per-dataset argmax of
+  cert: aircraft $\to$ wlw, cars $\to$ wlw, cifar100 $\to$ t128-family,
+  cifar10 $\to$ wlw, mini $\to$ raw/t128 (tie). The empirical champions:
+  aircraft = lw768, cars = wlw-family, cifar100/mini = t128w engine.
+  Four of five cells sort correctly from D1 alone; the misses (cifar10
+  where everything works; mini's tie) are the low-stakes cells. **This
+  is the chain-free justification in one row: W/T are the transforms
+  that maximize the reach of the base lemma.**
+- **CF3 — the two services trade off, and the trade is the regime map.**
+  wlw maximizes cert but costs anchors; t128 minimizes anchor error but
+  does nothing for cert on fine-grained data (aircraft t128w cert $.026$
+  vs wlw $.150$: the certification needs the full-rank tail that
+  truncation discarded — F3/Chang in cert currency). Which service binds
+  is decided by the data regime, and the label-free PR dial (Section
+  T1d) is the published-precedent instrument that reads it.
+
+### 7.3 What this changes in the lemma package
+
+- **W1a**: demoted from justification to ADAPTER + YARDSTICK (per the
+  08-18 discussion): it defines $d'(M)$, powers the diagnostic's oracle
+  denominator (F6), and its equality condition proves W1b. Cite
+  Fisher/[RCA05] for the substance; claim no novelty.
+- **W1b**: UNAFFECTED and now the W-phase's headline lemma — its content
+  (unlabeled fit is exact) is about the legality of pool-fitting, which
+  the chain-free framing needs just as much.
+- **T1a**: unaffected (the honesty clause).
+- **T1b**: reframed — its content IS the anchor service T-A; the $d'$
+  packaging was optional. The exact statement to keep:
+  $\mathbb{E}\|\hat\mu - \mu\|^2_{\text{retained}} = m/s$ vs $d/s$
+  (whitened units), gain conditional on measured $a_m$.
+- **Sections 2-4's $d'$ chain**: retained as the aspirational route to
+  $\mathbb{E}|C|$ (Corollary D4 / location-scale single-crossing), no
+  longer load-bearing.
+- New follow-up registered: make W-N a lemma (mechanism: whitening
+  reduces the shared-field component of pairwise distances; candidate
+  route = the 8b two-component model, where field variance dominates
+  raw cosine neighborhoods) — the chain-free analogue of GW2b.
