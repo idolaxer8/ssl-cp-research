@@ -14,6 +14,20 @@ is carried through both lemmas so you can compute everything by hand.
 > (`dwt_wt_lemmas.md`) uses the same LaTeX format and identical symbols
 > (converted 2026-08-18, user preference — clearer than the old ASCII).
 
+> **STATUS AFTER THE GROUNDING SHIFT (2026-08-18) — read this first.**
+> Sections 4–8 teach the lemmas in the $d'$ currency, and they are still
+> the right thing to learn — but the *load-bearing* justification of W/T
+> no longer runs through the $d' \to$ Lemma B $\to$ Prop C chain (D3's
+> quantitative layer is empirically unsupported, so the theory's base is
+> D1, and the ideal $\mathbb{E}|C^T| \le \mathbb{E}|C|$ endpoint is
+> aspirational). The load-bearing story is **Section 10.1**: W and T are
+> justified *chain-free*, as services to the two objects D1 and the score
+> already use — W raises neighborhood homophily (D1's only free input;
+> measured: aircraft's D1 certification rate jumps $\times 5.5$ under
+> full-rank whitening), T cuts estimated-anchor error (exact $m/s$ vs
+> $d/s$ rate). The $d'$ machinery of Sections 4–8 remains as instruments
+> and as the aspirational route.
+
 > **The build principle (decided 2026-08-16).** D1 is the *base lemma* of
 > the Denoise phase: deterministic, assumption-free, one triangle
 > inequality, empirically validated pointwise on all five datasets. W1 and
@@ -544,10 +558,75 @@ violations; $\sqrt{a_m}$ identity within 0.04 on the harm side).
 
 ---
 
-## 10. The forward link (why CP cares)
+## 10. Why the pipeline is justified — the load-bearing story and the aspirational chain
 
-All three phases output the same number: a multiplier on the pair margin
-$d'$. In the composed metric the pipeline ratio factorizes,
+### 10.1 The chain-free grounding (load-bearing, 2026-08-18)
+
+Forget distributions for a moment and ask: before any theorem about score
+CDFs or expected set sizes, what does the pipeline *actually use*? Two
+primitive objects:
+
+1. **Neighborhoods** — who counts as close. D1, the assumption-free base
+   lemma, certifies per point that smoothing repairs it, and its
+   condition has exactly one dataset-dependent input: the pool-kNN
+   homophily $h_w(x)$ (through the impurity budget
+   $(1-h_w)\Delta_F$). Here is the key observation: *neighborhoods are
+   computed by the metric*. Change the metric, change who your neighbors
+   are, change $h_w$ — change how far the base lemma reaches. **That is
+   W's job.** In the raw metric, cosine proximity is dominated by the
+   shared-field nuisance directions (your neighbors match your pose and
+   background, not your class); whitening downweights exactly those
+   directions, so neighbors become classmates.
+2. **Anchors** — the estimated prototypes $\hat\mu_c$, the only estimated
+   object in the score. With $s$ shots the anchor error has retained
+   noise trace $m/s$ in an $m$-dimensional space: cut $d = 768$ to
+   $m = 128$ and the estimate provably gets closer to the true anchor —
+   a D1-shaped statement (*the estimated object's distance to its truth
+   improves, at an exact rate, under a measurable condition* $a_m$).
+   **That is T's job**, and it's T1b with the $d'$ packaging removed.
+
+![chain-free grounding](figs/dwt_wt_learning_chainfree.png)
+
+The measurement (`src/wt_chainfree_diagnostics.py`, predictions
+registered before the run):
+
+```
+                     h_w                    D1 cert rate            anchor err (s=2)
+dataset        raw   wlw   t128w  |  raw   wlw   t128  t128w |  raw   wlw   t128w
+cifar100       .809  .784  .821   |  .417  .338  .466  .455  |  1.15  1.72  0.85
+miniimagenet   .917  .894  .918   |  .638  .543  .637  .605  |  0.86  1.50  0.57
+cifar10        .971  .971  .972   |  .637  .768  .559  .592  |  1.21  1.53  0.96
+stanford_cars  .467  .545  .538   |  .077  .116  .068  .091  |  1.52  1.71  1.39
+aircraft       .261  .337  .347   |  .027  .150  .023  .026  |  2.67  2.51  2.22
+```
+
+Read it in three sentences. **W works where it's needed:** on the
+fine-grained datasets whitening turns wrong-class neighbors into
+classmates ($h_w$: aircraft $.261 \to .337$, cars $.467 \to .545$) and
+the D1 certification rate follows — **aircraft $.027 \to .150$, a
+$5.5\times$ extension of the base lemma's reach** (on the easy datasets
+there is nothing to buy and wlw's estimation noise mildly costs — the
+same cost as its $\times 0.91$ cell in Section 8). **T works where labels
+are scarce:** the 2-shot anchor error drops 25–40% under truncation on
+every separable dataset, while full-rank whitening *worsens* anchors on
+4/5 (its rotation upweights noisy-estimate directions). **And the
+punchline: the per-dataset argmax of the D1 certification rate nearly
+reproduces the deployed champion menu** — aircraft/cars $\to$ full-rank
+W, cifar100 $\to$ truncation family — so the base lemma alone, with zero
+distributional assumptions, sorts the W/T menu the same way months of
+set-size experiments did. The two services trade off (wlw maximizes
+reach but costs anchors; t128 the reverse; aircraft's t128w cert $.026$
+vs wlw's $.150$ is Chang's tail again, in certification currency), and
+which service binds is what the label-free PR dial reads.
+
+This is the justification that survives the grounding shift: **W and T
+are the transforms that maximize what the assumption-free part of the
+theory can certify** — no Lemma B, no Prop C, no Gaussian anything.
+
+### 10.2 The aspirational chain (kept, demoted)
+
+All three phases also output a multiplier on the pair margin $d'$, and in
+the composed metric the pipeline ratio factorizes,
 
 $$
 \frac{d'_{\mathrm{DWT}}}{d'_{\mathrm{raw}}} \;=\;
@@ -556,30 +635,16 @@ $$
 \underbrace{\text{(D ratio)}}_{\text{D3 gate}},
 $$
 
-and everything downstream — Lemma B (margin $\to$ score distribution),
-Proposition C / Corollary D4 (score dominance or contraction-anchor $\to$
-smaller expected sets at exact coverage) — consumes only that product.
-The G6 work is agnostic to *which* phase moved $d'$. That is the payoff
-of insisting on one currency from D1 onward.
-
-> **Grounding update (2026-08-18) — the chain above is aspirational, and
-> W/T no longer depend on it.** D3's quantitative layer is empirically
-> unsupported, so the theory's base is D1, and the load-bearing W/T
-> justification is now **chain-free** (research edition §7): W and T are
-> services to the two primitive objects every step uses. **W serves
-> neighborhoods** — whitening raises pool-kNN homophily $h_w$, which is
-> D1's only dataset-dependent input, so it directly extends the reach of
-> the assumption-free base lemma (measured: aircraft's D1 certification
-> rate jumps $.027 \to .150$, $5.5\times$, under full-rank whitening;
-> cars $+50\%$). **T serves anchors** — truncation cuts the $s$-shot
-> prototype error at rate $m/s$ vs $d/s$ (measured: $25$–$40\%$ at
-> $s{=}2$). And the punchline: the per-dataset argmax of the D1
-> certification rate nearly reproduces the deployed champion menu
-> (aircraft/cars $\to$ full-rank W; cifar100 $\to$ truncation family) —
-> **D1 alone, with no distributional assumptions, sorts the W/T menu.**
-> The $d'$ chain of this section remains the route to the ideal
-> $\mathbb{E}|C^T| \le \mathbb{E}|C|$ if its conditions are ever
-> discharged — but the pipeline's justification no longer waits for it.
+which is what Lemma B (margin $\to$ score distribution) and Proposition
+C / Corollary D4 (dominance or contraction-anchor $\to$
+$\mathbb{E}|C^T| \le \mathbb{E}|C|$ at exact coverage) would consume —
+agnostic to which phase moved $d'$. If G6's conditions are ever
+discharged, this chain upgrades the story from "W/T extend D1's reach"
+to "W/T provably shrink expected set size". Until then it is the
+*aspirational* route, and the honest status is: instruments proved, chain
+conditional. Coverage, as always, is exact regardless — every transform
+here is pool-measurable, so validity never depended on any of this
+(research edition §7 of `dwt_denoise_theorem.md`).
 
 ---
 
@@ -628,6 +693,11 @@ Full annotated stack with links and reading order:
    \Sigma_{\text{task}} + \beta I$ with $\lambda_k = \frac{n_k}{n_k+1}$:
    which clause of W1 does each of the three terms correspond to, and
    what do WE have that they don't?
+8. Chain-free grounding: D1's improvement condition is deterministic and
+   assumption-free — so how can a *transform* change its certification
+   rate at all? And why does t128w barely move aircraft's certification
+   ($.026$) when wlw moves it to $.150$, even though both raise $h_w$ to
+   $\approx .34$?
 
 *Answers (sketch):* (1) $d'$ is defined from means and variances only;
 Cauchy-Schwarz is algebra on quadratic forms. (2) Whitened top direction
@@ -651,4 +721,13 @@ explains why it's nearly free); $\beta I$ = the W1c shrinkage floor (our
 Ledoit-Wolf clause, with a theorem instead of a constant). What we add:
 the covariance is fit on an *unlabeled pool* with exchangeability
 preserved (validity survives), and the regime theory saying when the
-blunt regularizer (truncation) should replace the soft one.
+blunt regularizer (truncation) should replace the soft one. (8) D1 is
+deterministic *given* the neighborhood — but the neighborhood is computed
+BY the metric, so the transform changes who the neighbors are ($h_w$),
+the anchor distances, and the ego's own error, and with them how many
+points satisfy the inequality. The t128w-vs-wlw gap at equal $h_w$: the
+certification condition also needs the neighbor-error term
+$\sum (w/W) r_u$ small *relative to* $\varepsilon$, and that relative
+geometry lives in the low-variance tail that truncation discarded —
+Chang's split, surfacing a third time (after $d'$ and the champion
+table) in certification currency.

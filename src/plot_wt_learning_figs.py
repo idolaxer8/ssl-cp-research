@@ -251,6 +251,60 @@ def fig_metric_family():
     plt.close(fig)
 
 
+# chain-free diagnostics (wt_chainfree_diagnostics.json, 2026-08-18)
+CERT = {  # D1 certification rate per space
+    "cifar100":      (0.417, 0.414, 0.338, 0.466, 0.455),
+    "miniimagenet":  (0.638, 0.635, 0.543, 0.637, 0.605),
+    "cifar10":       (0.637, 0.636, 0.768, 0.559, 0.592),
+    "stanford_cars": (0.077, 0.077, 0.116, 0.068, 0.091),
+    "aircraft":      (0.027, 0.029, 0.150, 0.023, 0.026),
+}
+AERR2 = {  # 2-shot relative anchor error per space
+    "cifar100":      (1.15, 1.16, 1.72, 0.82, 0.85),
+    "miniimagenet":  (0.86, 0.86, 1.50, 0.53, 0.57),
+    "cifar10":       (1.21, 1.21, 1.53, 0.90, 0.96),
+    "stanford_cars": (1.52, 1.52, 1.71, 1.51, 1.39),
+    "aircraft":      (2.67, 2.65, 2.51, 2.72, 2.22),
+}
+SPACE_LABELS = ["raw", "wdiag", "wlw", "t128", "t128w"]
+SPACE_COLORS = ["tab:gray", "silver", "tab:purple", "tab:blue", "tab:cyan"]
+
+
+def fig_chainfree():
+    """The chain-free grounding: W extends D1's certification reach,
+    T shrinks anchor error."""
+    x = np.arange(len(DS))
+    w = 0.16
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.6))
+    ax = axes[0]
+    for i, (lab, c) in enumerate(zip(SPACE_LABELS, SPACE_COLORS)):
+        ax.bar(x + (i - 2) * w, [CERT[d][i] for d in DS], w, label=lab,
+               color=c)
+    ax.set_xticks(x, [SHORT[d] for d in DS])
+    ax.set_ylabel("D1 certification rate (higher = better)")
+    ax.set_title("W extends the BASE LEMMA's reach where h is low:\n"
+                 "aircraft $.027 \\to .150$ ($\\times 5.5$) under full-rank "
+                 "whitening")
+    ax.legend(ncol=2); ax.grid(alpha=0.25, axis="y")
+
+    ax = axes[1]
+    for i, (lab, c) in enumerate(zip(SPACE_LABELS, SPACE_COLORS)):
+        ax.bar(x + (i - 2) * w, [AERR2[d][i] for d in DS], w, label=lab,
+               color=c)
+    ax.set_xticks(x, [SHORT[d] for d in DS])
+    ax.set_ylabel("2-shot anchor error / pair separation (lower = better)")
+    ax.set_title("T shrinks the ESTIMATED-ANCHOR error (m/s vs d/s):\n"
+                 "truncation wins everywhere, full-rank W pays for its "
+                 "rotation")
+    ax.legend(ncol=2); ax.grid(alpha=0.25, axis="y")
+    fig.suptitle("the chain-free grounding: W serves neighborhoods "
+                 "(D1's reach), T serves anchors", y=1.03)
+    fig.tight_layout()
+    fig.savefig(os.path.join(OUT_DIR, "dwt_wt_learning_chainfree.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     fig_whiten_toy()
@@ -258,4 +312,5 @@ if __name__ == "__main__":
     fig_t1b()
     fig_phase_map()
     fig_metric_family()
-    print("wrote 5 figs ->", OUT_DIR)
+    fig_chainfree()
+    print("wrote 6 figs ->", OUT_DIR)
