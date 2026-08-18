@@ -31,6 +31,11 @@ Three pillars carry the paper:
    *valid* competitor at tiny cal, true split CP with a trained head,
    collapses (sec 3). So "post-processing + FCP" is the correct headline
    pairing: the representation buys efficiency, FCP buys exactness.
+   BUDGET QUALIFIER (G3 result, 2026-08-09): "collapses" holds at
+   cal/K <= ~4 shots/class; by ~6 shots/class trained-probe methods
+   catch up (aircraft cal-800: probe 15.85 / SemiCP 14.58 vs champion
+   19.81; CUB-1600: SemiCP ties the crown at 1.24). State the regime
+   as a budget, never as "always".
 3. **The subsumption result.** Representation-level use of the pool
    empirically dominates and largely subsumes the score-level use: qe
    alone >= SNAPS alone in every cell; SNAPS marginal gain collapses
@@ -38,6 +43,13 @@ Three pillars carry the paper:
    eta* -> 0; runtime asymmetry is architectural (0.4 ms/point fixed map
    vs 174-410 ms per recalibration + an LOO leak repair). No other paper
    occupies both slots, so no other paper can run this comparison.
+   RE-AUDIT 2026-08-09 (stack JSONs, 20 trials): post-qe, NO cell in
+   any of the 3 stacked datasets clears 2 SE (cifar-200 residual 0.166
+   vs threshold 0.213) — SNAPS is KILLED as a pipeline component, kept
+   only as the paper's score-level foil. Caveat: stack bases were the
+   old-menu spaces; strict SNAPS-on-DWT never measured, residual
+   bounded above by these cells (DWT is the stronger base and the
+   nothing-left-to-harvest mechanism is base-agnostic).
 
 ## 2. Lane-by-lane lineup
 
@@ -151,10 +163,29 @@ Consequences for the paper:
 - **G2 — RESOLVED by reframing (sec 3).** Not a novelty gap; remaining
   work is naming debt in THEORY.MD/theory/findings + the optional
   fresh SCP-THR row.
-- **G3 — missing semi-supervised baseline (open; proposal below).**
-  The obvious reviewer question for a 200-800-label + 3-10k-pool
-  resource profile: "why not semi-supervised learning + CP?" Two
-  variants with different exchangeability status:
+- **G3 — CLOSED WITH A BOUNDARY (2026-08-09; runs on
+  `worktree-g3-semisup`, verdicts in `g3_semisup_baseline_plan.md`
+  EXECUTIVE VERDICT + `output/pool_repr_menu/g3_semisup/`).** Both
+  variants ran: arm A (self-training probe + split CP, oracle over
+  ratios/rounds/lam, scaled probe) collapses structurally at
+  cal <= 400 on all three datasets but CROSSES OVER on aircraft at
+  cal 800 (15.85 vs champion 19.81, valid cov) — the paper's scope
+  sentence becomes budget-indexed (cal/K <= ~4 shots exclusive; ~6+
+  shots = contested). SemiCP arm added 2026-08-09 (score-level lane-1
+  competitor, same trial protocol): strongest baseline — NNM rescues
+  the starved-cal-half corner (CUB-800 185 -> 2.66; old "NNM neutral"
+  verdict was a 50/50-split artifact), wins aircraft-800 (14.58) and
+  ties the CUB-1600 crown (1.24), but loses the exclusive regime
+  everywhere (2-19x at cal <= 400). Untested compose: SemiCP probe on
+  T(x). Arm B (pool-only
+  DeepCluster MLP, matched d'/C) LOSES everywhere run and is
+  actively harmful on aircraft (worse than raw embeddings — neural
+  collapse onto wrong-class pseudo-clusters at hom .25): the depth
+  axis inherits and AMPLIFIES the homophily regime map, so the
+  closed-form discriminant stands as the right depth point. Residual
+  (stopped for the meeting, not verdict-relevant): CUB arm-B cells,
+  cifar 3-seed MLP hardening, CUB lam=0 top-up. Original proposal
+  kept below for the record:
   - *Variant A, label-dependent (self-training / pseudo-labeling with
     cal labels):* fit a probe on cal, pseudo-label the pool, retrain,
     conformalize. Under split CP this re-inherits the budget split that
