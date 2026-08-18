@@ -18,7 +18,10 @@ Statistica Sinica 2007; [BBP05] Baik-Ben Arous-Peche 2005; [LZZ21]
 Loffler-Zhang-Zhou Ann. Stat. 2021; [DGJ18] Donoho-Gavish-Johnstone 2018;
 [GD14] Gavish-Donoho 2014; [VW04] Vempala-Wang JCSS 2004; [G22] Galanti et
 al. ICLR 2022; [S22] Sorscher et al. PNAS 2022; [B20] Bartlett et al. PNAS
-2020. All math plain ASCII.
+2020; [SC20] Bateni et al. CVPR 2020 (Simple CNAPS, arXiv 1912.03432);
+[TC22] Bateni et al. WACV 2022 (Transductive CNAPS); [RM23] Garrido et al.
+ICML 2023 (RankMe, arXiv 2210.02885); [J22] Jing et al. ICLR 2022
+(dimensional collapse, arXiv 2110.09348). All math plain ASCII.
 
 ---
 
@@ -118,6 +121,52 @@ pseudo-clusters (within-cluster residuals), Ledoit-Wolf regularized
   SAME homophily dial that gates D3, appearing in the W phase (GW2b:
   quantify d' loss as a function of cluster purity; predicted direction:
   pool whitening lags the label oracle most on low-h data).
+
+### W1c' — one family: every menu member estimates the same metric (2026-08-18)
+
+The unifying reading that W1a licenses and the estimation clause makes
+concrete: the entire deployed transform menu consists of REGULARIZED
+ESTIMATORS OF THE SINGLE W1a-OPTIMAL METRIC Sigma^{-1}, differing only in
+where they sit on a bias-variance dial:
+
+```
+estimator                         regularizer                       family member
+oracle Sigma_w^{-1}               none (labels)                     the W1a max
+lw_cluster768 (champion, airc)    linear shrinkage toward mu*I      soft [LW04]
+[SC20] Q_k = lam*Sig_k            hierarchical shrinkage            soft, shot-indexed
+   + (1-lam)*Sig_task + beta*I      (lam = n_k/(n_k+1)) + ridge       lam: class <-> task
+t128w (champion, separable)       rank-128 projection + diag        blunt (rank cut)
+wdiag (deployed engine)           diagonal restriction              blunt (no rotation)
+raw / Euclidean prototypes        full shrink to identity           the t=1 end
+```
+
+The few-shot literature independently converged on the same family:
+[SC20] replaces CNAPS's meta-learned classifier head with exactly this
+object — softmax over -(1/2)(x-mu_k)' Q_k^{-1} (x-mu_k) with the
+hierarchical-shrinkage Q_k above — and measures the family against its
+own degenerate ends at benchmark scale (Meta-Dataset, 8 domains):
+Mahalanobis 72.2% vs squared-Euclidean 69.6% vs cosine 68.3%, while
+DELETING 788k classifier parameters (+6.1% over the learned head). Their
+own justification is the W1a one-liner: Euclidean prototypes "implicitly
+assume each cluster is distributed according to a unit normal"; the
+Mahalanobis rule is the Gaussian-mixture responsibility (Bregman
+divergence of the multivariate normal family). [TC22] then refines Q_k
+with UNLABELED examples (soft k-means over the query set) — pool-fit W in
+deployed form, minus exchangeability discipline and validity. So the W
+stage needs no bespoke defense: it is the few-shot field's own best
+practice, factored into an exchangeable preprocessing transform, with
+W1a/W1b supplying the optimality and no-labels statements the deployed
+versions lack.
+
+Under this frame T is NOT a separate bet: truncation is the BLUNT
+regularizer in the same estimation problem (rank cut instead of
+shrinkage), justified precisely where [SC20]'s lam blend is justified —
+too few samples for the full-rank estimate (T1b's 2m/s term) — and
+contraindicated exactly where the cut removes discriminant mass (Chang /
+F4). The regime story becomes one sentence: LOW PR = the tail carries
+the discriminant, use the soft regularizer (lw768); HIGH PR + starved
+labels = the tail is dead weight, the blunt regularizer is cheaper and
+its estimation savings win (t128w).
 
 ### W1d (interaction with the D phase)
 
@@ -236,6 +285,33 @@ tail-spectrum PR; [S22] puts PR natively in a prototype-cosine error
 formula) and the crude spike count above the bulk edge. The diagnostic
 logs both next to the measured a_m so the proxy's fidelity is itself a
 measurement, not an assumption.
+
+The SSL literature supplies both halves of the dial's justification
+(2026-08-18):
+
+- **The premise that the spectrum is the right label-free instrument is
+  [RM23]'s headline result**: RankMe(Z) = exp(-sum_k p_k log p_k), p_k =
+  sigma_k/||sigma||_1 — the spectral-entropy effective rank of the
+  embedding matrix, a smooth cousin of our PR — predicts downstream
+  accuracy across 110 SSL models x 11 datasets with ZERO labels. Their
+  theoretical motivation is a one-liner of the right shape: a linear
+  readout cannot increase rank, so embedding rank bounds what any
+  downstream linear/prototype classifier can separate (Cover's theorem).
+  Their registered caveat is OUR regime map appearing in their data: rank
+  is "only a necessary condition", and the one benchmark where
+  best-performance breaks rank-monotonicity is STANFORD CARS — the same
+  dataset that sits mid-regime in every one of our tables.
+- **The premise that SSL spectra HAVE a dead tail to cut is [J22]**:
+  contrastive SSL embeddings exhibit dimensional collapse — a set of
+  covariance singular values driven to ~zero by augmentation strength
+  and implicit regularization — so on collapse-shaped spectra truncation
+  discards genuinely empty directions and T1a's alignment cost a_m ~ 1 is
+  structural, not lucky. The T bet in one line: **is the tail dead [J22]
+  or alive [C83]?** High PR / high RankMe = dead tail (cut is free, T1b's
+  savings win); low PR = the discriminant hides in the tail (Chang; cut
+  destroys it; use the soft regularizer of W1c'). The pool spectrum
+  answers label-free, and the five-dataset table is the measured form of
+  exactly this dichotomy.
 
 ---
 

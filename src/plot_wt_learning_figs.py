@@ -201,10 +201,61 @@ def fig_phase_map():
     plt.close(fig)
 
 
+def fig_metric_family():
+    """The estimator-family dial on the napkin toy: every W/T menu member
+    estimates the same W1a-optimal metric Sigma^{-1}; shrinkage slides
+    along one curve, truncation jumps off it."""
+    c = float(np.trace(SIGMA)) / 2          # trace-preserving shrink target
+    ts = np.linspace(0, 1, 300)
+    dps = []
+    for t in ts:
+        M = np.linalg.inv((1 - t) * SIGMA + t * c * np.eye(2))
+        dps.append(dprime(M, SIGMA, DELTA))
+    dps = np.array(dps)
+
+    fig, ax = plt.subplots(figsize=(7.6, 4.6))
+    ax.plot(ts, dps, color="tab:purple", lw=2,
+            label=r"shrunk metric $M_t = ((1{-}t)\Sigma + t\,\bar\lambda I)^{-1}$")
+    ax.plot(0, dps[0], "o", color="tab:purple", ms=8)
+    ax.annotate(f"$t=0$: oracle whitening\n$d' = {dps[0]:.2f}$ (W1a max)",
+                (0, dps[0]), xytext=(0.06, 1.78), fontsize=9)
+    ax.plot(1, dps[-1], "o", color="tab:gray", ms=8)
+    ax.annotate(f"$t=1$: identity metric\n$d' = {dps[-1]:.2f}$ (raw)",
+                (1, dps[-1]), xytext=(0.68, 1.05), fontsize=9)
+    # Ledoit-Wolf: picks t from the data, more samples -> smaller t
+    ax.annotate("Ledoit-Wolf / CNAPS blend:\npick $t$ from sample size\n"
+                "(more shots $\\to$ smaller $t$)",
+                (0.4, float(np.interp(0.4, ts, dps))),
+                xytext=(0.36, 1.52), fontsize=9,
+                arrowprops=dict(arrowstyle="->", color="k", lw=0.8))
+    # truncation to the top-variance PC: off the curve
+    d_trunc = dprime(np.diag([1.0, 0.0]), SIGMA, DELTA)
+    ax.plot(0.5, d_trunc, "X", color="tab:red", ms=11)
+    ax.annotate("rank-1 truncation (keep top-variance PC):\n"
+                f"$d' = {d_trunc:.2f}$ — OFF the curve (Chang: kept the\n"
+                "loud direction, dropped the discriminant)",
+                (0.5, d_trunc), xytext=(0.13, 0.62), fontsize=9,
+                arrowprops=dict(arrowstyle="->", color="tab:red", lw=0.8))
+    ax.set_xlabel("shrinkage intensity $t$  (regularization toward "
+                  "$\\bar\\lambda I$)")
+    ax.set_ylabel("pair $d'$ achieved on the napkin toy")
+    ax.set_ylim(0.4, 2.05)
+    ax.set_title("one family: every menu member estimates the SAME metric "
+                 "$\\Sigma^{-1}$;\nshrinkage slides along the curve — "
+                 "blind truncation can jump off it")
+    ax.legend(loc="upper right")
+    ax.grid(alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(os.path.join(OUT_DIR, "dwt_wt_learning_metric_family.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     fig_whiten_toy()
     fig_chang()
     fig_t1b()
     fig_phase_map()
-    print("wrote 4 figs ->", OUT_DIR)
+    fig_metric_family()
+    print("wrote 5 figs ->", OUT_DIR)

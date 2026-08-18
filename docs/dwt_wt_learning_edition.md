@@ -266,6 +266,38 @@ The measurement (Section 8) then said two humbling things:
    pseudo-clusters costs more than the rotation buys. W1c is not
    decorative — it is the reason W is not free on easy data.
 
+### 5.5 The few-shot field already ran our ablation (Simple CNAPS)
+
+If W1a feels abstract, here is the same statement discovered
+independently, at benchmark scale, by people who weren't thinking about
+conformal prediction at all. **Simple CNAPS** (Bateni et al., CVPR 2020)
+took a state-of-the-art few-shot system and *deleted its meta-learned
+classifier head* (788k parameters), replacing it with softmax over
+$-\tfrac12 (x-\mu_k)^\top Q_k^{-1}(x-\mu_k)$ — class-mean prototypes
+under an estimated covariance metric. Their own words for why: Euclidean
+prototypes "implicitly assume each cluster is distributed according to a
+unit normal." **Choosing a distance IS choosing a density model** — and
+if the true within-class scatter is not round, the round-model rule is
+just wrong. Measured on Meta-Dataset (8 domains):
+
+$$
+\text{Mahalanobis } 72.2\% \;>\; \text{squared Euclidean } 69.6\%
+\;>\; \text{cosine } 68.3\%,
+$$
+
+a $+6.1$-point gain over the *learned* head, from a parameter-free
+metric. That gap is the price of the isotropy assumption on frozen deep
+features — the empirical shadow of W1a's inequality. Their covariance
+estimator is even our W1c in deployed form:
+$Q_k = \lambda_k \Sigma_k + (1-\lambda_k)\Sigma_{\text{task}} + \beta I$
+with $\lambda_k = \frac{n_k}{n_k+1}$ — trust the class covariance as
+shots grow, fall back to the pooled one when starved (their pooled
+$\Sigma_{\text{task}}$ is our total covariance; Section 5.2 is the
+theorem for why that fallback is nearly free). The follow-up
+(Transductive CNAPS, WACV 2022) refines $Q_k$ with **unlabeled**
+examples — pool-fit whitening in deployed form, minus exchangeability
+and validity, which is exactly the gap our version fills.
+
 ---
 
 ## 6. Lemma T1a — truncation, the exact accounting
@@ -324,6 +356,20 @@ that tail; truncating first destroys it — hence measured finding **F3**:
 on Aircraft, truncate-then-whiten recovers only $\times$1.77 of
 full-rank whitening's $\times$3.13. **Order matters, and W-before-T is
 the theorem-consistent order.**
+
+**The T bet, stated with the SSL literature's own words.** Why does
+truncation usually get away with it on SSL embeddings? Because SSL
+spectra really do have a *dead* tail: Jing et al. (ICLR 2022) showed
+contrastive SSL suffers **dimensional collapse** — a set of embedding
+covariance singular values driven to $\approx 0$ by augmentation
+strength and implicit regularization. Cutting collapsed directions
+discards nothing; $a_m \approx 1$ is *structural* on collapse-shaped
+spectra. Chang is the opposite world: a *live* tail carrying the
+discriminant. So T is a bet — **is the tail dead (Jing) or alive
+(Chang)?** — and the pool spectrum answers it without labels: high
+PR/effective-rank $\to$ dead tail, cut freely; low PR $\to$ live tail,
+don't cut, whiten full-rank instead. Our five-dataset table is that
+dichotomy, measured.
 
 ---
 
@@ -389,6 +435,37 @@ and the $s$-scaling (cos² rises with $s$ on every dataset, Aircraft lowest
 at fixed $s$); the whitened-metric quantitative check is a registered
 follow-up.
 
+### 7.4 The unifying picture: one family, one dial
+
+![metric family](figs/dwt_wt_learning_metric_family.png)
+
+Put W and T back together and the whole menu becomes one object. Every
+transform we deploy — and Simple CNAPS's classifier, and the raw
+baseline — is a **regularized estimator of the same W1a-optimal metric**
+$\Sigma^{-1}$:
+
+| member | regularizer | character |
+|---|---|---|
+| oracle $\Sigma_w^{-1}$ | none (labels) | the W1a maximum |
+| `lw768` (aircraft champion) | shrink toward $\bar\lambda I$ | soft |
+| CNAPS $Q_k$ | shot-indexed hierarchical shrink | soft |
+| `t128w` (separable champion) | rank-128 cut + diagonal | blunt |
+| `wdiag` (engine) | diagonal restriction | blunt (no rotation) |
+| raw / Euclidean prototypes | full shrink to $I$ | the $t{=}1$ end |
+
+The figure shows the family on the napkin toy: shrinkage *slides* along
+one curve between the oracle ($d'=1.90$) and raw ($d'=0.92$) — sample
+size decides where you can afford to sit — while **blind truncation can
+jump off the curve entirely** ($d'=0.60$: kept the loud direction,
+dropped the discriminant). Under this frame T stops being a separate
+mystery: it is the *blunt* regularizer in the same estimation problem,
+justified exactly where CNAPS's $\lambda_k$ blend is justified (too few
+samples for full-rank, T1b) and contraindicated exactly where the cut
+removes discriminant mass (Chang, F4). The regime rule in one sentence:
+**low PR $\to$ live tail $\to$ soft regularizer (`lw768`); high PR +
+starved labels $\to$ dead tail $\to$ blunt regularizer wins on
+estimation savings (`t128w`).**
+
 ---
 
 ## 8. Reading the measured table
@@ -430,7 +507,17 @@ The verdict pattern in one sentence each:
 - **PR** separates the regimes (243/255/119 vs 24/16); the crude
   Marchenko-Pastur spike count does **not** (233–281 everywhere) — the
   bulk is structured on every dataset, which is GT1's point made by a
-  failed instrument.
+  failed instrument. The spectrum-as-dial idea is not ours alone:
+  **RankMe** (Garrido et al., ICML 2023) showed the spectral-entropy
+  effective rank of SSL embeddings — a smooth cousin of PR — predicts
+  downstream accuracy across 110 models × 11 datasets with zero labels
+  (their one-line reason: a linear readout cannot *increase* rank, so
+  embedding rank caps what any downstream classifier can separate). And
+  their registered exception — the one benchmark where rank-monotonicity
+  breaks — is **Stanford Cars**, the same dataset that sits mid-regime in
+  every table of ours. The dial is published; our contribution is wiring
+  it to a *decision* (which regularizer) with the Chang mechanism behind
+  it.
 - **Headroom (F6):** pool whitening reaches only 23–44% of the labeled
   Mahalanobis oracle everywhere, and the fraction is NOT ordered by
   homophily — so cluster *impurity* is not the limiter; either the oracle
@@ -491,6 +578,15 @@ Full annotated stack with links and reading order:
 - **Ledoit-Wolf 2004**: the $n<d$ license for full-rank whitening (W1c).
 - **Vempala-Wang 2004** / **Loffler-Zhang-Zhou 2021**: means-in-top-spikes
   and the end-to-end unlabeled projection bound — T1b's saturation story.
+- **Simple CNAPS (CVPR 2020) / Transductive CNAPS (WACV 2022)**: the
+  few-shot field's deployed version of our W stage — Mahalanobis
+  prototype rule with shot-indexed shrinkage (§5.5); the +6.1-point
+  Meta-Dataset ablation is W1a's empirical shadow at benchmark scale.
+- **RankMe (ICML 2023)** / **Jing et al. (ICLR 2022)**: SSL-native
+  justification of the T premise and the dial — effective rank of the
+  embedding spectrum predicts downstream label-free (RankMe), and SSL
+  spectra genuinely have collapsed (dead) tails to cut (dimensional
+  collapse). §6.3's "dead or alive" bet and §8's PR row.
 
 ---
 
@@ -508,6 +604,10 @@ Full annotated stack with links and reading order:
    grows?
 6. Aircraft: $a_{128} = 0.87$ yet truncation is harmful and whitening
    gives $\times$3.13. Reconcile in one sentence.
+7. Simple CNAPS's $Q_k = \lambda_k\Sigma_k + (1-\lambda_k)
+   \Sigma_{\text{task}} + \beta I$ with $\lambda_k = \frac{n_k}{n_k+1}$:
+   which clause of W1 does each of the three terms correspond to, and
+   what do WE have that they don't?
 
 *Answers (sketch):* (1) $d'$ is defined from means and variances only;
 Cauchy-Schwarz is algebra on quadratic forms. (2) Whitened top direction
@@ -523,4 +623,12 @@ UN-whitened space where truncation moonlights as crude whitening (T1a′).
 $A_m$ wins; at $s=\infty$ the curve is monotone (population limit). (6)
 Truncation keeps 87% of the axis's energy but only 17% of its
 discriminant, while full-rank whitening re-weights exactly the
-low-variance component that carries the other 83%.
+low-variance component that carries the other 83%. (7)
+$\Sigma_k$ = the W1a target (within-class covariance, per class);
+$(1-\lambda_k)\Sigma_{\text{task}}$ = the W1b fallback (pooled/total
+covariance standing in when shots are few — our Sherman-Morrison clause
+explains why it's nearly free); $\beta I$ = the W1c shrinkage floor (our
+Ledoit-Wolf clause, with a theorem instead of a constant). What we add:
+the covariance is fit on an *unlabeled pool* with exchangeability
+preserved (validity survives), and the regime theory saying when the
+blunt regularizer (truncation) should replace the soft one.
