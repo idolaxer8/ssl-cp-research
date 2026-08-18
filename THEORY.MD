@@ -72,9 +72,12 @@ Five load-bearing claims, each backed by experiments in `docs/findings.md` /
    LOO re-prototyping), and the whole effect rides on pool-neighbor label
    homophily: gain above roughly 0.7 (mini .92, cifar .8), harm below (cars
    .45, aircraft .25). The harmful regime must be excluded label-free for the
-   method to be deployable. (Superseded at the feature level: alpha-QE
-   smoothing SUBSUMES the score correction — post-qe the SNAPS gain drops
-   −41% -> −6.6%, eta* -> 0 — so the deployable pool-neighbor lever is qe.)
+   method to be deployable. The 08-03/04 menu round then moved the lever one
+   stage earlier: alpha-QE pool-neighbor smoothing of the *embedding* (qe)
+   subsumes the score-space correction — post-qe the SNAPS gain collapses
+   (−41% -> −6.6%, eta* -> 0; purity rises but nothing is left to harvest).
+   Same homophily fingerprint, one shared gate; the deployable pool-neighbor
+   lever is input denoising, not score diffusion.
 
 5. **The transform IS the metric half of the NCM.** Whiten-then-Euclidean is
    Mahalanobis under the pool covariance, so pool-fit PCA-truncate +
@@ -95,13 +98,15 @@ Five load-bearing claims, each backed by experiments in `docs/findings.md` /
    cosine 0.06) and dies with centering — so the paper should lean on
    contrast concentration, not the NLP-style anisotropy-repair story.
 
-The lead pipeline is therefore: DINOv2 embeddings -> (qe pool-neighbor
-smoothing where homophily allows) -> pool-fit PCA-128 + cluster-whiten (or
-full-rank LW-cluster whitening at low PR) -> `prototype_softmax` (or
-`unwhitened_topk_asym` on hard data) -> FCP (GPU fast path) -> optional
-MS-CS penalty (geodesic NCM only, centered-cosine M). Everything in that
-chain is exactly exchangeable, so coverage sits at the theoretical target
-1 - floor(alpha(n+1))/(n+1) ~ 0.90 at every cal size — confirmed to be
+The lead pipeline — named **DWT** (Denoise -> Whiten -> Truncate) in the
+08-10 instructor session — is therefore: DINOv2 embeddings -> qe
+pool-neighbor denoising (where homophily allows) -> pool-fit
+cluster-whitening -> PCA truncation (skipped at low PR: full-rank
+LW-cluster whitening instead) -> unwhitened geodesic or prototype NCM ->
+FCP (GPU fast path) -> optional MS-CS penalty (geodesic NCM only,
+centered-cosine M). Every stage is pool-fit and permutation-equivariant,
+hence exactly exchangeable: coverage sits at the theoretical target
+1 - floor(alpha(n+1))/(n+1) ~ 0.90 at every cal size — confirmed
 Monte-Carlo-tight by the 100-trial diagnostic.
 
 ## Strategy
@@ -111,8 +116,62 @@ The campaign is "exchangeability-first": the exact-guarantee path is the
 `allow_nonexchangeable=True`). New experiments are valid unless someone
 explicitly opts out.
 
-The current campaign hardens the two live levers into method components
-rather than lucky points. (a) The SNAPS pool correction: show the gain is a
+The immediate campaign (08-10 week, instructor-set) is theoretical: DWT wins
+empirically but has no rigorous justification, and that is now the paper's
+critical path. The role model is DAPS Theorem 2 — score diffusion provably
+reduces score error under a homophily radius — but DWT intervenes on the
+*representation*, so the proof is rebuilt as a three-lemma chain:
+(A) a denoising lemma, the DAPS-2 analogue in embedding space — under a
+mixture model x = mu_y + eps, qe smoothing contracts within-class noise by
+~ (1-lam)^2 + lam^2/k while paying a wrong-class contamination bias
+~ lam*(1-h(k))*Delta_mu, improving the representation iff homophily h(k) is
+high (the CSBM graph-convolution separability line proves exactly this for
+neighborhood averaging); (B) Lipschitz transfer of that gain through the
+distance-based NCM into score concentration; (C) a quantile-step argument
+converting score concentration into smaller expected sets at fixed
+coverage — the proof architecture of Feature CP's Theorem 6 (Teng et al.,
+ICLR 2023, "cubic conditions"), whose mechanism (the quantile step costs
+less in a space where scores concentrate around their quantile) is our
+Step C even though its statement (feature- vs output-space bands,
+regression) does not transfer. **Step A is now delivered
+(`docs/dwt_denoise_theorem.md`, 08-12): Theorem D1 mirrors DAPS-2 verbatim
+(deterministic, gap-free); Theorem D3 states the operative gate at the
+MARGIN level — d' changes by [1 - 2*beta*kappa*(1-h)]/rho(beta,k_eff), so
+improvement iff h > h* = 1 - (1-rho)/(2*beta*kappa), a scale-free condition
+with zero fitted constants.** Measured on all five datasets
+(`src/dwt_gate_constants.py`): h* ~ 0.27-0.40, every tested dataset on the
+predicted side; the folklore "hom >= ~0.7" gate was an interpolation across
+the h in (0.46, 0.80) data gap using the SNAPS *score* correction — a
+different operator. The registered discriminating prediction — qe should
+GAIN on stanford_cars (h_w = 0.46, predicted d'-ratio 1.52) where folklore
+predicts harm — **RESOLVED 08-13 against the (I)-model: qe HARMS on cars
+(+11/+28/+40% at 2/4/8 shots/class, coverage on target), and the measured
+margin d'-ratio is 0.735, not 1.52. The pre-registered escape hatch fired
+exactly as written: the (V1)/(V2) selection effects are first-order at
+mid-homophily. The structural finding survives and sharpens — measuring
+the d'-ratio directly on all five datasets (1.05/1.18/1.21/0.74/0.64 vs
+predicted 1.96/2.41/2.35/1.52/0.70) shows the (I)->measured damping is
+universal, the measured ratio is monotone in homophily, and its sign
+calls the qe verdict 5/5. So D3's margin->size link is validated
+everywhere; what needs repair is only the composition-constants
+prediction of d' (the G2 remainder). Empirical gate bracket:
+h_w in (0.46, 0.81).**
+
+The 08-10 lit sweep (`docs/dwt_theory_litsweep.md`) confirmed the niche is
+open — no post-DAPS work ports Theorem 2 to feature-similarity neighbors
+(SNAPS's lone efficiency result assumes perfectly pure neighborhoods), and
+DAPS itself flags the kNN-graph setting as future work — and supplied a
+converter for each step: CSBM neighborhood-averaging separability for A;
+for C, either Dhillon et al.'s exact expected-size identity (stochastic
+dominance of score CDFs orders expected sizes, finite-n) or the
+linear-in-score-error distance-to-oracle-length bounds (Conrad et al.,
+Sadinle et al.), with Behboodi et al.'s transductive KL-linear penalty as
+the FCP-arm variant. W and T ride classical optimality (RCA whitening,
+spiked-covariance truncation). Notably the alpha-QE retrieval literature
+has zero theory — the D stage must be argued as graph-signal denoising.
+
+The standing empirical campaign hardens the two live levers into method
+components rather than lucky points. (a) The SNAPS pool correction: show the gain is a
 surface, not a point — eta x k x neighbor-weighting sweeps across datasets,
 extend the homophily map with CUB-200 (the missing mid point) and CIFAR-10,
 and build the label-free homophily gate (margin-tail / pool
@@ -338,6 +397,40 @@ floor guarantee) as the primary novelty pilot, unmerged on
   prototype NCM on aircraft, OFF beats every smoothing mode (no-qe
   ldapool512 18.22 vs champion 19.81 @800) — any gate needs an OFF setting,
   not just dilution.
+- **qe subsumes SNAPS**: smoothing the embedding over pool neighbors
+  captures what score diffusion was harvesting — the gain lives in the
+  representation, one stage earlier than DAPS/SNAPS operate. This is why
+  the justification must be a representation-space theorem, not a score
+  smoothing one.
+- **The feature-space CP theory exists and its architecture transfers**:
+  Teng et al. (ICLR 2023, Feature CP) prove feature-level CP beats
+  output-level CP via three "cubic conditions" (length preservation,
+  expansion, quantile stability); the load-bearing quantity is the mean
+  distance of scores from their (1-alpha)-quantile — the "cost of the
+  quantile step" — which they also validate empirically per dataset. Their
+  statement compares two score spaces for one model; ours compares two
+  representations under one score family, so we reuse the skeleton, not
+  the theorem.
+- **The homophily gate lives at the margin level, not the norm level**
+  (08-12, `docs/dwt_denoise_theorem.md`). In expectation, norm-level
+  "denoising" ALWAYS helps at some smoothing weight — no gate exists there
+  (Theorem D2); the gate appears only when the smoothing identity is
+  projected onto a confusable-pair axis, where signal damage and noise
+  reduction are both first-order in beta (Theorem D3). Corollaries fell
+  out for free: the gate is scale-free (sigma and Delta cancel — hence one
+  threshold across datasets, the sweep's "one law"), harm below the gate
+  is not tunable (no small-beta rescue), one hop is optimal (drift
+  compounds, variance is already at its floor), and classic alpha-QE's
+  implicit self-weight beta_hat = W/(1+W) rises with neighborhood
+  similarity — adapting the WRONG way on fine-grained data (0.86 on
+  aircraft vs 0.62 on cifar100). Measured with zero fitted constants,
+  every tested dataset lands on the predicted side, and the measured gate
+  h* ~ 0.27-0.40 says the folklore "0.7" was two operators conflated: the
+  D-stage smoother and the SNAPS score correction do NOT share a
+  break-even. CAVEAT (08-13/08-18): D3's quantitative layer OVERPREDICTS —
+  the sqrt(k) averaging dividend does not exist (shared-field noise, phi ~
+  0.8-0.96) — so D1 (exact, assumption-free) is the theory's grounding and
+  the d'-ratio is a measured diagnostic, not a derived gate.
 
 ## Open Questions
 
@@ -345,9 +438,49 @@ floor guarantee) as the primary novelty pilot, unmerged on
   (ICLR-2027 decision 2026-08-18): no automatic gate/selector is shipped;
   the dials (PR, h_w, d'-ratio) are presented as a descriptive regime map
   and the per-regime transform choice is fixed a priori. The label-free
-  surrogate for (h_w, kappa), the mid-PR (CUB) selector, and the 'auto' arm
-  (PARKED 2026-07-06) are all FUTURE WORK. A wrong per-regime choice costs
-  efficiency, never validity.
+  surrogate for (h_w, kappa) (theorem-shaped target: predict
+  sign(d'-ratio) without pool labels; candidates margin-tail, pool
+  self-consistency, hub-skew), the mid-PR (CUB) selector, and the 'auto'
+  arm (PARKED 2026-07-06) are all FUTURE WORK. A wrong per-regime choice
+  costs efficiency, never validity.
+- ~~The cars discriminating run~~ **RESOLVED 08-13 (commit 84336d8,
+  `src/cars_qe_gate_experiment.py`): qe harms; the (I)-model mis-sorted
+  the cell (measured d'-ratio 0.735 vs predicted 1.52) via the
+  pre-registered V1/V2 mechanism; the margin->size link held and the
+  measured d'-ratio sign calls the verdict 5/5 across datasets.**
+  ~~Where does the overprediction live?~~ **LOCALIZED same day
+  (`src/dprime_overprediction_diagnostic.py`, research edition §8b):
+  in the DENOMINATOR — the sqrt(k) averaging dividend does not exist
+  (measured noise shrink 0.90-0.98 vs modeled 0.31-0.43), because
+  Var(nu_v) ~ sigma_v^2 with corr(e_v, nu_v) ~ 0.85-0.90: the kNN mean is
+  the mean-shift local mean, and within-class variance along confusable
+  axes is ~80-95% shared structured field (phi ~ 0.78-0.96), only the iid
+  shell averages. Numerator damage also overpredicted (S ~ 1.0-1.05 at
+  high h — mode-sharpening). Revised mechanism: qe = mean-field mover,
+  not variance reducer; helps iff the local field flows toward the
+  own-class mode.** The G2 remainder lemma now has a concrete shape: a
+  two-component noise model (shared field + iid shell) with the single
+  new constant phi, replacing 1/k_eff by phi + (1-phi)/k_eff and
+  re-deriving the gate. Until then the deployable gate stays empirical
+  (qe OFF below h ~ 0.8).
+- **Closing the two medium gaps in the DWT proof draft**
+  (`docs/dwt_theory.md` + `docs/dwt_denoise_theorem.md`, gap ledger
+  G1-G10). G2 — selection-noise correlation — now has SIGNED directions
+  ((V1) retained-own-noise = effective beta shrink; (V2) error-aligned
+  foreign selection = kappa inflation; both push h* up) but still needs
+  its remainder lemma (route = mean-shift small-ball expansion). G6 —
+  right-tail stochastic dominance of score CDFs (moments alone don't give
+  it; route = Anderson's inequality under conditional Gaussianity, or
+  name-the-condition + validate, the Feature-CP precedent). Two scope
+  decisions pending: the champion geodesic *ratio* NCM is not covered
+  (scale-invariance neuters naive arguments — the theorem covers the
+  prototype NCM), and the FCP arm needs the transductive size identity. A
+  found feature: validity pins the true-class term of E|C|, so efficiency
+  is purely the false-class overlap below q_hat — and the theorem's
+  assumptions fail exactly where DWT empirically fails (aircraft),
+  quantitatively so since 08-12. NOTE (ICLR-2027 plan §4): these gaps are
+  NOT on the submission's critical path — the paper is empirical-first and
+  claims only D1 + exact-core W1a/W1b/T1a + validity (decision D-1).
 - Is the headline arm (eta=0.5, k=10) genuinely robust, or does the optimal
   arm drift with homophily and cal? The cars k=10-vs-20 ordering hints harm
   grows with neighborhood size; the sweep will tell.
