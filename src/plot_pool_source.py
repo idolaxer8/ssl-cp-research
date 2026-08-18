@@ -13,6 +13,7 @@ large-cal differences). This replaces it with a log-free, more informative
 Absolute set sizes stay in the README table. Reads/writes by absolute path into
 the main checkout's output/.
 """
+# ARCHIVE-CANDIDATE (review 2026-08-24): plots only pool_source_comparison/limits results (findings §4d recorded); archive together with them. Re-flagged: the 2026-07-10 sweep's note never merged to main.
 import os, json
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 

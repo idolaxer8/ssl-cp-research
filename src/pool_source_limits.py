@@ -28,6 +28,7 @@ isolates SIZE.
 
 Reads embeddings / writes results by ABSOLUTE path into the main checkout's output/.
 """
+# ARCHIVE-CANDIDATE (review 2026-08-24): limits arm of the settled pool-source question (findings §4d, 2026-06-10); archive together with pool_source_comparison.py. Re-flagged: the 2026-07-10 sweep's note never merged to main.
 import sys, os, time, json, math, argparse
 
 REPO = r"C:\Users\IDO\Desktop\Ido_student\Msc\ssl-cp-research"

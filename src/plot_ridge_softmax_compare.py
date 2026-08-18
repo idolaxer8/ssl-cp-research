@@ -6,6 +6,7 @@ set size | coverage) and saves it to the comparison output dir.
 
 Run:  python src/plot_ridge_softmax_compare.py --dir output/ridge_softmax_compare
 """
+# ARCHIVE-CANDIDATE (review 2026-08-24): plots only the output/ridge_softmax_compare comparison (verdict recorded); archive together with ridge_softmax_cluster_experiment.py.
 import os
 import json
 import argparse
