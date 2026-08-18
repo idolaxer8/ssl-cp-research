@@ -10,8 +10,9 @@ is carried through both lemmas so you can compute everything by hand.
 
 > **How to read this file.** The math is real LaTeX (`$...$`). It will NOT
 > render in a raw terminal — open in **VS Code and press `Ctrl+Shift+V`**,
-> or view on GitHub / Obsidian / Typora. The ASCII research edition
-> (`dwt_wt_lemmas.md`) uses identical symbols if you need a terminal copy.
+> or view on GitHub / Obsidian / Typora. The research edition
+> (`dwt_wt_lemmas.md`) uses the same LaTeX format and identical symbols
+> (converted 2026-08-18, user preference — clearer than the old ASCII).
 
 > **The build principle (decided 2026-08-16).** D1 is the *base lemma* of
 > the Denoise phase: deterministic, assumption-free, one triangle
