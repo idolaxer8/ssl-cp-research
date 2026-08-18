@@ -31,14 +31,17 @@ Three load-bearing claims, each now backed by experiments in
    depressed small-cal coverage (0.844 at cal=200) until replaced by
    symmetric handling.
 
-2. **The efficiency win is mostly the no-train-split NCM, not the
-   transductive machinery.** SCP with the geodesic top-k NCM matches FCP with
-   the same NCM at every budget (within 0.02 set size); FCP's apparent
-   dominance over SCP-THR is really "distance-based NCM that spends the whole
-   budget on calibration" vs "classifier that must split it". The honest
-   paper claim is about NCM design + budget allocation; FCP vs SCP machinery
-   is a cost/runtime choice (`predict(update_calibration_scores=False)` gives
-   the cheap variant).
+2. **The efficiency win is mostly the no-train-split NCM; FCP stays
+   load-bearing for exactness.** The variant once called "SCP-geodesic" is
+   NOT split CP — it is a static-cal *reduction* of FCP
+   (`predict(update_calibration_scores=False)`: same NCM, same fit, no
+   train/cal split, no exact guarantee of its own) and it reproduces FCP
+   set-for-set because the dropped per-candidate refit is O(1/n). So its tie
+   with FCP is a runtime footnote, not an "SCP matches FCP" result. True
+   inductive Split CP (SCP-THR, a trained head on a disjoint split) collapses
+   at our budgets — FCP remains the only path to tight sets WITH the exact
+   guarantee. The honest attribution stands: efficiency comes from NCM design
+   + spending the whole budget on calibration; exactness comes from FCP.
 
 3. **Unlabeled data buys efficiency through the feature transform first, the
    penalty second.** The pool ablation decomposes the gain: pool-fit PCA-128
@@ -124,9 +127,12 @@ them would silently change experiment semantics.
 
 ## Key Discoveries (pivots)
 
-- **"FCP wins" reframed**: SCP-geodesic == FCP-geodesic across datasets and
-  budgets killed the original framing; the story is NCM design under a total
-  label budget B.
+- **"FCP wins" reframed (naming corrected 2026-08)**: the static-cal FCP
+  reduction (`update_calibration_scores=False`, formerly mis-named
+  "SCP-geodesic" — it is not split CP) ties FCP set-for-set, killing the
+  original "transductive machinery wins" framing; the story is NCM design
+  under a total label budget B, with FCP still load-bearing for the exact
+  guarantee (true split CP collapses at our budgets).
 - **Small-cal under-coverage was a bug, not a regime**: the missing-class
   sentinel fix moved cal=200 coverage 0.844 -> 0.91; pre-fix small-cal
   numbers are untrustworthy.
