@@ -80,6 +80,7 @@ Z_SIG = 2.0                      # |z| threshold for calling a paired effect rea
 BACKBONE_SUFFIX = {
     "dinov2": "",
     "dinov3": "_dinov3-base",
+    "dinov3-512": "_dinov3-base-512",   # high-res re-extract (isolate res vs model)
     "clip": "_clip-base",
     "clip-large": "_clip-large",
     "mae": "_mae-base",          # retained (negative control); off by default
