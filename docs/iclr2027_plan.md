@@ -110,23 +110,34 @@ analysis (descoped 08-18). **C6c is the only true theory risk**, and the
 paper is structured (§0) so that C6c landing or not does not sink the
 submission.
 
-### Expected-gap experiments still owed (the wk 08-24 run list)
+### Paper-grade run list (wk 08-24; superseded the earlier owed-experiment
+### list on 08-18 when the paper framework was drafted)
 
-1. **Backbone table finalize** (C5): fill beitv2 or drop; MAE-as-negative-pole
-   decision; one table size@200/400/800 + coverage + dial values + gate-correct.
-2. **qe champion consolidation** (C3/C4): high-trial cluster rerun of the qe
-   menu numbers so the headline pipeline row is reproducible from main.
-3. **Regime-map analysis figure** (C4, optional): dial values (PR/h/d') vs
-   observed best transform across the 5 datasets + backbones — DESCRIPTIVE
-   only (no selection gate; descoped 08-18). Cut first if time is short.
-4. **FCP-vs-baselines clean table** (C1): fix the naming debt, one honest
-   head-to-head.
-5. **W/T rigor** (C6c, theory-thread, high-risk): at minimum land the
-   chain-free W-N and T-A lemmas cleanly; the quantitative gate is a stretch.
+The paper framework (`docs/paper/outline.md` — section skeleton, asset
+manifest, focus read) now DERIVES the run list; per-run detail lives there.
+Framing decisions folded in: budget-indexed high-K regime (labels/class =
+cal/K governs split-CP collapse; boundary ~4-6 shots/class) -> MAIN
+datasets = cifar100/mini/aircraft/cars, **cifar10 demoted to appendix
+saturated control**, CUB appendix (336px); PR = the only label-free dial
+(homophily/d' = labeled diagnostics — never claim a label-free homophily
+gate).
 
-(Removed from the run list 08-18: the dial->decision automation table and
-the mid-PR CUB selector — both belonged to the descoped C4 auto-selection
-story; now future work.)
+- **R1 (CRITICAL)**: headline champion arms 50-trial, 4 main ds, {raw,
+  per-regime W/T, +qe gated, champion} x 3 NCMs, cal 200/400/800 ->
+  Table 2 / Figs 1-2. Currently 10-trial.
+- **R2 (CRITICAL)**: baselines 50-trial matched budgets: SCP-THR/APS/RAPS,
+  SemiCP, probe+CP, CV+ (verify `g3_semisup_experiment.py` covers
+  CV+/APS/RAPS; add arms if missing) -> Table 2.
+- **R3**: transform-control menu 20-30 trial + ADD stanford_cars ->
+  Table 4 / Fig 3.
+- **R4 (optional)**: backbone x cars; beitv2 in-or-drop -> Table 5 ext.
+- **R5 (optional)**: MS-CS/MA-CS penalty 20-trial -> appendix D.
+- **R6 (cheap)**: cifar10 appendix control top-up.
+- **W/T rigor** (C6c, theory-thread, high-risk, unchanged): at minimum land
+  the chain-free W-N and T-A lemmas cleanly; quantitative gate = stretch.
+
+(Removed 08-18: dial->decision automation table + mid-PR CUB selector —
+descoped C4 auto-selection story; future work.)
 
 ---
 
