@@ -132,9 +132,14 @@ story; now future work.)
 
 ## 3. Code organization — merge-or-archive ledger
 
-13 branches are unmerged into main. **Recommended dispositions below; the
-actual merges are a wk 08-24 task, not done in this planning pass.** Rule:
-one reproduction script per planned table/figure lives on `main` after merge.
+13 branches were unmerged into main. **EXECUTED 2026-08-18 (pulled forward
+from wk 08-24):** the 4 core branches + the 08-10 cleanup branch are merged
+(conflicts in THEORY.MD / literature.md / weekly_summary.md resolved by
+union); transform-selection turned out fully committed (stale memory) and is
+contained in pool-repr-menu; archive verdicts recorded in `findings.md` §12.
+Worktree DIRECTORIES left in place (gitignored `output/` inside — never
+delete). Rule: one reproduction script per planned table/figure lives on
+`main` after merge.
 
 | Branch | Holds | Disposition | Note |
 |---|---|---|---|

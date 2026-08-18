@@ -411,4 +411,33 @@ DINOv2 dominates — 77% smaller than BEiTv2, 11× smaller than CLIP. FCP advant
 
 ---
 
-*Last updated: 2026-06-07.*
+## 12. Worktree branch dispositions (ICLR-2027 code org, 2026-08-18)
+
+Executed per `docs/iclr2027_plan.md` §3. MERGED into main: `worktree-backbone-dwt`
+(goal-5 backbone x DWT transfer), `worktree-pool-repr-menu` (qe menu + champion +
+qe-upgrade pilots; contains the `worktree-transform-selection` lineage — its
+"uncommitted" state was stale, all committed), `worktree-g3-semisup`
+(reviewer-baseline arms), `worktree-theory-dwt-justification` (D1-D3 theorem,
+W/T lemma DRAFT, anchor litsweeps, diagnostics), `routine/repo-cleanup-2026-08-10`
+(ARCHIVE-CANDIDATE flags, review 08-24). ARCHIVED (branch kept, no merge, verdict
+recorded):
+- `worktree-snaps-pool` — SNAPS pool-score correction; SUBSUMED by qe
+  (post-qe SNAPS gain −41% -> −6.6%, eta* -> 0). Kept as provenance for the
+  subsumption claim.
+- `worktree-mdcp-pool-pilot` + `worktree-mdcp-vanilla-split` (superset) — MDCP
+  line CLOSED as a fusion method (paid off as an audit; adaptivity win logged).
+- `worktree-conformal-metric` — G1 conformal-metric learning REWOUND (user
+  08-03: label-free surrogate cannot rank candidates); theory survives in its
+  `docs/conformal_metric_objective.md`.
+- `worktree-novelty-pilots` — geometric-conditional CP (one-sided Mondrian);
+  side result, doc committed on the branch; likely not in the main paper.
+- `worktree-goal4-caos-litsweep`, `worktree-novelty-framing-review` — zero
+  unique commits (content already on main / folded into literature.md).
+- `worktree-saps-prototype-ncm` — already closed (KILL verdict recorded).
+- `routine/repo-cleanup-2026-07-10` — superseded by the 08-10 run.
+NOTE: worktree DIRECTORIES are left in place — several contain gitignored
+`output/` results (never delete; see git-ops-protect-output-dir).
+
+---
+
+*Last updated: 2026-08-18.*
