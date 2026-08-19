@@ -54,6 +54,11 @@ ARMS = {
     "rp128_cw":      dict(pca_dim=128, whiten="cluster",    projection="random"),
     "pca128":        dict(pca_dim=128, whiten=None,         projection="pca"),
     "pca128_cw":     dict(pca_dim=128, whiten="cluster",    projection="pca"),
+    # T->W with FULL-MATRIX LW within-cluster whitening in the reduced space:
+    # the matched-order mirror of ldapool128 (same LW cluster covariance,
+    # opposite order) — isolates pure W/T order, unconfounded by
+    # diagonal-vs-full whitening (2026-08-19 T-redundancy/order run)
+    "pca128_lwcw":   dict(pca_dim=128, whiten="lw_cluster", projection="pca"),
     "pca512_cw":     dict(pca_dim=512, whiten="cluster",    projection="pca"),
     "lw_global768":  dict(pca_dim=None, whiten="lw_global", projection=None),
     "lw_cluster768": dict(pca_dim=None, whiten="lw_cluster", projection=None),
