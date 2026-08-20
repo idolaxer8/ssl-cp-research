@@ -14,7 +14,7 @@ full-rank `lw_cluster`, qe gated OFF by pool PR), scored by
 
 | Run | Priority | Driver | Output -> paper asset | Status |
 |-----|----------|--------|----------------------|--------|
-| R1 headline: shots 2-14, 4 main ds, {raw, wt, qe_wt} x 3 NCMs, 50 trials | CRITICAL | `src/r1_headline_experiment.py` via `cluster/run_r1_headline.sh` | Table 2, Figs 1-2 | READY ג€” frozen pipeline encoded (d42ba1a), checkpoint/resume verified; NOT yet launched |
+| R1 headline: shots 2-14, 4 main ds, {raw, wt, qe_wt} x 3 NCMs, 50 trials | CRITICAL | `src/r1_headline_experiment.py` via `cluster/run_r1_headline.sh` | Table 2, Figs 1-2 | READY ג€” frozen pipeline encoded (6771b06 on main), checkpoint/resume verified; NOT yet launched |
 | R2 baselines: SCP-THR/APS/RAPS, SemiCP, probe+CP, CV+ at matched budgets, 50 trials | CRITICAL | `src/g3_semisup_experiment.py` | Table 2 baseline rows | needs arm audit (CV+/APS/RAPS coverage) before launch |
 | R3 transform menu + stanford_cars, 20-30 trials | high | `src/transform_control_experiment.py` | Table 4, Fig 3 | READY (champion arm `qe_pca128_lwcw --qe_stage post`) |
 | R4 backbone x cars; beitv2 in-or-drop | optional | `src/backbone_dwt_experiment.py` | Table 5 ext | as-is from v3 grid |
