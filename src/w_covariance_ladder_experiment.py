@@ -45,8 +45,11 @@ import numpy as np
 import torch
 from sklearn.covariance import LedoitWolf
 
-from conformal_prediction import FullConformalPredictor, create_ncm
+from conformal_prediction import (FullConformalPredictor, create_ncm,
+                                  PrototypeSoftmaxNCM)
 from exchangeable_features import UnlabeledTransform, IdentityTransform
+
+SOFTMAX_NCMS = {"prototype_softmax"}
 
 
 class ZCAWhitenTransform:
@@ -105,10 +108,27 @@ def balanced_split_with_shots(y, allc, m_cal, m_test, n_shots, rng):
     return np.concatenate(ci), np.concatenate(ti), np.concatenate(si)
 
 
+def resolve_softmax_T(tf, X, y, allc, args):
+    """Pilot-fixed prototype-softmax temperature per (arm, dataset), mirroring
+    transform_control_experiment.resolve_softmax_T: fixed across trials ->
+    exactly exchangeable."""
+    K = len(allc)
+    m = max(4, min(max(args.cal_sizes), 800) // K)
+    rng = np.random.default_rng(args.seed)
+    ci, _, _ = balanced_split_with_shots(y, allc, m, 1, 0, rng)
+    pncm = PrototypeSoftmaxNCM(temperature=None, logit="cosine",
+                               allow_nonexchangeable=True).fit(
+        tf.transform(X[ci]), y[ci])
+    return float(pncm._T)
+
+
 def run_cell(tf_for_trial, X, y, allc, cal, m_cal, m_test, nm, args,
-             shot_fit=False):
+             shot_fit=False, T_fixed=None):
     """One (arm, cal, ncm) cell: n_trials FCP runs. tf_for_trial(t, si) returns
-    the fitted transform for trial t (si = shot indices, used by shot_lw)."""
+    the fitted transform for trial t (si = shot indices, used by shot_lw).
+    For softmax NCMs, T_fixed is the arm's piloted temperature; None (shot_lw)
+    re-pilots T per trial on the SHOT slice — disjoint from the cal/test bag,
+    so exchangeability stays exact."""
     K = len(allc)
     cls_to_j = {int(c): j for j, c in enumerate(allc)}
     covs, szs, shrinks = [], [], []
@@ -123,7 +143,16 @@ def run_cell(tf_for_trial, X, y, allc, cal, m_cal, m_test, nm, args,
             shrinks.append(tf.lw_shrinkage_)
         Xc, yc = tf.transform(X[ci]), y[ci]
         Xt, yt = tf.transform(X[ti]), y[ti]
-        ncm = create_ncm(nm, k=5)
+        if nm in SOFTMAX_NCMS:
+            T = T_fixed
+            if T is None:
+                pncm = PrototypeSoftmaxNCM(temperature=None, logit="cosine",
+                                           allow_nonexchangeable=True).fit(
+                    tf.transform(X[si]), y[si])
+                T = float(pncm._T)
+            ncm = create_ncm(nm, temperature=T, logit="cosine")
+        else:
+            ncm = create_ncm(nm, k=5)
         cp = FullConformalPredictor(ncm, alpha=args.alpha)
         cp.calibrate(Xc, yc, all_classes=allc)
         try:
@@ -178,6 +207,8 @@ def main():
     ap.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--output_dir", default="output/w_ladder")
+    ap.add_argument("--out_tag", default="",
+                    help="suffix for the results filename (avoids clobbering).")
     args = ap.parse_args()
 
     if args.device == "cuda" and not torch.cuda.is_available():
@@ -220,6 +251,10 @@ def main():
 
         for arm in arms:
             print(f"\n=== arm {arm} ===")
+            T_arm = None
+            if SOFTMAX_NCMS & set(args.ncms) and arm != "shot_lw":
+                T_arm = resolve_softmax_T(fixed[arm], X, y, allc, args)
+                print(f"  prototype_softmax fixed T = {T_arm:.4f}")
             for cal in args.cal_sizes:
                 m_cal = cal // K
                 if m_cal < 2:
@@ -234,7 +269,8 @@ def main():
                 for nm in args.ncms:
                     t0 = time.time()
                     row = run_cell(tf_for_trial, X, y, allc, cal, m_cal,
-                                   m_test, nm, args, shot_fit=(arm == "shot_lw"))
+                                   m_test, nm, args, shot_fit=(arm == "shot_lw"),
+                                   T_fixed=T_arm)
                     row["arm"] = arm
                     rows.append(row)
                     print(f"  cal={cal:4d} {nm:22s} cov={row['cov']:.4f} "
@@ -276,10 +312,13 @@ def main():
 
                 def tf_for_trial(t, si, _tfs=tfs):
                     return _tfs[t % len(_tfs)]
+                T_arm = None
+                if SOFTMAX_NCMS & set(args.ncms):
+                    T_arm = resolve_softmax_T(tfs[0], X, y, allc, args)
                 for nm in args.ncms:
                     t0 = time.time()
                     row = run_cell(tf_for_trial, X, y, allc, cal, m_cal,
-                                   m_test, nm, args)
+                                   m_test, nm, args, T_fixed=T_arm)
                     row["arm"], row["n_pool"] = arm, n_pool
                     row["lw_shrinkage_draws"] = [
                         getattr(tf, "lw_shrinkage_", None) for tf in tfs]
@@ -295,8 +334,9 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
     out = {"config": vars(args), "dataset": args.dataset, "K": K, "rows": rows}
+    tag = f"_{args.out_tag}" if args.out_tag else ""
     out_json = os.path.join(args.output_dir,
-                            f"{args.mode}_{args.dataset}.json")
+                            f"{args.mode}_{args.dataset}{tag}.json")
     with open(out_json, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\nSaved -> {out_json}")
