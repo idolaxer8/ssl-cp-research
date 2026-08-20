@@ -77,6 +77,9 @@ ARMS = {
     # S: alpha-QE pool-neighbor feature smoothing before the champions
     "qe_pca128_cw":  dict(pre="qe", pca_dim=128, whiten="cluster",
                           projection="pca"),
+    # leading-pipeline candidate (user call 2026-08-20): qe + T -> W-full
+    "qe_pca128_lwcw": dict(pre="qe", pca_dim=128, whiten="lw_cluster",
+                           projection="pca"),
     "qe_lw768":      dict(pre="qe", pca_dim=None, whiten="lw_cluster",
                           projection=None),
     # L: Locality Preserving Projection (variance-blind linear reduction)
