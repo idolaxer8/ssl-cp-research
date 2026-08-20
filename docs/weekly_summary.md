@@ -13,7 +13,9 @@ All experiments: CIFAR-100, DINOv2 embeddings, exchangeable pipeline
 
 **STATUS 08-19: all six goals landed** — concise RESULT block appended per
 goal below. Goal 3's latest state (order/kill experiments, CNAPS/FeCAM
-anchors) lives on `worktree-theory-dwt-justification`, ahead of main.
+anchors) lives on `worktree-theory-dwt-justification`, ahead of main; the
+W-positioning ladder + pool sweep (`worktree-w-ladder-experiment`) merged to
+main 08-20.
 
 Two threads: finish the DWT theory
 justification (goals 1-4 — simplify the score the theory covers, anchor it in
@@ -111,22 +113,66 @@ relevant score gap, plus the condition under which it flips harmful.
   phase, datasets x transforms), extending docs/dwt_denoise_theorem.md toward
   a full DWT theorem.
 
-**RESULT — DONE through v0.3 + kill-tested; deployed champion stands.**
-(latest on `worktree-theory-dwt-justification`)
-- v0.1 (08-16, 0de33ff): W1a/b + T1a/b lemmas continued from D1 + 5-dataset
-  phase diagnostic (W = off-diagonal fine-grained lever, x3.13 aircraft;
-  T's failure branch = Chang low-variance tail; order W-before-T).
-- v0.3 grounding shift (08-18, cc2d6bb, user call): the load-bearing
-  justification is CHAIN-FREE — W serves neighborhoods (aircraft D1 cert
-  rate .027->.150, x5.5), T serves anchors; D1-cert argmax ~= champion menu
-  with no distributional assumptions; the d' chain demoted to an
-  aspirational E|C| route. Paper cut: 150-word W/T rationale (b2081e1).
-- Order + kill tests (08-18/19, theory sections 7.4-7.7): order is NOT a
-  lever; wlw_t128 (label-free LDA) fails fine-grained via BBP detectability,
-  wins separable; the WTD candidate is CP-KILLED, confirmed on the champion
-  score (b66d2e6, d6a251e). LESSON: mean-d' is not the set-size currency —
-  tail-level q_alpha is; diagonal whitening is tail-safe. New instrument:
-  W covariance-source ladder + pool-abundance sweep (2bd6cc4).
+**RESULT — DONE; W justification CONSOLIDATED 08-19 (distilled; conclusions
+only).** Lemmas + kills on `worktree-theory-dwt-justification`; positioning
+experiments on `worktree-w-ladder-experiment` (2bd6cc4, `output/w_ladder/`;
+raw/cluster/total cells reproduce transform_controls BIT-EXACTLY, so the new
+arms splice onto the historical grid). Frame = the adopted four-part W
+positioning (user, 08-19), each part with its evidential status:
+
+1. **W is a principled label-free choice of METRIC** — it converts Euclidean
+   into Mahalanobis distance under a pool covariance. Theory status per the
+   08-18 user call: W1a (Sigma_w^{-1} is the unique metric margin-optimal for
+   EVERY class pair simultaneously without knowing the class means — exactly
+   the shape of guarantee a label-free pipeline can use) is the
+   adapter/yardstick, NOT the headline; W1b (S_T = S_W + S_B) says the
+   unlabeled fit targets the same metric (two-class exact). A clean-context
+   first-principles audit (no repo facts supplied) re-derived W1a/W1b and
+   W-before-T unprompted; its two usable additions: the exact per-axis cost
+   of the total-for-within substitution — canonical axis j shrinks by
+   1/sqrt(1+lam_j), signed, conservative, self-limiting on hard pairs
+   (closes GW1) — and the monotone-invariance discipline (CP consumes score
+   ORDERINGS only, so no "calibrated distances" claims for Mahalanobis).
+2. **Total whitening is NOT the discriminative optimum** (Sigma_t = Sigma_w +
+   Sigma_b) — upgraded from caveat to central empirical fact. Ladder (4 ds x
+   {2,4,8}/cls x {asym,mean} NCMs, 10 trials, every arm exchangeable,
+   coverage 0.91-0.97 everywhere): total_lw is the worst arm at small cal on
+   separable data (mini 45.5 vs raw 4.3 @2/cls). Pool sweep: the bias is
+   STRUCTURAL, not estimation noise — cifar100 total sets GROW with pool
+   size (8.9 @N=500 -> 25.0 @N=10k) as LW shrinkage falls .43 -> .035;
+   shrinkage was the protection, more unlabeled data converges confidently
+   to the wrong metric.
+3. **What the pool buys — REVISED.** The drafted rationale ("abundant
+   unlabeled data where few labels cannot estimate class geometry") failed
+   BOTH halves: (a) abundance is not the lever — cluster_lw flat from N=500
+   on all 3 sweep datasets; (b) the pooled homoscedastic within-covariance
+   IS few-label estimable (s shots/cls pool into s*K residuals of the ~phi=.9
+   shared within-field): shot_lw (LW-ZCA from s=cal/K labeled shots DISJOINT
+   from cal+test; transform fixed given the slice -> exchangeability exact)
+   lands near the pool-label ORACLE — aircraft 21.3/9.0/4.7, cars
+   35.6/7.3/2.8 vs oracle 15.6/6.3/4.0, 26/5.1/2.5 vs raw 63/37/26,
+   108/62/35 (@2/4/8 per cls, asym NCM). Headline scale: the label-free
+   constraint costs 4-14x set size on fine-grained data (the d'-level
+   "23-44% of oracle" now confirmed in the set-size currency). Budget-honest
+   label ALLOCATION on fine-grained data: aircraft shot_lw@400 + 400 metric
+   labels (800 total) = 8.96 vs raw@800 26.4 vs SemiCP@800 14.6; cars
+   7.33@784+784; allocation LOSES on cifar100/mini (cal labels win).
+   Corrected claim for the paper: the pool's advantage is ZERO labels, and
+   the hard part is BIAS (keeping Sigma_b out), not variance — the label-free
+   within-proxy (cluster_lw) inherits pseudo-label quality: helps
+   aircraft/cifar100, HURTS cars at every N (homophily-gated).
+4. **Efficiency is an empirical hypothesis; validity never moves.** One
+   theorem-backed family spans −85%..+10x set size with coverage pinned
+   ~0.90 in every cell. Negative control: WTD/wlw_t128 CP-KILLED (b66d2e6)
+   — mean-d' improved, sets did not; tail-level q_alpha is the currency,
+   diagonal whitening is tail-safe. The chain-free grounding stays
+   load-bearing (v0.3 user call): W serves NEIGHBORHOODS (aircraft D1 cert
+   rate .027->.150, x5.5), T serves anchors; order W-before-T.
+
+T conclusions unchanged (T1a/b: spike-subspace keep; failure branch = Chang
+low-variance tail, PR predicts it). Open, NOT conclusions: 50-trial +
+shots-indexed scale-up (cluster); whether shot_lw stacks with the champion
+pipeline (qe/PCA/prototype); shot-LW shrinkage as a label-cheap regime dial.
 
 ### 4. SNAPS Proposition 2 — the expected-set-size upgrade over DAPS
 

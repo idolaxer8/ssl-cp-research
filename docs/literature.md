@@ -151,6 +151,31 @@ verified via web search 2026-07-06.
   (2105.04906); Hua et al. ICCV 2021 (decorrelation prevents dimensional collapse);
   Kalapos & Gyires-Toth 2408.07519 (ZCA on frozen SSL features improves kNN 1-5%).
 
+**Retrieval whitening lineage — the deployed recipe's origin (added 2026-08-19):**
+- **Jégou & Chum, ECCV 2012 — "Negative evidences and co-occurrences in image
+  retrieval: the benefit of PCA and whitening"
+  ([hal-00722622](https://inria.hal.science/hal-00722622)) — THE origin citation
+  for the production transform SHAPE: independent-learning-set PCA -> truncate
+  (D'=128) -> whiten -> re-normalize ("similar to using a Mahalanobis
+  distance").** Their mechanism = off-diagonal co-occurrence over-counting (our
+  off-diagonal-lever diagnostic quantifies exactly this in SSL space); their
+  mean-subtraction = "negative evidence" (citable justification for pool-mean
+  centering: cosine measured at the pool mean, not the origin); re-normalization
+  after whitening measured CRITICAL (up to +10 mAP) — matches our NCMs' internal
+  L2-norm; they flag their own failure mode (large-D' whitening "magnifies noise
+  on low-energy components"). Even the exchangeability-style discipline is
+  present avant la lettre: all learning stages fit on an independent dataset
+  (Paris6k whitens Oxford5k). **FOIL for the covariance-source ladder (08-19):
+  they whiten by TOTAL covariance and it works — instance retrieval has no class
+  structure in the learning set (the nuisance IS the dominant variance) and
+  truncation-first caps the amplification; under class structure
+  Sigma_t = Sigma_w + Sigma_b inverts the same recipe (total-W worst arm on
+  separable data, worse with MORE pool data). Framing sentence: the retrieval
+  recipe transfers exactly until the pool acquires class structure.** Evidence
+  level: qualitative + mAP tables, zero formal analysis (consistent with the
+  alpha-QE citation sweep). Ancestry chain: Jégou-Chum 2012 -> Radenovic et al.
+  TPAMI 2019 (learned whitening, alpha-QE) -> our pool-fit menu.
+
 **CP-side recent (2024-26), beyond the trilogy/SemiCP/SSCP:**
 - Correia & Louizos, NeurIPS 2025 (2507.10425) — unlabeled data for shift-robust
   thresholds (they spend unlabeled on threshold robustness; we spend it on score
