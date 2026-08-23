@@ -247,6 +247,15 @@ def main():
     ap.add_argument("--cv_folds", type=int, default=5)
     ap.add_argument("--raps_penalty", type=float, default=sp.RAPS_PENALTY)
     ap.add_argument("--raps_kreg", type=int, default=sp.RAPS_KREG)
+    ap.add_argument("--frozen_ncm", default="prototype_softmax",
+                    choices=["prototype_softmax", "prototype_cosine",
+                             "unwhitened_topk_asym"],
+                    help="NCM for the frozen arm; non-default choices get "
+                         "their own cell keys (repair/ablation passes). "
+                         "KNOWN ISSUE: prototype_softmax auto-T collapses "
+                         "(T~0.002 -> one-hot scores -> full sets) on the "
+                         "fine-grained full-rank whitened geometry "
+                         "(aircraft/cars).")
     ap.add_argument("--proto_temperature", default="auto")
     ap.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
     ap.add_argument("--seed", type=int, default=42)
@@ -279,12 +288,20 @@ def main():
 
     Zl, Zu = l2n(X), l2n(Xu)
     tf = T_frozen = None
+    # non-default frozen NCMs get their own cell keys / arm names so repair
+    # passes coexist with the original cells in one checkpoint
+    fro_arm = ("frozen" if args.frozen_ncm == "prototype_softmax"
+               else f"frozen_{args.frozen_ncm}")
     if "frozen" in args.arms:
         t0 = time.time()
         tf = build_frozen_transform(args.dataset, Xu)
-        T_frozen = resolve_softmax_T(tf, X, y, allc, args)
-        print(f"frozen transform: {tf}  [fit {time.time()-t0:.0f}s] "
-              f"prototype_softmax T={T_frozen:.4f}")
+        if args.frozen_ncm == "prototype_softmax":
+            T_frozen = resolve_softmax_T(tf, X, y, allc, args)
+            print(f"frozen transform: {tf}  [fit {time.time()-t0:.0f}s] "
+                  f"prototype_softmax T={T_frozen:.4f}")
+        else:
+            print(f"frozen transform: {tf}  [fit {time.time()-t0:.0f}s] "
+                  f"ncm={args.frozen_ncm}")
 
     for shots in args.shots:
         if shots > max_shots_avail:
@@ -305,11 +322,12 @@ def main():
 
             # ---- frozen (full CP, champion NCM, p-values -> both alphas)
             if "frozen" in args.arms:
-                cell = get_cell(ck, f"frozen|{args.split}|{shots}",
-                                {**base, "arm": "frozen", "T": T_frozen},
+                cell = get_cell(ck, f"{fro_arm}|{args.split}|{shots}",
+                                {**base, "arm": fro_arm, "T": T_frozen,
+                                 "ncm": args.frozen_ncm},
                                 K, alpha_keys)
                 if len(cell["trials"]) <= t:
-                    ncm = make_ncm("prototype_softmax", T_frozen)
+                    ncm = make_ncm(args.frozen_ncm, T_frozen)
                     cp = FullConformalPredictor(ncm, alpha=min(args.alphas))
                     cp.calibrate(tf.transform(X[ci]), y[ci], all_classes=allc)
                     try:
