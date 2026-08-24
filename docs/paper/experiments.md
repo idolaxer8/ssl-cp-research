@@ -44,6 +44,29 @@ python src/transform_control_experiment.py --dataset cifar10 \
     --arms qe_pca128_lwcw --ncms prototype_softmax --qe_stage post --n_trials 30
 ```
 
+## R1 follow-ups (2026-08-24/25, all local, 50 trials unless noted)
+
+- **W->D aircraft NCM ablation**: prototype cosine/softmax(T=0.07) on
+  full-rank-W + qe-post do NOT beat topk-on-W overall, but both take the
+  2-shot cell (26.0 / 27.5 vs 31.6); softmax ~= cosine at 2-4sh (not
+  load-bearing there); qe hurts topk at every budget -> gate re-validated
+  on aircraft. Rows in `results_aircraft.json` (+
+  `output/headline_wd_softmax/` for the fixed-T softmax).
+- **food101 (3rd separable ds, K=101, 336px local)**: frozen loses to CV+
+  at ALL budgets despite pool PR 71.3 > qe-gate 64; qe-off control harms
+  confirms qe hurts >=4sh yet qe-off still loses -> mid-separability or
+  336px-extraction confound (cub200 + food101 = the two 336px locals;
+  cifar100/mini at 518 win everywhere). 518 re-extract = decisive test,
+  pending pod. Headline "wins at all budgets" claim currently rests on
+  cifar100 + miniimagenet.
+- **Per-arm timing** (`timing_{cifar100,stanford_cars}.json`): prototype
+  full CP cheaper than CV+ from 8sh (1.25 vs 3.17 s/trial @14sh,
+  cifar100), ~= SemiCP; one-off transform fit 8.4s. Geodesic topk @cars
+  14sh: 28s ~ CV+ 24s. Runtime objection to full CP defused for the
+  champion NCM.
+- Paper figures: `src/plot_headline.py` -> `output/headline/plots/`
+  (cifar100 done at both alphas).
+
 ## Pre-launch checklist
 
 - [x] R1 specs user-fixed 08-22: 50 trials, shots 2-14, alphas {0.1, 0.05},
