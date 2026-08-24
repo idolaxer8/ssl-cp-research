@@ -71,21 +71,24 @@ REGIME = {
     "cifar100":      dict(kind="separable",    n_clusters=100),
     "miniimagenet":  dict(kind="separable",    n_clusters=100),
     "cub200":        dict(kind="separable",    n_clusters=200),
+    "food101":       dict(kind="separable",    n_clusters=101),
     "aircraft":      dict(kind="fine_grained", n_clusters=10),
     "stanford_cars": dict(kind="fine_grained", n_clusters=10),
 }
 ARM_NAMES = ["frozen", "splitcp", "cvplus", "semicp"]
 
 
-def build_frozen_transform(ds, Xu):
+def build_frozen_transform(ds, Xu, qe="champion"):
+    """qe='champion' follows the per-regime freeze (on for separable, off
+    for fine-grained); 'on'/'off' force it (W->D ablations)."""
     r = REGIME[ds]
-    if r["kind"] == "separable":
-        return UnlabeledTransform(pre="qe", qe_stage="post", pca_dim=128,
-                                  whiten="lw_cluster", projection="pca",
-                                  n_clusters=r["n_clusters"]).fit(Xu)
-    return UnlabeledTransform(pca_dim=None, whiten="lw_cluster",
-                              projection=None,
-                              n_clusters=r["n_clusters"]).fit(Xu)
+    sep = r["kind"] == "separable"
+    kw = dict(whiten="lw_cluster", n_clusters=r["n_clusters"])
+    kw.update(dict(pca_dim=128, projection="pca") if sep
+              else dict(pca_dim=None, projection=None))
+    if sep if qe == "champion" else qe == "on":
+        kw.update(pre="qe", qe_stage="post")
+    return UnlabeledTransform(**kw).fit(Xu)
 
 
 def _emb(d, keys=("embeddings", "final")):
@@ -247,6 +250,11 @@ def main():
     ap.add_argument("--cv_folds", type=int, default=5)
     ap.add_argument("--raps_penalty", type=float, default=sp.RAPS_PENALTY)
     ap.add_argument("--raps_kreg", type=int, default=sp.RAPS_KREG)
+    ap.add_argument("--frozen_qe", default="champion",
+                    choices=["champion", "on", "off"],
+                    help="override the per-regime qe gate for the frozen "
+                         "arm (W->D ablations); non-champion choices get "
+                         "tagged cell keys")
     ap.add_argument("--frozen_ncm", default="prototype_softmax",
                     choices=["prototype_softmax", "prototype_cosine",
                              "unwhitened_topk_asym"],
@@ -292,9 +300,11 @@ def main():
     # passes coexist with the original cells in one checkpoint
     fro_arm = ("frozen" if args.frozen_ncm == "prototype_softmax"
                else f"frozen_{args.frozen_ncm}")
+    if args.frozen_qe != "champion":
+        fro_arm += f"_qe{args.frozen_qe}"
     if "frozen" in args.arms:
         t0 = time.time()
-        tf = build_frozen_transform(args.dataset, Xu)
+        tf = build_frozen_transform(args.dataset, Xu, args.frozen_qe)
         if args.frozen_ncm == "prototype_softmax":
             T_frozen = resolve_softmax_T(tf, X, y, allc, args)
             print(f"frozen transform: {tf}  [fit {time.time()-t0:.0f}s] "
@@ -324,7 +334,8 @@ def main():
             if "frozen" in args.arms:
                 cell = get_cell(ck, f"{fro_arm}|{args.split}|{shots}",
                                 {**base, "arm": fro_arm, "T": T_frozen,
-                                 "ncm": args.frozen_ncm},
+                                 "ncm": args.frozen_ncm,
+                                 "frozen_qe": args.frozen_qe},
                                 K, alpha_keys)
                 if len(cell["trials"]) <= t:
                     ncm = make_ncm(args.frozen_ncm, T_frozen)
