@@ -179,12 +179,26 @@ def load_ckpt(args, config_now):
     return ck
 
 
+def _replace_retry(tmp, dst, attempts=6, delay=0.3):
+    """os.replace with backoff: Windows AV/indexer scans transiently lock
+    the destination (observed WinError 5 mid-run 2026-08-25); the retry
+    keeps the write atomic without killing a multi-hour run."""
+    for i in range(attempts):
+        try:
+            os.replace(tmp, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(delay * (i + 1))
+
+
 def save_ckpt(ck, args):
     p = ckpt_path(args)
     tmp = p + ".tmp"
     with open(tmp, "w") as f:
         json.dump(ck, f)
-    os.replace(tmp, p)          # atomic: a cutoff never corrupts the file
+    _replace_retry(tmp, p)      # atomic: a cutoff never corrupts the file
 
 
 # ---------------- main ----------------
@@ -365,7 +379,7 @@ def main():
     tmp = out_json + ".tmp"
     with open(tmp, "w") as f:
         json.dump(out, f, indent=2)
-    os.replace(tmp, out_json)
+    _replace_retry(tmp, out_json)
     print(f"\nSaved -> {out_json}  (done={ck['done']})")
 
 
