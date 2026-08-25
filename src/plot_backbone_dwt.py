@@ -64,7 +64,7 @@ def fig_setsize(cells, cals, out_dir):
         ax.set_xticks(cals); ax.set_ylim(bottom=0); ax.grid(alpha=0.3)
         ax.legend(fontsize=7, ncol=2)
     fig.suptitle("Pipeline robustness: valid tight-ish sets across backbones "
-                 "(solid = W/T champion, dashed = + qe denoise)", fontsize=12)
+                 "(solid = W/T champion, dashed = + qe smoothing)", fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     p = os.path.join(out_dir, "A_setsize_vs_cal.png")
     fig.savefig(p, dpi=150); plt.close(fig); print("saved", p)
@@ -90,7 +90,7 @@ def fig_qe_relchange(cells, cals, out_dir):
         ax.set_xlabel("calibration size")
         ax.set_ylabel("qe change  (qe_wt - W/T)/W/T  [%]   (<0 = qe helps)")
         ax.set_xticks(cals); ax.grid(alpha=0.3); ax.legend(fontsize=8)
-    fig.suptitle("qe denoise effect is cal- and backbone-dependent "
+    fig.suptitle("qe smoothing effect is cal- and backbone-dependent "
                  "(filled marker = significant, |z|>=2)", fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     p = os.path.join(out_dir, "B_qe_relchange.png")

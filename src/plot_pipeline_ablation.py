@@ -1,5 +1,5 @@
 """
-Pipeline stage ablation figure: the 2^3 grid over {D denoise, W whiten,
+Pipeline stage ablation figure: the 2^3 grid over {D smoothing, W whiten,
 T truncate} of the adopted pipeline, one panel per dataset, upset-style
 (bars on top, stage on/off dot matrix below).
 
@@ -82,13 +82,14 @@ def main():
         # stage matrix
         for i, (tag, _) in enumerate(COMBOS):
             for si, (sy, name) in enumerate(zip([2, 1, 0],
-                                                ["D denoise", "W whiten",
+                                                ["D smoothing", "W whiten",
                                                  "T truncate"])):
                 on = tag[si] != "-"
                 axm.scatter(i, sy, s=90, c="#333333" if on else "#dddddd",
                             zorder=3)
         axm.set_yticks([2, 1, 0])
-        axm.set_yticklabels(["D denoise", "W whiten", "T truncate"], fontsize=8)
+        axm.set_yticklabels(["D smoothing", "W whiten", "T truncate"],
+                            fontsize=8)
         axm.set_xticks(range(len(COMBOS)))
         axm.set_xticklabels([t for t, _ in COMBOS], fontsize=8)
         axm.set_ylim(-0.6, 2.6)

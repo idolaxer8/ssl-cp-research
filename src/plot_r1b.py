@@ -33,7 +33,7 @@ ARM_STYLE = {   # progressive refinement: light -> full pipeline (black)
     "wt":    dict(color="#0072B2", marker="s", ls="--", lw=1.3, ms=3.8,
                   zorder=4, label="+ T, W (truncate, whiten)"),
     "qe_wt": dict(color="#000000", marker="o", ls="-",  lw=1.8, ms=4.5,
-                  zorder=5, label="+ D (denoise) = full pipeline"),
+                  zorder=5, label="+ D (smoothing) = full pipeline"),
 }
 NCM_STYLE = {
     "prototype_softmax":    dict(color="#000000", marker="o", ls="-",
@@ -198,7 +198,7 @@ def main():
         ("Champion-pipeline decomposition (" + args.champion_ncm.replace("_", "-")
          + f" NCM, balanced split, {trials} trials). Mean prediction-set "
          "size vs. labeled budget for the raw embedding, after truncation "
-         "and whitening (T, W), and after pool-neighbor denoising (D; the "
+         "and whitening (T, W), and after pool-neighbor smoothing (D; the "
          "full frozen pipeline). Transforms are fit on the unlabeled pool "
          "only; every arm is exact full CP. Error bars: +-1.96 SE over "
          "trials; open markers at the axis cap denote clipped values "
