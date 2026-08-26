@@ -72,6 +72,8 @@ REGIME = {
     "miniimagenet":  dict(kind="separable",    n_clusters=100),
     "cub200":        dict(kind="separable",    n_clusters=200),
     "food101":       dict(kind="separable",    n_clusters=101),
+    "cifar10":       dict(kind="separable",    n_clusters=10),
+    "eurosat":       dict(kind="separable",    n_clusters=10),
     "aircraft":      dict(kind="fine_grained", n_clusters=10),
     "stanford_cars": dict(kind="fine_grained", n_clusters=10),
 }
