@@ -73,6 +73,22 @@ python src/transform_control_experiment.py --dataset cifar10 \
 - Paper figures: `src/plot_headline.py` -> `output/headline/plots/`
   (cifar100 done at both alphas).
 
+## Small-K round (2026-08-26, local, 50 trials, alphas {.1,.05,.01})
+
+- **cifar10**: winning band — frozen sub-singleton (0.91-0.99) at every
+  budget, 3.6x CV+ @2sh. Raw PR 116.8 but **PR/class = 11.7** -> the
+  normalized dial separates the bands cleanly: winners >= 2.35, losers
+  <= 0.72.
+- **eurosat** (domain shift, 224px, 30+1000/cls carve via
+  `src/prepare_carve.py`): PR/class 1.69 = first MID-band point;
+  crossover at ~8-10 shots as pre-registered from the dial (prospective
+  C4 validation). Validity intact off-domain.
+- **alpha .01**: finite-sample floor pins every within-sample method at
+  full sets while n_cal < 99; frozen escapes first/tightest; SemiCP
+  escapes early via the pool-merged quantile but under-covers 1-2pp at
+  the .99 target (tail resolution vs validity drift — baselines
+  discussion sentence).
+
 ## Pre-launch checklist
 
 - [x] R1 specs user-fixed 08-22: 50 trials, shots 2-14, alphas {0.1, 0.05},
