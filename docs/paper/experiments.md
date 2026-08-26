@@ -56,9 +56,15 @@ python src/transform_control_experiment.py --dataset cifar10 \
   at ALL budgets despite pool PR 71.3 > qe-gate 64; qe-off control harms
   confirms qe hurts >=4sh yet qe-off still loses -> mid-separability or
   336px-extraction confound (cub200 + food101 = the two 336px locals;
-  cifar100/mini at 518 win everywhere). 518 re-extract = decisive test,
-  pending pod. Headline "wins at all budgets" claim currently rests on
-  cifar100 + miniimagenet.
+  cifar100/mini at 518 win everywhere). Headline "wins at all budgets"
+  claim rests on cifar100 + miniimagenet.
+- **518 resolution confound CLOSED (08-26, local)**: food101 + cub200
+  re-extracted at 518 (exact carve recovery,
+  `src/recover_cub_carve_518.py`, `output/local_embeddings518/`). Pool
+  PR unchanged (71.3->73.2, 57.7->58.0) and frozen/CV+ confirmation runs
+  (shots 2/8/14, 30 trials, `output/headline_518/`) match 336 within
+  noise. Mid-band separability is INTRINSIC; the 336 headline rows
+  stand; the PR dial is resolution-stable (C4 selling point).
 - **Per-arm timing** (`timing_{cifar100,stanford_cars}.json`): prototype
   full CP cheaper than CV+ from 8sh (1.25 vs 3.17 s/trial @14sh,
   cifar100), ~= SemiCP; one-off transform fit 8.4s. Geodesic topk @cars
