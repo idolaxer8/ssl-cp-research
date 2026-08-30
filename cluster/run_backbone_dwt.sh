@@ -109,6 +109,11 @@ done
 # (backbone_dwt_experiment.py is a DIFFERENT instrument -- the qe-gate
 # transfer diagnostic, raw/wt/qe_wt under cosine split CP -- not this table.)
 echo "=== backbone transfer: paper pipeline, $NTRIALS trials, shots 2/4/8/14 ==="
+# BACKBONES: which rows to run. dinov2 is EXCLUDED by default -- the anchor
+# numbers already exist in output/headline (same driver, seeds and protocol;
+# shots 2-14 is a superset), so re-running it measures nothing new. Add
+# "dinov2" explicitly only if you want a fresh anchor in this output tree.
+BACKBONES="${BACKBONES:-clip-base clip-large ssl-resnet50}"
 frozen_ncm_for() {   # champion NCM per dataset, as in the paper
     case "$1" in
         aircraft|stanford_cars) echo unwhitened_topk_asym ;;
@@ -117,13 +122,17 @@ frozen_ncm_for() {   # champion NCM per dataset, as in the paper
 }
 for ds in $DATASETS; do
     ncm="$(frozen_ncm_for "$ds")"
-    for suf in "" _clip-base _clip-large _ssl-resnet50; do
-        name="${suf:-_dinov2}"; name="${name#_}"
+    for name in $BACKBONES; do
+        if [ "$name" = "dinov2" ]; then suf=""; else suf="_$name"; fi
         if [ ! -f "$EMB_DIR/embeddings_${ds}${suf}.pt" ]; then
             echo "[skip-run] $name/$ds: embeddings_${ds}${suf}.pt not present"
             continue
         fi
         out="$OUT_DIR/$name"; mkdir -p "$out"
+        if [ -f "$out/results_${ds}.json" ]; then
+            echo "[skip-run] $name/$ds: results_${ds}.json already exists"
+            continue
+        fi
         echo "=== headline: $name / $ds (ncm=$ncm) ==="
         python src/headline_experiment.py --dataset "$ds" --emb_suffix "$suf" \
             --data_dir "$EMB_DIR" --output_dir "$out" --frozen_ncm "$ncm" \
@@ -133,3 +142,4 @@ for ds in $DATASETS; do
     done
 done
 echo "DONE $(date -Iseconds)  ->  $OUT_DIR/<backbone>/results_<ds>.json"
+echo "dinov2 anchor rows: reuse output/headline/results_<ds>.json (same protocol)."
