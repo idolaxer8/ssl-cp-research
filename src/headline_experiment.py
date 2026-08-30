@@ -33,6 +33,14 @@ Fairness notes (documented adaptations vs the original papers):
   * baselines run on L2-normalized RAW backbone embeddings (the published
     methods as-is); only the frozen arm uses the pool-fit transform. The
     unlabeled pool is available to every method that can use one (semicp).
+  * --baseline_repr refined (2026-08-29): a fair-representation control that
+    hands the SAME pool-fitted T->W->D refinement to the split-CP competitors
+    (splitcp/cvplus/semicp), isolating full-vs-split CP from the
+    representation advantage. The refinement is label-free and pool-fitted,
+    so it is legitimately available to every method. Refined baselines are
+    tagged with the arm suffix "_ref" (splitcp_ref/cvplus_ref/semicp_ref) so
+    their cells never collide with the raw baseline cells; run them into a
+    SEPARATE --output_dir. The frozen arm is unaffected (it always refines).
   * one shared probe family (StandardScaler + multinomial logistic
     regression, lam=1e-2, g3 convention). SemiCP's paper rides a frozen
     FULLY-trained classifier -- impossible at our label budgets; the
@@ -110,8 +118,9 @@ def load_dataset(args):
         lab = os.path.join(args.cub_dir, "embeddings_cub200.pt")
         unl = os.path.join(args.cub_dir, "embeddings_cub200_unlabeled.pt")
     else:
-        lab = os.path.join(args.data_dir, f"embeddings_{ds}.pt")
-        unl = os.path.join(args.data_dir, f"embeddings_{ds}_unlabeled.pt")
+        suf = getattr(args, "emb_suffix", "") or ""
+        lab = os.path.join(args.data_dir, f"embeddings_{ds}{suf}.pt")
+        unl = os.path.join(args.data_dir, f"embeddings_{ds}_unlabeled{suf}.pt")
     dl = torch.load(lab, map_location="cpu", weights_only=False)
     X, y = _emb(dl), dl["labels"].numpy()
     Xu = _emb(torch.load(unl, map_location="cpu", weights_only=False))
@@ -265,6 +274,19 @@ def main():
     ap.add_argument("--cv_folds", type=int, default=5)
     ap.add_argument("--raps_penalty", type=float, default=sp.RAPS_PENALTY)
     ap.add_argument("--raps_kreg", type=int, default=sp.RAPS_KREG)
+    ap.add_argument("--emb_suffix", default="",
+                    help="backbone embedding filename suffix so the SAME paper "
+                         "pipeline (champion FRCP + splitcp/cvplus/semicp) runs "
+                         "on non-dinov2 embeddings, e.g. _clip-base, _clip-large, "
+                         "_ssl-resnet50. Empty = dinov2 (default). Use a separate "
+                         "--output_dir per backbone (results_<ds>.json collide).")
+    ap.add_argument("--baseline_repr", default="raw",
+                    choices=["raw", "refined"],
+                    help="representation fed to the split-CP baselines "
+                         "(splitcp/cvplus/semicp). 'refined' applies the same "
+                         "pool-fitted T->W->D transform the frozen arm uses "
+                         "(fair-representation control); refined baseline arms "
+                         "are tagged '_ref'. The frozen arm always refines.")
     ap.add_argument("--frozen_qe", default="champion",
                     choices=["champion", "on", "off"],
                     help="override the per-regime qe gate for the frozen "
@@ -317,16 +339,27 @@ def main():
                else f"frozen_{args.frozen_ncm}")
     if args.frozen_qe != "champion":
         fro_arm += f"_qe{args.frozen_qe}"
-    if "frozen" in args.arms:
+    # the transform is needed by the frozen arm and by refined baselines
+    need_tf = ("frozen" in args.arms) or (args.baseline_repr == "refined")
+    if need_tf:
         t0 = time.time()
         tf = build_frozen_transform(args.dataset, Xu, args.frozen_qe)
-        if args.frozen_ncm == "prototype_softmax":
+        print(f"frozen transform: {tf}  [fit {time.time()-t0:.0f}s]")
+        if "frozen" in args.arms and args.frozen_ncm == "prototype_softmax":
             T_frozen = resolve_softmax_T(tf, X, y, allc, args)
-            print(f"frozen transform: {tf}  [fit {time.time()-t0:.0f}s] "
-                  f"prototype_softmax T={T_frozen:.4f}")
-        else:
-            print(f"frozen transform: {tf}  [fit {time.time()-t0:.0f}s] "
-                  f"ncm={args.frozen_ncm}")
+            print(f"  prototype_softmax T={T_frozen:.4f}")
+        elif "frozen" in args.arms:
+            print(f"  ncm={args.frozen_ncm}")
+
+    # representation handed to the split-CP baselines: raw, or the same
+    # pool-fitted refinement the frozen arm uses (fair-representation control)
+    if args.baseline_repr == "refined":
+        Zl_b, Zu_b = l2n(tf.transform(X)), l2n(tf.transform(Xu))
+        bsuf = "_ref"
+        print(f"baselines on REFINED representation (d'={Zl_b.shape[1]}), "
+              f"arms tagged '{bsuf}'")
+    else:
+        Zl_b, Zu_b, bsuf = Zl, Zu, ""
 
     for shots in args.shots:
         if shots > max_shots_avail:
@@ -374,11 +407,12 @@ def main():
 
             # ---- cvplus (all labels, THR, p-values -> both alphas)
             if "cvplus" in args.arms:
-                cell = get_cell(ck, f"cvplus|{args.split}|{shots}",
-                                {**base, "arm": "cvplus", "score": "THR"},
+                cell = get_cell(ck, f"cvplus{bsuf}|{args.split}|{shots}",
+                                {**base, "arm": f"cvplus{bsuf}",
+                                 "score": "THR"},
                                 K, alpha_keys)
                 if len(cell["trials"]) <= t:
-                    pv = cvplus_pvalues(Zl[ci], y[ci], Zl[ti], allc,
+                    pv = cvplus_pvalues(Zl_b[ci], y[ci], Zl_b[ti], allc,
                                         args.lam, args.cv_folds)
                     sets_by_alpha = {
                         ak: [set(np.flatnonzero(pv[i] > a).tolist())
@@ -391,8 +425,9 @@ def main():
             probe_arms = [a for a in ("splitcp", "semicp") if a in args.arms]
             for rt in args.train_fracs:
                 cells = {(a, sf): get_cell(
-                    ck, f"{a}|{sf}|{rt:g}|{args.split}|{shots}",
-                    {**base, "arm": a, "score": sf, "train_frac": rt},
+                    ck, f"{a}{bsuf}|{sf}|{rt:g}|{args.split}|{shots}",
+                    {**base, "arm": f"{a}{bsuf}", "score": sf,
+                     "train_frac": rt},
                     K, alpha_keys)
                     for a in probe_arms for sf in args.scores}
                 todo = [key for key, c in cells.items()
@@ -405,10 +440,10 @@ def main():
                 n_tr = int(round(rt * len(ci)))
                 tr, ca = perm[:n_tr], perm[n_tr:]
                 yca_idx = np.array([col[int(c)] for c in y[ca]])
-                clf = fit_probe(Zl[tr], y[tr], lam=args.lam)
-                P_ca = full_probs(clf, Zl[ca], allc)
-                P_ti = full_probs(clf, Zl[ti], allc)
-                P_un = full_probs(clf, Zu, allc) if "semicp" in probe_arms \
+                clf = fit_probe(Zl_b[tr], y[tr], lam=args.lam)
+                P_ca = full_probs(clf, Zl_b[ca], allc)
+                P_ti = full_probs(clf, Zl_b[ti], allc)
+                P_un = full_probs(clf, Zu_b, allc) if "semicp" in probe_arms \
                     else None
                 for sf in args.scores:
                     if ("splitcp", sf) in todo:
