@@ -30,8 +30,10 @@ import matplotlib.pyplot as plt
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from conformal_prediction import stratified_cal_test_split   # noqa: E402
+from conformal_prediction import (PrototypeSoftmaxNCM,       # noqa: E402
+                                  stratified_cal_test_split)
 from headline_experiment import build_frozen_transform       # noqa: E402
+from r1_headline_experiment import balanced_split            # noqa: E402
 
 DS = ["cifar10", "cifar100", "miniimagenet", "eurosat"]
 DS_LABEL = {"cifar10": "CIFAR-10", "cifar100": "CIFAR-100",
@@ -91,7 +93,47 @@ def scores_and_qhat(Z_cal, y_cal, Z_test, y_test, alpha=ALPHA):
         true=test_true, false=s_test[mask_false])
 
 
-def run_dataset(ds, emb_dir, shots, test_size, seed):
+def resolve_T(rep, X, y, seed):
+    """Headline auto-temperature protocol (r1_headline_experiment.
+    resolve_softmax_T): balanced pilot split at 8 labels/class, fixed
+    seed, auto-T fit on the arm's own representation."""
+    allc = np.unique(y)
+    rng = np.random.default_rng(seed)
+    ci, _ = balanced_split(y, allc, 8, 1, rng)
+    pncm = PrototypeSoftmaxNCM(temperature=None, logit="cosine",
+                               allow_nonexchangeable=True).fit(
+                                   rep(X[ci]), y[ci])
+    return float(pncm._T)
+
+
+def scores_and_qhat_softmax(Z_cal, y_cal, Z_test, y_test, T, alpha=ALPHA):
+    """Champion prototype-softmax LAC score s = 1 - p_T(c|z); cal true
+    scores via the NCM's exact closed-form LOO, test scored against the
+    full-cal prototypes (split-style, as in the cosine variant)."""
+    ncm = PrototypeSoftmaxNCM(temperature=T, logit="cosine").fit(
+        Z_cal, y_cal)
+    cal_true = np.sort(ncm.alpha0)
+    n = len(cal_true)
+    m_idx = int(np.ceil((1 - alpha) * (n + 1))) - 1
+    q_hat = float(cal_true[min(m_idx, n - 1)])
+
+    L = (l2n(Z_test) @ ncm.P) / T
+    L -= L.max(axis=1, keepdims=True)
+    E = np.exp(L)
+    s_test = 1.0 - E / E.sum(axis=1, keepdims=True)
+    nt = len(y_test)
+    test_true = s_test[np.arange(nt), y_test]
+    mask_false = np.ones_like(s_test, dtype=bool)
+    mask_false[np.arange(nt), y_test] = False
+    return dict(
+        q_hat=q_hat, T=float(T),
+        coverage=float((test_true <= q_hat).mean()),
+        avg_size=float((s_test <= q_hat).sum(axis=1).mean()),
+        leak=float(((s_test <= q_hat) & mask_false).sum(axis=1).mean()),
+        true=test_true, false=s_test[mask_false])
+
+
+def run_dataset(ds, emb_dir, shots, test_size, seed, score):
     lab = torch.load(os.path.join(emb_dir, f"embeddings_{ds}.pt"),
                      map_location="cpu", weights_only=False)
     unl = torch.load(os.path.join(emb_dir, f"embeddings_{ds}_unlabeled.pt"),
@@ -106,10 +148,14 @@ def run_dataset(ds, emb_dir, shots, test_size, seed):
     test_size = min(test_size, (per_class - shots) * K)
     Xc, yc, Xt, yt = stratified_cal_test_split(
         X, y, cal_size=shots * K, test_size=test_size, random_state=seed)
-    arms = {"raw": scores_and_qhat(l2n(Xc), yc, l2n(Xt), yt)}
     tf = build_frozen_transform(ds, Xu)     # the exact frozen Table 2 arm
-    arms["refined"] = scores_and_qhat(tf.transform(Xc), yc,
-                                      tf.transform(Xt), yt)
+    arms = {}
+    for arm, rep in (("raw", l2n), ("refined", tf.transform)):
+        if score == "softmax":
+            T = resolve_T(rep, X, y, seed)  # per-arm pilot T, headline rule
+            arms[arm] = scores_and_qhat_softmax(rep(Xc), yc, rep(Xt), yt, T)
+        else:
+            arms[arm] = scores_and_qhat(rep(Xc), yc, rep(Xt), yt)
     return arms
 
 
@@ -121,8 +167,14 @@ def main():
     ap.add_argument("--shots", type=int, default=4)
     ap.add_argument("--test_size", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--score", default="cosine",
+                    choices=["cosine", "softmax"],
+                    help="cosine = softmax-free family member (bounded, "
+                         "geometry-readable); softmax = the champion "
+                         "prototype-softmax LAC with per-arm pilot T")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
+    sfx = "" if args.score == "cosine" else "_softmax"
 
     fig, axes = plt.subplots(2, len(DS), figsize=(5.5, 2.9))
     fig.subplots_adjust(left=0.075, right=0.995, top=0.85, bottom=0.15,
@@ -132,7 +184,7 @@ def main():
         emb_dir = args.eurosat_dir if ds == "eurosat" else args.emb_dir
         print(f"[{ds}] fitting frozen transform + scoring ...", flush=True)
         arms = run_dataset(ds, emb_dir, args.shots, args.test_size,
-                           args.seed)
+                           args.seed, args.score)
         lo = min(a["true"].min() for a in arms.values()) - 0.03
         hi = max(np.percentile(a["false"], 99.5)
                  for a in arms.values()) + 0.03
@@ -149,17 +201,20 @@ def main():
                        label=r"$\hat{q}_{1-\alpha}$")
             ax.set_xlim(lo, hi)
             ax.set_yticks([])
-            ax.text(0.02, 0.97,
-                    f"cov {st['coverage']:.2f}\n"
+            note = (f"cov {st['coverage']:.2f}\n"
                     f"$\\langle|C|\\rangle$ {st['avg_size']:.2f}\n"
-                    f"leak {st['leak']:.2f}",
-                    transform=ax.transAxes, fontsize=6.2, va="top",
-                    ha="left", linespacing=1.25)
+                    f"leak {st['leak']:.2f}")
+            if "T" in st:
+                note += f"\nT {st['T']:.3f}"
+            ax.text(0.02, 0.97, note, transform=ax.transAxes,
+                    fontsize=6.2, va="top", ha="left", linespacing=1.25)
             if i == 0:
                 ax.set_title(DS_LABEL[ds], pad=3)
                 plt.setp(ax.get_xticklabels(), visible=False)
             else:
-                ax.set_xlabel(r"$s = -\cos(z, m_c)$", fontsize=7)
+                ax.set_xlabel(r"$s = -\cos(z, m_c)$"
+                              if args.score == "cosine"
+                              else r"$s = 1 - p_T(c\,|\,z)$", fontsize=7)
             stats.setdefault(ds, {})[arm] = {
                 k: round(float(v), 4) for k, v in st.items()
                 if k not in ("true", "false")}
@@ -171,29 +226,35 @@ def main():
                bbox_to_anchor=(0.5, 1.0), columnspacing=1.5,
                handlelength=1.4, handletextpad=0.5)
 
-    stem = os.path.join(args.out_dir, "fig_refine_score_hist")
+    stem = os.path.join(args.out_dir, f"fig_refine_score_hist{sfx}")
     fig.savefig(stem + ".pdf", bbox_inches="tight")
     fig.savefig(stem + ".png", bbox_inches="tight", dpi=300)
     plt.close(fig)
 
+    score_txt = (
+        "Scores are the softmax-free member of the champion family"
+        if args.score == "cosine" else
+        "Scores are the champion prototype-softmax LAC "
+        "$s = 1 - p_T(c\\,|\\,z)$ with the per-representation pilot "
+        "temperature of the headline protocol")
     caption = (
         "Why refinement shrinks sets: true-class (green) and false-class "
-        "(red) prototype-cosine score distributions on the test set, "
+        "(red) nonconformity-score distributions on the test set, "
         "before (top) and after (bottom) the frozen refinement "
         "T$\\to$W$\\to$S, with the calibration quantile $\\hat q_{1-\\alpha}$ "
         f"(dashed; $\\alpha={ALPHA:g}$, {args.shots} labels/class, single "
         "balanced split, DINOv2 ViT-B). Refinement concentrates the "
         "true-class mass below the quantile and moves false-class mass "
         "above it, so the same coverage is bought with fewer false labels "
-        "in the set (leak = mean false classes inside the set). Scores are "
-        "the softmax-free member of the champion family; the transform is "
-        "fit on the unlabeled pool only.")
+        f"in the set (leak = mean false classes inside the set). {score_txt}; "
+        "the transform is fit on the unlabeled pool only.")
     with open(stem + "_caption.txt", "w", encoding="utf-8") as f:
         f.write(caption + "\n")
-    with open(os.path.join(args.out_dir, "refine_score_hist_stats.json"),
+    with open(os.path.join(args.out_dir,
+                           f"refine_score_hist_stats{sfx}.json"),
               "w") as f:
-        json.dump({"alpha": ALPHA, "shots": args.shots,
-                   "seed": args.seed, "stats": stats}, f, indent=2)
+        json.dump({"alpha": ALPHA, "shots": args.shots, "seed": args.seed,
+                   "score": args.score, "stats": stats}, f, indent=2)
     print(f"saved {stem}.pdf/.png")
     for ds in DS:
         r, p = stats[ds]["raw"], stats[ds]["refined"]
