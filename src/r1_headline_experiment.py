@@ -45,13 +45,17 @@ from exchangeable_features import UnlabeledTransform, IdentityTransform
 SOFTMAX_NCMS = {"prototype_softmax"}
 
 # per-dataset regime config (pca-rationalization-audit + k-sweep findings):
-# separable / high PR -> truncate+cluster-whiten, fine k; fine-grained /
-# low PR -> full-rank LW-cluster whitening, coarse k, no truncation.
+# separable / high PR -> truncate + FULL-MATRIX LW cluster whiten, fine k;
+# fine-grained / low PR -> full-rank LW-cluster whitening, coarse k, no
+# truncation. FROZEN 2026-08-20 (user call): the separable champion is
+# T->W->D = pca128 -> lw_cluster -> qe-post (arm qe_pca128_lwcw in
+# transform_control_experiment), superseding the diagonal pca128_cw form.
+PIPELINE_REV = "freeze-2026-08-20"
 REGIME = {
-    "cifar100":      dict(wt=dict(pca_dim=128, whiten="cluster",
+    "cifar100":      dict(wt=dict(pca_dim=128, whiten="lw_cluster",
                                   projection="pca", n_clusters=100),
                           qe_in_champion=True),
-    "miniimagenet":  dict(wt=dict(pca_dim=128, whiten="cluster",
+    "miniimagenet":  dict(wt=dict(pca_dim=128, whiten="lw_cluster",
                                   projection="pca", n_clusters=100),
                           qe_in_champion=True),
     "aircraft":      dict(wt=dict(pca_dim=None, whiten="lw_cluster",
@@ -113,6 +117,7 @@ def build_transform(arm, ds, Xu, args):
     kw = dict(REGIME[ds]["wt"])
     if arm == "qe_wt":
         kw["pre"] = "qe"
+        kw["qe_stage"] = "post"     # frozen 08-20: smooth AFTER T->W
         if args.qe_k is not None:
             kw["qe_k"] = args.qe_k
         if args.qe_alpha is not None:
@@ -162,7 +167,7 @@ def load_ckpt(args, config_now):
     # ncms/splits) and n_trials may change freely -- they only add, remove,
     # or extend cells.
     keys = ["seed", "alpha", "test_per_class", "proto_temperature",
-            "qe_k", "qe_alpha", "qe_hub_gamma"]
+            "qe_k", "qe_alpha", "qe_hub_gamma", "pipeline_rev"]
     old, new = ck.get("config", {}), config_now
     diff = [k for k in keys if old.get(k) != new.get(k)]
     if diff:
@@ -174,12 +179,26 @@ def load_ckpt(args, config_now):
     return ck
 
 
+def _replace_retry(tmp, dst, attempts=6, delay=0.3):
+    """os.replace with backoff: Windows AV/indexer scans transiently lock
+    the destination (observed WinError 5 mid-run 2026-08-25); the retry
+    keeps the write atomic without killing a multi-hour run."""
+    for i in range(attempts):
+        try:
+            os.replace(tmp, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(delay * (i + 1))
+
+
 def save_ckpt(ck, args):
     p = ckpt_path(args)
     tmp = p + ".tmp"
     with open(tmp, "w") as f:
         json.dump(ck, f)
-    os.replace(tmp, p)          # atomic: a cutoff never corrupts the file
+    _replace_retry(tmp, p)      # atomic: a cutoff never corrupts the file
 
 
 # ---------------- main ----------------
@@ -231,6 +250,7 @@ def main():
 
     config_now = {k: (sorted(v) if isinstance(v, list) else v)
                   for k, v in vars(args).items()}
+    config_now["pipeline_rev"] = PIPELINE_REV
     ck = load_ckpt(args, config_now)
     ck["pool_participation_ratio"] = pool_pr
     ck["K"] = K
@@ -359,7 +379,7 @@ def main():
     tmp = out_json + ".tmp"
     with open(tmp, "w") as f:
         json.dump(out, f, indent=2)
-    os.replace(tmp, out_json)
+    _replace_retry(tmp, out_json)
     print(f"\nSaved -> {out_json}  (done={ck['done']})")
 
 

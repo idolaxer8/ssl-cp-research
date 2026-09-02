@@ -9,9 +9,15 @@ All experiments: CIFAR-100, DINOv2 embeddings, exchangeable pipeline
 
 ---
 
-## Goals — week 08-17 to 08-21 (planned)
+## Goals — week 08-17 to 08-21 (results in)
 
-Forward-looking plan, not results. Two threads: finish the DWT theory
+**STATUS 08-19: all six goals landed** — concise RESULT block appended per
+goal below. Goal 3's latest state (order/kill experiments, CNAPS/FeCAM
+anchors) lives on `worktree-theory-dwt-justification`, ahead of main; the
+W-positioning ladder + pool sweep (`worktree-w-ladder-experiment`) merged to
+main 08-20.
+
+Two threads: finish the DWT theory
 justification (goals 1-4 — simplify the score the theory covers, anchor it in
 non-CP classification literature, extend to the W/T phases, and mine SNAPS
 Prop 2 for the expected-set-size proof device), and start the ICLR 2027 run-up
@@ -41,29 +47,20 @@ term for it.
   deployed score verbatim) or load-bearing (quantify the gap and state where
   it lives: coupling, temperature, or tail behavior).
 
-**RESULT (2026-08-16) — VERDICT: LOAD-BEARING, and regime-dependent.** Ran the
-ablation (`src/d1_softmax_ablation.py`, new `PrototypeCosineNCM`; balanced, 20
-trials, 5 datasets, paired splits, exchangeable PCA-128+cluster-whiten). Two
-regimes, tracking the qe/homophily map:
-- **Separable backbone (high h, or low h at high cal): softmax load-bearing.**
-  Dropping it inflates sets +5% (mini h.92) to +67% (cub200@800) and ~halves the
-  correct-singleton rate (cifar100@800 0.70->0.48; cub200@800 0.56->0.32). The
-  normalizer's cross-class competition tightens confident sets — a
-  separability-gated efficiency lever. cifar100 +28-37% across cal.
-- **Non-separable + starved (low h, small cal): softmax INVERTS to a liability.**
-  aircraft@200 softmax sz=72.9/K=100 vs cosine 30.2 (-59%); cars@400 softmax
-  degenerates to the FULL set sz=196 vs cosine 59.9 (-70%). Near-uniform softmax
-  posterior flattens the p-values; plain -cos still ranks by similarity. Softmax
-  recovers its edge by cal=800 (aircraft +13%, cars +21%).
-Coverage valid for both arms throughout; `prototype_cosine` is strictly
-exchangeable with NO cal-fit term (drops even the fixed-T knob); GPU path
-bit-exact vs CPU. **Consequence for D1:** stated for plain -cos, D1 does NOT cover
-the champion verbatim — the gap is the softmax normalizer Z(x)=sum_c exp(f_c/T)
-(cross-class coupling), ~30% in our headline separable regime. Recommendation:
-state D1 for the plain score + present `prototype_cosine` as the theory-faithful
-NCM, cite this as the quantified, regime-gated softmax gap (a coupling/temperature
-term, not tail behavior). Full write-up: `docs/d1_softmax_ablation.md`; plot
-`output/d1_softmax_ablation/d1_ablation_balanced_both.png`.
+**RESULT (2026-08-16) — DONE. Softmax is LOAD-BEARING, and regime-dependent.**
+`src/d1_softmax_ablation.py` + new `PrototypeCosineNCM` (softmax-free, strictly
+exchangeable — no cal-fit term at all, GPU bit-exact); 5 datasets, 20 trials,
+paired splits. Separable regime (high h, or high cal): dropping softmax
+inflates sets +5% (mini) to +67% (cub200@800) and ~halves correct-singletons
+(cifar100@800 0.70->0.48) — cross-class competition is a separability-gated
+efficiency lever. Starved low-h regime INVERTS: aircraft@200 sz 72.9 vs cosine
+30.2; cars@400 degenerates to the full set (196 vs 59.9); softmax recovers by
+cal=800. Coverage valid throughout. Consequence: D1 (stated for plain -cos)
+does NOT cover the champion verbatim — the gap is the normalizer Z(x)
+(cross-class coupling, ~30% in the headline separable regime). Rec: state D1
+for the plain score, present `prototype_cosine` as the theory-faithful NCM,
+cite the quantified regime-gated gap. Write-up `docs/d1_softmax_ablation.md`;
+plot `output/d1_softmax_ablation/`.
 
 ### 2. Non-CP classification literature for the theory
 
@@ -80,6 +77,19 @@ and goal 3 (W/T).
 - Deliverable: annotated shortlist in `docs/` mapping each candidate result to
   the lemma it would anchor (D / W / T / quantile-step), with a
   transplantable-statement-or-not verdict per item. Feeds `literature.md`.
+
+**RESULT (2026-08-16, 7fa37f4) — DONE.** 3-vein sweep, 30+ non-CP results
+mapped to lemma slots in `docs/classification_theory_anchors.md`. Five
+unlocks: Kish effective-sample-size IS the phi variance law; Chang '83 +
+Paul '07 spiked-covariance = both T1 branches; RCA + Fukunaga's
+S_T = S_W + S_B identity makes W1's unlabeled fit EXACT; location-scale
+single-crossing = the G6 route; Zhu's unconstrained-features model predicts
+the goal-1 softmax-vs-cosine gap grows with distance from neural collapse.
+Follow-on (08-18/19, theory branch): Simple/Transductive CNAPS deep-read =
+deployed W-precedent (shared-covariance Mahalanobis prototypes), and FeCAM
+(NeurIPS 2023) = THE anchor — frozen features + shared covariance measured
+at +4.0 over Euclidean; anchor chain CNAPS -> FeCAM -> us closes the
+pipeline-gap objection.
 
 ### 3. W and T phases — prove or bound their contribution
 
@@ -103,6 +113,67 @@ relevant score gap, plus the condition under which it flips harmful.
   phase, datasets x transforms), extending docs/dwt_denoise_theorem.md toward
   a full DWT theorem.
 
+**RESULT — DONE; W justification CONSOLIDATED 08-19 (distilled; conclusions
+only).** Lemmas + kills on `worktree-theory-dwt-justification`; positioning
+experiments on `worktree-w-ladder-experiment` (2bd6cc4, `output/w_ladder/`;
+raw/cluster/total cells reproduce transform_controls BIT-EXACTLY, so the new
+arms splice onto the historical grid). Frame = the adopted four-part W
+positioning (user, 08-19), each part with its evidential status:
+
+1. **W is a principled label-free choice of METRIC** — it converts Euclidean
+   into Mahalanobis distance under a pool covariance. Theory status per the
+   08-18 user call: W1a (Sigma_w^{-1} is the unique metric margin-optimal for
+   EVERY class pair simultaneously without knowing the class means — exactly
+   the shape of guarantee a label-free pipeline can use) is the
+   adapter/yardstick, NOT the headline; W1b (S_T = S_W + S_B) says the
+   unlabeled fit targets the same metric (two-class exact). A clean-context
+   first-principles audit (no repo facts supplied) re-derived W1a/W1b and
+   W-before-T unprompted; its two usable additions: the exact per-axis cost
+   of the total-for-within substitution — canonical axis j shrinks by
+   1/sqrt(1+lam_j), signed, conservative, self-limiting on hard pairs
+   (closes GW1) — and the monotone-invariance discipline (CP consumes score
+   ORDERINGS only, so no "calibrated distances" claims for Mahalanobis).
+2. **Total whitening is NOT the discriminative optimum** (Sigma_t = Sigma_w +
+   Sigma_b) — upgraded from caveat to central empirical fact. Ladder (4 ds x
+   {2,4,8}/cls x {asym,mean} NCMs, 10 trials, every arm exchangeable,
+   coverage 0.91-0.97 everywhere): total_lw is the worst arm at small cal on
+   separable data (mini 45.5 vs raw 4.3 @2/cls). Pool sweep: the bias is
+   STRUCTURAL, not estimation noise — cifar100 total sets GROW with pool
+   size (8.9 @N=500 -> 25.0 @N=10k) as LW shrinkage falls .43 -> .035;
+   shrinkage was the protection, more unlabeled data converges confidently
+   to the wrong metric.
+3. **What the pool buys — REVISED.** The drafted rationale ("abundant
+   unlabeled data where few labels cannot estimate class geometry") failed
+   BOTH halves: (a) abundance is not the lever — cluster_lw flat from N=500
+   on all 3 sweep datasets; (b) the pooled homoscedastic within-covariance
+   IS few-label estimable (s shots/cls pool into s*K residuals of the ~phi=.9
+   shared within-field): shot_lw (LW-ZCA from s=cal/K labeled shots DISJOINT
+   from cal+test; transform fixed given the slice -> exchangeability exact)
+   lands near the pool-label ORACLE — aircraft 21.3/9.0/4.7, cars
+   35.6/7.3/2.8 vs oracle 15.6/6.3/4.0, 26/5.1/2.5 vs raw 63/37/26,
+   108/62/35 (@2/4/8 per cls, asym NCM). Headline scale: the label-free
+   constraint costs 4-14x set size on fine-grained data (the d'-level
+   "23-44% of oracle" now confirmed in the set-size currency). Budget-honest
+   label ALLOCATION on fine-grained data: aircraft shot_lw@400 + 400 metric
+   labels (800 total) = 8.96 vs raw@800 26.4 vs SemiCP@800 14.6; cars
+   7.33@784+784; allocation LOSES on cifar100/mini (cal labels win).
+   Corrected claim for the paper: the pool's advantage is ZERO labels, and
+   the hard part is BIAS (keeping Sigma_b out), not variance — the label-free
+   within-proxy (cluster_lw) inherits pseudo-label quality: helps
+   aircraft/cifar100, HURTS cars at every N (homophily-gated).
+4. **Efficiency is an empirical hypothesis; validity never moves.** One
+   theorem-backed family spans −85%..+10x set size with coverage pinned
+   ~0.90 in every cell. Negative control: WTD/wlw_t128 CP-KILLED (b66d2e6)
+   — mean-d' improved, sets did not; tail-level q_alpha is the currency,
+   diagonal whitening is tail-safe. The chain-free grounding stays
+   load-bearing (v0.3 user call): W serves NEIGHBORHOODS (aircraft D1 cert
+   rate .027->.150, x5.5), T serves anchors; order W-before-T.
+
+T conclusions unchanged (T1a/b: spike-subspace keep; failure branch = Chang
+low-variance tail, PR predicts it). Open, NOT conclusions: 50-trial +
+shots-indexed scale-up (cluster); whether shot_lw stacks with the champion
+pipeline (qe/PCA/prototype); shot-LW shrinkage as a label-cheap regime dial.
+
 ### 4. SNAPS Proposition 2 — the expected-set-size upgrade over DAPS
 
 **Why.** DAPS Theorem 2 is a per-point score-improvement condition and never
@@ -120,6 +191,14 @@ exact device we need to turn D1-D3 into an E|C| statement.
   identity already in the anchor stack.
 - Deliverable: a short section in docs/dwt_denoise_theorem.md — either the
   E|C| corollary or a documented obstruction.
+
+**RESULT (2026-08-16, fb62355) — DONE; the honest deliverable is the
+obstruction.** Prop 2's E|C| upgrade over DAPS is an OBJECT change (bounds a
+different quantity) plus h=1 corner assumptions and handwaves — no new
+probability device to transplant. What IS importable: the contraction-anchor
+device, giving the target shape "Corollary D4" and reframing G6. Documented
+in `docs/dwt_denoise_theorem.md` section 10; E|C| stays unclaimed in the
+ICLR plan.
 
 ### 5. Backbone generalization — beyond DINOv2
 
@@ -140,6 +219,17 @@ cheapest reviewer-proofing experiment before the ICLR push.
 - Deliverable: backbone x dataset table (size @ cal 200/400/800, coverage,
   dial values, gate decision correct y/n) — the generalization table for the
   paper.
+
+**RESULT (2026-08-17/18, merged 2089126) — DONE, 10 backbone x dataset cells
+(`output/from_cluster/backbone_dwt_v3/`).** The pipeline TRANSFERS
+(dinov2/dinov3/clip-base/clip-large: all valid + tight; clip-large = the 2nd
+positive row) but the homophily gate does NOT (right in only 3/10, dead
+cross-backbone). **Label-free PR is the transfer dial: 9/10, and the 3
+qe-harm cells are exactly the 3 PR<16 cells.** v3 resolution control:
+the dinov2<->dinov3 cifar gap is the MODEL, not resolution (512 ~= 256), and
+upscaling past native res HURTS (dinov3-512/aircraft wt 18->28) -> run
+backbones at native res. MAE dropped (PR=2, unusable). Plots in
+backbone_dwt_v2+v3/plots/.
 
 ### 6. ICLR 2027 run-up — schedule, gap audit, distillation
 
@@ -163,6 +253,20 @@ with every claim backed by a committed, reproducible experiment.
 - Theory distillation: compress THEORY.MD + dwt_denoise_theorem.md into a
   paper-shaped skeleton (assumptions -> D/W/T lemmas -> pipeline theorem ->
   regime dials), flagging what goals 1-4 must resolve first.
+
+**RESULT (2026-08-18, bcd9a2b -> 65351e5) — DONE and executed same day.**
+`docs/iclr2027_plan.md`: 6 claims C1-C6 with claim -> evidence -> gap table,
+EMPIRICAL-FIRST framing (theory demoted; C6c W/T = #1 risk, paper survives
+without it), C4 descoped to a descriptive regime map (no auto gate shipped),
+5-week calendar, deadlines verified (abstract Sep 18, paper Sep 25 AOE).
+Executed: C1 naming debt closed (ba82f71); worktree ledger run — 4 result
+branches merged to main (backbone-dwt, pool-repr-menu, g3-semisup,
+theory-dwt-justification); code reduction round 1: src 62 -> 45 scripts,
+CLAUDE.md active list rewritten by claim (65351e5). Beyond plan: paper
+framework v1 (`docs/paper/outline.md`, 28902aa) + outline 6a easy-vs-hard
+performance discussion (8e0f764); R1 headline experiment (shots 2-14/class,
+checkpoint-per-trial resume verified bit-identical, cluster runner) READY
+to launch (ac39387).
 
 ---
 
