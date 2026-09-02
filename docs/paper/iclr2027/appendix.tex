@@ -1,0 +1,517 @@
+% Appendix. v1 (2026-08-27), NOT yet on Overleaf.
+% v3 (2026-08-31, backbone transfer): NEW section app:backbones between
+%   app:attrib and app:snaps -- see its block comment. NOT yet on Overleaf.
+% v2 (2026-08-31, Section 5.2 / 5.4 closure -- Gap A + Gap B): THREE additions,
+%   every number from a generated artefact (see the inline block comments):
+%     - app:proofs gains a "Homophily and the Lemma 1 certified fraction"
+%       paragraph + \input{figs/table_h_cert.tex} (Gap B1;
+%       output/dwt_theory/h_cert_roster.json). Grounds M5.
+%     - NEW section app:attrib "Attributing the gain to full CP, not to the
+%       score" + \input table_attrib_a0{1,05} (Gap A;
+%       output/headline_attrib/). Closes M4.
+%     - NEW section app:snaps "Score-level versus representation-level
+%       smoothing" + \input table_snaps_vs_smoothing (Gap B2;
+%       output/snaps_vs_smoothing/). Closes the M6 "compare the two levels"
+%       promise.
+%   Tables are \input from figs/ (copied from output/*/plots/, regenerable by
+%   src/make_headline_tables.py --attrib_dir, src/h_cert_diagnostic.py,
+%   src/make_snaps_table.py). New \label{}s: app:attrib, app:snaps, tab:h-cert,
+%   tab:attrib-a0{1,05}, tab:snaps-vs-smoothing{,-a005}.
+% Assembled from material that already exists. Every number below is
+% copied from a generated artefact, nothing is retyped by hand:
+%   B  configuration  -- resolved from src/headline_experiment.py REGIME
+%                        + build_transform, cross-checked against
+%                        output/headline/results_*.json and run_*.log
+%   C  alpha = 0.05   -- output/headline/plots/table_headline_appendix_a005.tex
+%   D  ablation       -- output/r1_headline/plots/table_r1b_{cifar100,miniimagenet}.tex
+%   E  baselines      -- adaptations written from the fairness notes in
+%                        src/headline_experiment.py (L32-44); refined
+%                        baseline control from
+%                        output/headline_refined_baselines/results_*.json
+%   F  CovGap         -- computed from the covgap field already carried in
+%                        output/headline/results_*.json
+%
+% STRUCTURE: \appendix then one \section per part, so they number A to
+% E. (A single \section{Appendix} with subsections was tried and
+% reverted on 08-27.)
+%     app:proofs      A   Proofs
+%     app:config      B   Per-dataset configuration
+%     app:alpha005    C   Results at the tighter miscoverage level
+%     app:ablation    D   Refinement ablation tables
+%     app:baselines   E   Baseline implementations
+% The main text now reaches these with Appendix~\ref{...} rather than
+% hard-coded letters. That conversion is KEPT: the old text said
+% "Appendix~F" while there was no D or E, so the letters had already
+% drifted once. \ref renders the same letters here and cannot drift
+% again if the parts are reordered.
+%
+% STILL MISSING, in priority order (see the Section 5 gaps discussion):
+%   - CovGap: CLOSED 08-30, now Appendix F. Note the aircraft numbers
+%     changed once the arm was selected correctly: the deployed aircraft
+%     arm is frozen_unwhitened_topk_asym, not frozen, and under it FRCP
+%     has the SMALLEST gap on aircraft at every budget rather than the
+%     largest. My earlier "aircraft 10.0 pp" read the wrong arm.
+%   - the linear-probe baseline (g3/R2) and the backbone-transfer study,
+%     both promised in the intro contributions;
+%   - empty-set rates: several mean sizes are below 1.0, so empty sets
+%     occur and are never disclosed. The predictor tracks empty_count
+%     internally but it is not saved, so this needs a small re-run.
+%   - SemiCP adaptations: CLOSED 08-30, written from the driver's own
+%     fairness notes rather than invented.
+%   - RANDOM-SPLIT ARM: DROPPED ENTIRELY 08-30 (user call). The
+%     paragraph and the two tables are out of Appendix E, and the
+%     sentence promising it is out of Section 5.1's Protocol. The
+%     tables still exist at
+%     output/r1_headline/plots/table_r1b_random_*.tex if it comes back.
+%   - output/r3_menu/plots/table_r3_*.tex (transform menu) is EXCLUDED:
+%     30 trials, not the 50-trial paper-grade bar.
+
+\appendix
+\section*{Appendix}
+% Unnumbered, so the lettered sections below still come out A to E.
+% Without it \appendix only changes the counter and nothing on the page
+% ever says "Appendix".
+
+\section{Proofs}
+\label{app:proofs}
+
+\subsection*{Proposition~\ref{prop:validity}}
+
+Fix a realization $\mathcal{U} = u$. Because $\mathcal{U}$ is
+independent of $(x_1, y_1), \dots, (x_{n+1}, y_{n+1})$, the conditional
+law of that sequence given $\mathcal{U} = u$ is its unconditional law,
+which is exchangeable by assumption. Conditional on $\mathcal{U} = u$
+the refinement map $T_u$ is a fixed measurable function
+$\mathbb{R}^{d} \to \mathbb{R}^{d'}$, applied to one point at a time.
+The smoothing stage evaluates each point against the frozen pool alone,
+so no labeled or test point enters the transform of any other, and
+$T_u$ is a per-point map rather than a function of the bag.
+
+Let $\pi$ be a permutation of $[n+1]$. Applying a per-point map
+commutes with permutation, so
+\[
+\bigl(T_u(x_{\pi(1)}), y_{\pi(1)}\bigr), \dots,
+\bigl(T_u(x_{\pi(n+1)}), y_{\pi(n+1)}\bigr)
+\]
+is the image under $T_u$ of the permuted sequence. The permuted
+sequence has the same law as the original, and equality in
+distribution is preserved by a fixed measurable map, so the
+transformed pairs are exchangeable conditional on $\mathcal{U} = u$.
+
+The scores $S^{(k)}_i$ of \eqref{eq:score} are a symmetric function of
+the augmented sample, since the leave-one-out prototypes treat every
+index alike. The full conformal argument therefore applies conditional
+on $\mathcal{U} = u$: the rank of the test score among the $n+1$ scores
+is uniform on $\{1, \dots, n+1\}$, so
+$\Pr[\, y_{n+1} \in \Gamma_\alpha(x_{n+1}) \mid \mathcal{U} = u \,]
+\ge 1 - \alpha$. Averaging over the law of $\mathcal{U}$ gives
+\eqref{eq:coverage}. \qed
+
+\subsection*{Lemma~\ref{lem:smooth}}
+
+Write $\hat z = (1-\beta)\, v + \beta\, \nu(v)$ with
+$\nu(v) = \sum_{u} (w_u / W)\, u$ and $W = \sum_u w_u$, so the weights
+$w_u / W$ sum to one. Then
+\[
+\nu(v) - \theta_y
+= \sum_{u} \tfrac{w_u}{W} \bigl(u - \theta_{c(u)}\bigr)
++ \sum_{u} \tfrac{w_u}{W} \bigl(\theta_{c(u)} - \theta_y\bigr).
+\]
+The first sum is bounded in norm by
+$\sum_u \tfrac{w_u}{W}\, r_u$. In the second, every term with
+$c(u) = y$ vanishes, and each remaining term satisfies
+$\lVert \theta_{c(u)} - \theta_y \rVert \le \Delta(v)$ by definition of
+the foreign spread. Their total weight is
+$\sum_{u : c(u) \neq y} w_u / W = 1 - h$, so
+\[
+\lVert \nu(v) - \theta_y \rVert \;\le\;
+\sum_{u} \tfrac{w_u}{W}\, r_u \;+\; (1 - h)\, \Delta(v) .
+\]
+Applying the triangle inequality to
+$\hat z - \theta_y = (1-\beta)(v - \theta_y) + \beta(\nu(v) - \theta_y)$
+and using $\lVert v - \theta_y \rVert = \varepsilon$ gives
+\eqref{eq:d1}. If the bracketed term is smaller than $\varepsilon$ and
+$\beta \in (0, 1]$, then
+$(1-\beta)\varepsilon + \beta \cdot (\text{bracket}) <
+(1-\beta)\varepsilon + \beta \varepsilon = \varepsilon$, which is the
+strict statement. \qed
+
+\paragraph{The deployed weight.} The numerator of \eqref{eq:qe} is
+\[
+v + \sum_u w_u\, u
+= (1 + W) \Bigl[ \tfrac{1}{1+W}\, v + \tfrac{W}{1+W}\, \nu(v) \Bigr] ,
+\]
+a positive multiple of $\hat z$ at $\beta = W / (1 + W)$. The cosine
+score is invariant to positive rescaling of its first argument, so the
+normalization in \eqref{eq:qe} leaves the score unchanged and the lemma
+applies to the deployed map at that $\beta$.
+
+% ===================================================================
+% Gap B1 (Section 5.4): homophily + Lemma 1 certified fraction, ADDED
+% 2026-08-31. Deterministic, seed 42, N 300-6000 egos. Source
+% output/dwt_theory/h_cert_roster.json (src/h_cert_diagnostic.py), computed
+% on the DEPLOYED build_frozen_transform truncation+whitening (NOT the older
+% raw diagnostic space); per-ego D1 math reused from src/d1_empirical_check.py.
+% Table \input from figs/table_h_cert.tex. Grounds contribution 2's "theory
+% covering its benefit" and the Section 4.3 mechanism sentence (M5).
+% ===================================================================
+\paragraph{Homophily and the Lemma~\ref{lem:smooth} certified fraction.}
+Lemma~\ref{lem:smooth} is a per-point sufficient condition, and
+Table~\ref{tab:h-cert} instantiates it on the deployed pipeline. The weighted
+pool-$k$NN homophily $h_w$, the same quantity Eq.~\eqref{eq:qe} weights, rises
+under truncation and whitening on every dataset, most where it starts lowest
+(from $0.81$ to $0.83$ on CIFAR-100), so whitening improves the
+neighbourhoods the smoothing stage averages over. The certified fraction, the
+share of labeled points for which the budget of the lemma falls below the
+displacement $\varepsilon$, rises with it on three of the four datasets (from
+$0.42$ to $0.52$ on CIFAR-100). It falls on EuroSAT ($0.45$ to $0.24$), the one
+off-domain dataset, where whitening spreads the class centers apart faster
+than it lowers the foreign weight $1 - h_w$, and we report this rather than
+explain it away. The condition is sufficient only and
+conservative: the realised fraction of points that move closer to their class
+center after smoothing is near one on every dataset, so the certification
+tracks where smoothing is provably safe rather than where it happens to help.
+
+\input{figs/table_h_cert.tex}
+
+\section{Per-dataset configuration}
+\label{app:config}
+
+Table~\ref{tab:app-config} lists the configuration behind every
+reported FRCP number. Each entry is fixed once per dataset and held
+constant across all trials and budgets. Smoothing uses
+$\kappa = 10$ neighbors with $\gamma = 3$ throughout, the values
+standard in query expansion. The softmax temperature $T$ is resolved
+once per dataset from a small pilot split and then held fixed.
+
+\begin{table}[h]
+\caption{FRCP configuration per dataset. $m$ is the size of the
+unlabeled pool. T, W and S are the truncation, whitening and smoothing
+stages of Section~\ref{sec:refine}. Whitening is always the pooled
+within-group covariance over $C$ $k$-means groups.}
+\label{tab:app-config}
+\begin{center}
+\small
+\begin{tabular}{lrrlrrl}
+\toprule
+Dataset & $K$ & pool $m$ & stages & $d'$ & $C$ & score \\
+\midrule
+CIFAR-10       &  10 & 10{,}000 & T{+}W{+}S & 128 &  10 & prototype softmax \\
+CIFAR-100      & 100 & 10{,}000 & T{+}W{+}S & 128 & 100 & prototype softmax \\
+\emph{mini}ImageNet & 100 & 10{,}000 & T{+}W{+}S & 128 & 100 & prototype softmax \\
+EuroSAT        &  10 & 10{,}000 & T{+}W{+}S & 128 &  10 & prototype softmax \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+Every dataset runs the same three stages at the same neighborhood
+settings, and the only entry that varies with the benchmark is the
+number of $k$-means groups, which is set to the class count.
+
+\section{Results at the tighter miscoverage level}
+\label{app:alpha005}
+
+% Heading kept free of math: \texorpdfstring needs hyperref, and the
+% ICLR style file is not in this mirror so we cannot confirm it loads.
+% If it does, "Results at $\alpha = 0.05$" also works.
+
+\begin{table}[h]
+\caption{Mean prediction-set size ($\pm$ SE) with marginal coverage in
+parentheses, at target miscoverage $\alpha = 0.05$ over 50 trials per
+cell. Layout and conventions follow Table~\ref{tab:headline-main}.}
+\label{tab:headline-appendix-a005}
+\begin{center}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llcccc}
+\toprule
+dataset & method & 2 shots & 4 shots & 8 shots & 14 shots\\
+\midrule
+\multirow{4}{*}{CIFAR-10} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.68$\pm$0.37 {\scriptsize(0.978)} & 1.71$\pm$0.14 {\scriptsize(0.964)} & 1.36$\pm$0.12 {\scriptsize(0.974)}\\
+ & CV+ & 5.43$\pm$0.32 {\scriptsize(0.975)} & 1.72$\pm$0.09 {\scriptsize(0.962)} & 1.07$\pm$0.01 {\scriptsize(0.958)} & 1.00$\pm$0.01 {\scriptsize(0.954)}\\
+ & SemiCP (best) & 7.46$\pm$0.43 {\scriptsize(0.961)} & 2.62$\pm$0.30 {\scriptsize(0.942)} & 1.46$\pm$0.20 {\scriptsize(0.941)} & 1.25$\pm$0.18 {\scriptsize(0.947)}\\
+ & FRCP (ours) & \textbf{1.11$\pm$0.05 {\scriptsize(0.964)}} & \textbf{1.00$\pm$0.02 {\scriptsize(0.960)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.948)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.952)}}\\
+\midrule
+\multirow{4}{*}{CIFAR-100} & Split CP (best) & 96.71$\pm$0.10 {\scriptsize(0.969)} & 26.90$\pm$3.04 {\scriptsize(0.977)} & 3.40$\pm$0.11 {\scriptsize(0.961)} & 2.26$\pm$0.06 {\scriptsize(0.958)}\\
+ & CV+ & 24.06$\pm$1.40 {\scriptsize(0.984)} & 3.97$\pm$0.10 {\scriptsize(0.962)} & 2.39$\pm$0.04 {\scriptsize(0.958)} & \textbf{1.87$\pm$0.02 {\scriptsize(0.955)}}\\
+ & SemiCP (best) & 95.98$\pm$0.16 {\scriptsize(0.962)} & 21.66$\pm$3.19 {\scriptsize(0.969)} & 3.27$\pm$0.15 {\scriptsize(0.957)} & 2.25$\pm$0.08 {\scriptsize(0.956)}\\
+ & FRCP (ours) & \textbf{5.15$\pm$0.34 {\scriptsize(0.969)}} & \textbf{2.28$\pm$0.06 {\scriptsize(0.952)}} & \textbf{2.00$\pm$0.03 {\scriptsize(0.951)}} & 1.91$\pm$0.02 {\scriptsize(0.950)}\\
+\midrule
+\multirow{4}{*}{miniImageNet} & Split CP (best) & 96.88$\pm$0.12 {\scriptsize(0.969)} & 15.14$\pm$2.86 {\scriptsize(0.976)} & 1.44$\pm$0.05 {\scriptsize(0.958)} & 1.16$\pm$0.01 {\scriptsize(0.954)}\\
+ & CV+ & 9.92$\pm$0.85 {\scriptsize(0.978)} & 1.45$\pm$0.02 {\scriptsize(0.958)} & 1.18$\pm$0.01 {\scriptsize(0.956)} & \textbf{1.10$\pm$0.00 {\scriptsize(0.954)}}\\
+ & SemiCP (best) & 95.33$\pm$0.20 {\scriptsize(0.953)} & 6.11$\pm$1.08 {\scriptsize(0.961)} & 1.28$\pm$0.03 {\scriptsize(0.952)} & 1.15$\pm$0.01 {\scriptsize(0.953)}\\
+ & FRCP (ours) & \textbf{1.90$\pm$0.12 {\scriptsize(0.970)}} & \textbf{1.22$\pm$0.02 {\scriptsize(0.956)}} & \textbf{1.14$\pm$0.01 {\scriptsize(0.954)}} & 1.12$\pm$0.01 {\scriptsize(0.951)}\\
+\midrule
+\multirow{4}{*}{EuroSAT} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.76$\pm$0.36 {\scriptsize(0.974)} & 3.15$\pm$0.22 {\scriptsize(0.964)} & 2.70$\pm$0.19 {\scriptsize(0.964)}\\
+ & CV+ & 6.34$\pm$0.25 {\scriptsize(0.977)} & 3.44$\pm$0.15 {\scriptsize(0.956)} & \textbf{2.25$\pm$0.08 {\scriptsize(0.956)}} & \textbf{1.71$\pm$0.04 {\scriptsize(0.956)}}\\
+ & SemiCP (best) & 8.21$\pm$0.33 {\scriptsize(0.969)} & 4.57$\pm$0.25 {\scriptsize(0.940)} & 2.56$\pm$0.23 {\scriptsize(0.936)} & 1.97$\pm$0.20 {\scriptsize(0.934)}\\
+ & FRCP (ours) & \textbf{4.90$\pm$0.23 {\scriptsize(0.972)}} & \textbf{3.10$\pm$0.15 {\scriptsize(0.950)}} & 2.32$\pm$0.10 {\scriptsize(0.947)} & 1.97$\pm$0.04 {\scriptsize(0.950)}\\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+\section{Refinement ablation tables}
+\label{app:ablation}
+
+Tables~\ref{tab:r1b-decomposition-cifar100}
+and~\ref{tab:r1b-decomposition-miniimagenet} give the numbers behind
+Figure~\ref{fig:ablation}, for every stage and score combination.
+
+\begin{table}[h]
+\caption{Stage decomposition on CIFAR-100: mean prediction-set size
+($\pm$ SE, 50 trials, balanced split, $\alpha = 0.1$) for each
+refinement stage and score. Bold marks the best per budget. Every arm
+is exact full CP with pool-fitted transforms.}
+\label{tab:r1b-decomposition-cifar100}
+\begin{center}
+\small
+\begin{tabular}{llccc}
+\toprule
+ & & \multicolumn{3}{c}{CIFAR-100}\\
+NCM & transform & 2 & 6 & 14\\
+\midrule
+prototype-softmax & raw & 11.47$\pm$0.47 & 1.64$\pm$0.02 & 1.25$\pm$0.01\\
+ & $+$T,W & 3.60$\pm$0.14 & 1.38$\pm$0.01 & \textbf{1.22$\pm$0.01}\\
+ & $+$T,W,D (full) & \textbf{2.43$\pm$0.09} & \textbf{1.29$\pm$0.01} & \textbf{1.22$\pm$0.01}\\
+\addlinespace
+prototype-cosine & raw & 18.39$\pm$1.00 & 2.91$\pm$0.05 & 2.19$\pm$0.02\\
+ & $+$T,W & 4.98$\pm$0.26 & 1.85$\pm$0.02 & 1.67$\pm$0.01\\
+ & $+$T,W,D (full) & 3.27$\pm$0.13 & 1.59$\pm$0.02 & 1.51$\pm$0.01\\
+\addlinespace
+geodesic top-$k$ & raw & 15.84$\pm$0.59 & 2.26$\pm$0.05 & 1.60$\pm$0.01\\
+ & $+$T,W & 6.39$\pm$0.32 & 1.66$\pm$0.02 & 1.37$\pm$0.01\\
+ & $+$T,W,D (full) & 5.75$\pm$0.41 & 1.51$\pm$0.02 & 1.35$\pm$0.01\\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+\begin{table}[h]
+\caption{Stage decomposition on \emph{mini}ImageNet, conventions as in
+Table~\ref{tab:r1b-decomposition-cifar100}.}
+\label{tab:r1b-decomposition-miniimagenet}
+\begin{center}
+\small
+\begin{tabular}{llccc}
+\toprule
+ & & \multicolumn{3}{c}{miniImageNet}\\
+NCM & transform & 2 & 6 & 14\\
+\midrule
+prototype-softmax & raw & 2.57$\pm$0.17 & 1.04$\pm$0.00 & 0.99$\pm$0.00\\
+ & $+$T,W & 1.38$\pm$0.04 & 1.01$\pm$0.00 & 0.99$\pm$0.00\\
+ & $+$T,W,D (full) & \textbf{1.23$\pm$0.02} & \textbf{0.99$\pm$0.00} & 0.97$\pm$0.00\\
+\addlinespace
+prototype-cosine & raw & 5.85$\pm$0.59 & 1.15$\pm$0.01 & 1.08$\pm$0.00\\
+ & $+$T,W & 1.72$\pm$0.07 & 1.07$\pm$0.01 & 1.04$\pm$0.00\\
+ & $+$T,W,D (full) & 1.37$\pm$0.03 & 1.02$\pm$0.00 & 0.99$\pm$0.00\\
+\addlinespace
+geodesic top-$k$ & raw & 4.68$\pm$0.28 & 1.04$\pm$0.00 & 0.97$\pm$0.00\\
+ & $+$T,W & 1.76$\pm$0.12 & 1.00$\pm$0.00 & \textbf{0.95$\pm$0.00}\\
+ & $+$T,W,D (full) & 1.39$\pm$0.08 & \textbf{0.99$\pm$0.00} & \textbf{0.95$\pm$0.00}\\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+\section{Baseline implementations}
+\label{app:baselines}
+
+\paragraph{Baseline scores and probes.} Split CP and SemiCP score a
+multinomial logistic probe on standardized features, fitted with the
+same regularization for every method and budget, so differences between
+them come from the conformal construction rather than from the head.
+Both divide the labeled budget at a train fraction in
+$\{0.25, 0.5, 0.75\}$, and we report the best cell per budget.
+Baselines consume L2-normalized raw backbone embeddings, which is the
+published form of each method, and the unlabeled pool is available to
+every method able to use one.
+
+\paragraph{SemiCP.} We follow the official implementation with one
+documented change. The published method assumes a fully trained
+classifier whose scores the nearest-neighbor matching then transfers to
+unlabeled points, and no such classifier exists at our budgets. We
+substitute the few-shot probe above, which is the same head the split
+CP arm uses. This is the adaptation their own analysis anticipates,
+since they report that matching quality tracks classifier accuracy.
+
+\section{Class-conditional coverage}
+\label{app:covgap}
+
+Table~\ref{tab:app-covgap} reports the class-conditional coverage gap
+defined in Section~\ref{sec:setup}, for the same cells as
+Table~\ref{tab:headline-main}. Each entry is the gap of the arm whose
+set size that table reports, so the two are read together.
+
+The pattern is mixed and worth stating plainly. FRCP holds the
+smallest gap on CIFAR-100 at two shots. On CIFAR-10,
+\emph{mini}ImageNet and EuroSAT its gap is the largest of the four
+methods once the budget grows. Marginal coverage
+is at or above target in all of these cells, so this is a statement
+about how coverage is distributed across classes rather than about
+whether it holds.
+
+Two things drive the comparison. Tighter sets concentrate per-class
+coverage variance, while a method returning most of the label space
+covers every class almost by construction and earns a small gap
+without being informative, which is visible at two shots where the
+baselines return most of the label space. The estimates are also
+noisy, since each trial contributes five test points per class, so
+differences of a point or two should not be read as ordering the
+methods.
+
+\begin{table}[h]
+\caption{Class-conditional coverage gap in percentage points at
+$\alpha = 0.1$ over 50 trials, for the arms reported in
+Table~\ref{tab:headline-main}. Lower is better. Bold marks the
+smallest gap per dataset and budget.}
+\label{tab:app-covgap}
+\begin{center}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{llcccc}
+\toprule
+dataset & method & 2 shots & 4 shots & 8 shots & 14 shots\\
+\midrule
+\multirow{4}{*}{CIFAR-10}
+ & FRCP & 8.4 & 9.7 & 8.7 & 9.7\\
+ & CV+ & 7.4 & 7.9 & 5.6 & \textbf{4.6}\\
+ & Split CP & 8.8 & \textbf{5.7} & \textbf{5.0} & 5.4\\
+ & SemiCP & \textbf{6.4} & 7.0 & 5.6 & 5.8\\
+\midrule
+\multirow{4}{*}{CIFAR-100}
+ & FRCP & \textbf{6.0} & 6.0 & 6.2 & 6.0\\
+ & CV+ & 6.5 & 5.4 & \textbf{4.9} & \textbf{4.7}\\
+ & Split CP & 7.9 & 5.3 & 5.0 & 4.7\\
+ & SemiCP & 7.9 & \textbf{5.0} & 4.9 & 4.7\\
+\midrule
+\multirow{4}{*}{\emph{mini}ImageNet}
+ & FRCP & 7.2 & 7.5 & 8.1 & 8.2\\
+ & CV+ & 7.2 & 6.1 & 6.0 & \textbf{5.6}\\
+ & Split CP & 7.5 & \textbf{5.9} & \textbf{5.8} & 5.7\\
+ & SemiCP & \textbf{4.9} & 6.1 & 6.4 & 5.7\\
+\midrule
+\multirow{4}{*}{EuroSAT}
+ & FRCP & 6.4 & 7.2 & 8.1 & 7.5\\
+ & CV+ & 5.5 & 6.0 & 6.4 & 5.3\\
+ & Split CP & 8.0 & 5.2 & \textbf{5.7} & 5.2\\
+ & SemiCP & \textbf{4.6} & \textbf{3.2} & 6.0 & \textbf{4.7}\\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+% ===================================================================
+% Gap A (Section 5.2) attribution appendix. ADDED 2026-08-31.
+% Source: output/headline_attrib/results_*.json (splitproto, jkproto, 50
+% trials; closed-form jackknife+ verified EXACTLY vs brute-force n-refit in
+% src/attrib_arms._selftest, max|p_closed-p_brute|=0). FRCP rows copied from
+% output/headline. Tables \input from figs/ (regenerable via
+% src/make_headline_tables.py --attrib_dir output/headline_attrib). Every
+% number below is read off the generated JSONs, none retyped. Closes M4.
+% ===================================================================
+\section{Attributing the gain to full CP, not to the score}
+\label{app:attrib}
+
+Every baseline in Table~\ref{tab:headline-main} differs from FRCP in both the
+conformal construction and the score. Table~\ref{tab:attrib-a01} removes that
+confound: all three rows use the identical frozen transform and frozen score
+and differ only in whether every label calibrates (full CP), $n$
+leave-one-out folds calibrate (jackknife+), or a train and calibration split
+calibrates (split CP).
+
+\input{figs/table_attrib_a01.tex}
+
+Jackknife+ reproduces FRCP set for set. Its mean set size and marginal
+coverage match to within standard error in every one of the forty cells, with
+a largest size difference of $0.09$ of a label, so the per-candidate
+transductive refit contributes nothing measurable to efficiency. Full CP's
+distinct value over jackknife+ is therefore the exact $1-\alpha$ guarantee at
+the same cost, not tighter sets, since jackknife+ carries only the
+$1-2\alpha$ bound while covering at the target in practice here. Split
+conformal with the same score pays for the split: it loses at two shots
+($2.69$ against $2.43$ on CIFAR-100, $4.28$ against $3.59$ on EuroSAT) and
+converges to FRCP by eight to fourteen shots, yet it never collapses the way
+the trained-head baselines do, returning $2.69$ rather than $92.9$ labels on
+CIFAR-100 at two shots. Most of FRCP's margin over those baselines is thus the
+training-free score, which keeps split CP usable, and the residual small
+margin is full CP spending every label on calibration. At $\alpha = 0.05$ and
+two shots on the ten-class datasets, split CP hits the full-set floor
+(Table~\ref{tab:attrib-a005}): after the train split $n_{\mathrm{cal}}$ falls
+below the $\lceil 1/\alpha\rceil - 1$ labels a quantile at that level needs, a
+finite-sample floor full CP escapes.
+
+\input{figs/table_attrib_a005.tex}
+
+% ===================================================================
+% Backbone transfer (Section 5.2 companion). ADDED 2026-08-31
+% (paste_sec52_backbone v4). Full budget grids behind
+% fig:backbone-transfer, Table-2 layout and conventions, split CP rows
+% and per-cell coverage included, both alphas. Tables generated by the
+% src/make_headline_tables.py driver from
+% output/backbone_headline/{clip-base,ssl-resnet50}/results_*.json and
+% \input from figs/. SemiCP <= split CP in 57/60 cells across the three
+% encoders (computed 08-31); T re-piloted per encoder;
+% resnet50/cifar100 runs the prototype cosine score (auto-T collapse).
+% ===================================================================
+% REWORKED 2026-09-02 (results-display rework, experiments.tex v9): the
+% CLIP comparison at alpha = 0.1 moved INTO the main text as
+% tab:headline-clipb, so the a01 table here is gone and the section
+% keeps only the tighter-level companion. fig:backbone-transfer no
+% longer exists; refs retargeted. Old figs/table_backbone_clipb_*.tex
+% moved to figs/_superseded/; the a005 companion is now the
+% generator-emitted figs/table_headline_clipb_a005.tex (ours-last row
+% order, label tab:headline-clipb-a005).
+\section{Backbone transfer}
+\label{app:backbones}
+
+The full CLIP ViT-B comparison at $\alpha = 0.1$ is
+Table~\ref{tab:headline-clipb} in the main text.
+Table~\ref{tab:headline-clipb-a005} is its companion at the tighter
+miscoverage level, with the layout and conventions of
+Table~\ref{tab:headline-main}. The pipeline and per-dataset
+configuration of Appendix~\ref{app:config} carry over unchanged. Only
+the pool statistics are refitted, and the softmax temperature is
+re-piloted for the encoder.
+
+\input{figs/table_headline_clipb_a005.tex}
+
+% ===================================================================
+% Gap B2 (Section 5.4) score- vs representation-level smoothing. ADDED
+% 2026-08-31. Source: output/snaps_vs_smoothing/results_*.json (4 arms, one
+% construction = FullConformalPredictor.predict(update_calibration_scores=
+% False); confirmed set-for-set vs full CP on one cell: 100% cifar100/mini,
+% 98.6% aircraft O(1/n) top-k). SNAPS eta=0.5 k=10 --correction loo, NOT
+% tuned. Table \input from figs/ (src/make_snaps_table.py). Closes the
+% Section 2 "compares the two levels directly" promise (M6).
+% ===================================================================
+\section{Score-level versus representation-level smoothing}
+\label{app:snaps}
+
+Section~\ref{sec:related} promises a direct comparison of the two levels at
+which a pool correction can act. Table~\ref{tab:snaps-vs-smoothing} makes it,
+holding the construction fixed to the static-calibration form of full CP so
+the arms differ only in the smoothing level. We confirmed on one cell that
+this construction reproduces the full-CP sets set for set, on $100\%$ of test
+points.
+
+\input{figs/table_snaps_vs_smoothing.tex}
+
+The representation-level smoothing
+stage recovers more of the truncation-to-refinement gain than the score-level
+SNAPS correction at the small budgets where refinement matters: at two shots
+it cuts the CIFAR-100 set from $3.61$ to $2.44$ against SNAPS's $2.82$, and the
+miniImageNet set from $1.38$ to $1.23$ against $1.28$, and the two converge by
+eight shots. Stacking adds essentially nothing over smoothing alone ($2.41$
+against $2.44$ at two shots on CIFAR-100). The two levels cost comparable
+per-trial wall-clock ($0.37$ s each against $0.10$ s for the base at eight
+shots on CIFAR-100), because the score-level correction must re-score the
+whole pool under each new calibration set, so smoothing is at least as good on
+efficiency at no greater cost. The leave-one-out SNAPS correction holds marginal coverage at or
+above the target in every cell, its lowest sitting exactly at the $0.900$
+target, so the under-coverage a naive per-candidate averaging would incur
+does not appear;
+its softer coupling to the labels is still not the exact per-candidate
+recomputation, so it is reported as measured and its $\eta$ and $k$ are not
+tuned on the roster.
