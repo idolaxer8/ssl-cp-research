@@ -83,6 +83,9 @@ BACKBONE_SUFFIX = {
     "dinov3-512": "_dinov3-base-512",   # high-res re-extract (isolate res vs model)
     "clip": "_clip-base",
     "clip-large": "_clip-large",
+    "ssl-resnet50": "_ssl-resnet50",    # CNN row (2026-08-30): architecture
+                                        # diversity vs the ViT backbones; extract
+                                        # preset "ssl-resnet50" (2048-d, native 224)
     "mae": "_mae-base",          # retained (negative control); off by default
 }
 
