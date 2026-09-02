@@ -100,6 +100,10 @@ def run_dataset(ds, emb_dir, shots, test_size, seed):
     y = lab["labels"].numpy().astype(int)
     Xu = unl["embeddings"].numpy().astype(np.float64)
     K = len(np.unique(y))
+    # small heldout carves (eurosat: 30/class) cannot fill the default
+    # test budget; cap at what a balanced split can actually provide
+    per_class = int(np.bincount(y).min())
+    test_size = min(test_size, (per_class - shots) * K)
     Xc, yc, Xt, yt = stratified_cal_test_split(
         X, y, cal_size=shots * K, test_size=test_size, random_state=seed)
     arms = {"raw": scores_and_qhat(l2n(Xc), yc, l2n(Xt), yt)}
