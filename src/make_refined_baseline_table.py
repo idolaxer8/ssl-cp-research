@@ -16,15 +16,16 @@ import argparse, json, os
 from make_headline_tables import DS_LABEL, FROZEN_ARM, MAIN_DS, best_row
 
 # (source, arm, label) -- source picks raw_dir vs ref_dir; "__frozen__" resolves
-# per dataset (topk NCM on aircraft/cars).
+# per dataset (topk NCM on aircraft/cars). Baselines first, ours last
+# (comparison convention, user call 09-02).
 ROWS = [
-    ("raw", "__frozen__", "FRCP"),
-    ("raw", "cvplus",      "CV+ (raw)"),
-    ("ref", "cvplus_ref",  "CV+ (refined)"),
     ("raw", "splitcp",     "Split CP (raw)"),
     ("ref", "splitcp_ref", "Split CP (refined)"),
+    ("raw", "cvplus",      "CV+ (raw)"),
+    ("ref", "cvplus_ref",  "CV+ (refined)"),
     ("raw", "semicp",      "SemiCP (raw)"),
     ("ref", "semicp_ref",  "SemiCP (refined)"),
+    ("raw", "__frozen__",  "FRCP (ours)"),
 ]
 
 
@@ -75,29 +76,36 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--raw_dir", default="output/headline")
     ap.add_argument("--ref_dir", default="output/headline_refined_baselines")
+    ap.add_argument("--clipb_raw_dir",
+                    default="output/backbone_headline/clip-base")
+    ap.add_argument("--clipb_ref_dir",
+                    default="output/headline_refined_baselines/clip-base")
     ap.add_argument("--out_dir", default="output/headline_refined_baselines/plots")
     ap.add_argument("--shots", type=int, nargs="+", default=[2, 4, 8, 14])
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
-    cap = ("Fair-representation control: mean prediction-set size ($\\pm$ SE, "
-           "50 trials, balanced split) with marginal coverage in parentheses, "
-           "when the split-CP baselines are given the SAME pool-fitted "
-           "refinement as FRCP. Baselines are shown at their best score and "
-           "train fraction per cell. Bold marks the smallest set per dataset "
-           "and budget. Below the boundary ($s=2$) FRCP stays smallest even "
-           "against refined competitors, so its advantage there is not merely "
-           "the representation; refinement helps the trained-head baselines at "
-           "$K=100$ but not at $K=10$, where it is fitted for the prototype "
-           "score.")
-    build(args.raw_dir, args.ref_dir, MAIN_DS, 0.1, args.shots,
-          "tab:refined-baselines",
-          cap + " Target miscoverage $\\alpha=0.1$.",
-          os.path.join(args.out_dir, "table_refined_baselines_a01.tex"))
-    build(args.raw_dir, args.ref_dir, MAIN_DS, 0.05, args.shots,
-          "tab:refined-baselines-a005",
-          cap + " Target miscoverage $\\alpha=0.05$.",
-          os.path.join(args.out_dir, "table_refined_baselines_a005.tex"))
+    cap = ("Fair-representation control on {bb} embeddings: mean "
+           "prediction-set size ($\\pm$ SE, 50 trials, balanced split) with "
+           "marginal coverage in parentheses, when the split-CP baselines "
+           "are handed the same pool-fitted refinement FRCP uses. Baselines "
+           "are shown at their best score and train fraction per cell. Bold "
+           "marks the smallest set per dataset and budget.")
+    for bb_tag, bb_name, raw_d, ref_d in [
+            ("dinov2", "DINOv2 ViT-B", args.raw_dir, args.ref_dir),
+            ("clipb", "CLIP ViT-B", args.clipb_raw_dir, args.clipb_ref_dir)]:
+        if not os.path.exists(os.path.join(ref_d,
+                                           f"results_{MAIN_DS[0]}.json")):
+            print(f"[skip] {bb_tag}: no refined results in {ref_d}")
+            continue
+        for alpha, atag in ((0.1, "a01"), (0.05, "a005")):
+            build(raw_d, ref_d, MAIN_DS, alpha, args.shots,
+                  f"tab:refined-baselines-{bb_tag}-{atag}",
+                  cap.format(bb=bb_name)
+                  + f" Target miscoverage $\\alpha={alpha:g}$.",
+                  os.path.join(
+                      args.out_dir,
+                      f"table_refined_baselines_{bb_tag}_{atag}.tex"))
 
 
 if __name__ == "__main__":
