@@ -1,19 +1,27 @@
 """Paper headline tables from the frozen-champion comparison runs.
 
-Post scope pivot (user call 2026-09-01): headline datasets = CIFAR-10 /
-CIFAR-100 / miniImageNet / EuroSAT, backbones = DINOv2 ViT-B + CLIP ViT-B.
-One table per backbone x alpha. Rows grouped by dataset; within each block
-the baselines come first and FRCP (ours) is the LAST row (standard
-comparison convention). Cell = mean set size $\\pm$ SE with coverage in
-scriptsize parens; bold = smallest size per (dataset, budget). Baselines
-follow the strongest-baseline convention: best over score x train_frac
-per cell.
+Post sec5 reorg (user call 2026-09-06): headline datasets = CIFAR-10 /
+CIFAR-100 / EuroSAT (miniImageNet dropped from the comparison entirely),
+max tabulated budget = 12 shots. DINOv2 ViT-B carries the main-text
+table; CLIP ViT-B moves to the appendix; CLIP ViT-L emitted for the
+large-encoder comparison. One table per backbone x alpha. Rows grouped
+by dataset; within each block the baselines come first and FRCP (ours)
+is the LAST row (standard comparison convention). Cell = mean set size
+$\\pm$ SE with coverage in scriptsize parens; bold = smallest size per
+(dataset, budget). Baselines follow the strongest-baseline convention:
+best over score x train_frac per cell.
+
+The requested --shots grid is intersected per results dir with the shots
+actually present (the CLIP runs currently stop at {2,4,8,14}); missing
+budgets are dropped with a warning rather than emitted as empty columns.
 
 Outputs (out_dir):
     table_headline_dinov2_a01.tex    main Table 2 (alpha = 0.1)
     table_headline_dinov2_a005.tex   appendix companion (alpha = 0.05)
-    table_headline_clipb_a01.tex     CLIP-B headline table
+    table_headline_clipb_a01.tex     CLIP-B appendix table
     table_headline_clipb_a005.tex    appendix companion
+    table_headline_clipl_a01.tex     CLIP-L large-encoder table
+    table_headline_clipl_a005.tex    appendix companion
     table_headline_internal_*.tex    dropped datasets (viewing only)
 
 Usage (from repo root):
@@ -31,14 +39,35 @@ FROZEN_ARM = {"aircraft": "frozen_unwhitened_topk_asym",
 ARMS = [("splitcp", "Split CP (best)"), ("cvplus", "CV+"),
         ("semicp", "SemiCP (best)"), ("frozen", "FRCP (ours)")]
 
-MAIN_DS = ["cifar10", "cifar100", "miniimagenet", "eurosat"]
-INTERNAL_DS = ["aircraft", "cub200", "food101", "stanford_cars"]
+MAIN_DS = ["cifar10", "cifar100", "eurosat"]
+INTERNAL_DS = ["miniimagenet", "aircraft", "cub200", "food101",
+               "stanford_cars"]
 
 
 def best_row(rows, arm, shots, alpha):
     cand = [x for x in rows if x["arm"] == arm and x["shots"] == shots
             and x["alpha"] == alpha]
     return min(cand, key=lambda x: x["sz"]) if cand else None
+
+
+def available_shots(results_dir, datasets, shots_req):
+    """Intersect the requested grid with the shots present in every
+    results file of this dir (missing budgets are dropped, not tabulated
+    as empty columns)."""
+    have = None
+    for ds in datasets:
+        path = os.path.join(results_dir, f"results_{ds}.json")
+        if not os.path.exists(path):
+            continue
+        s = {r["shots"] for r in json.load(open(path))["rows"]}
+        have = s if have is None else have & s
+    if have is None:
+        return shots_req
+    kept = [s for s in shots_req if s in have]
+    if kept != shots_req:
+        print(f"[warn] {results_dir}: shots {sorted(set(shots_req) - have)}"
+              f" absent, tabulating {kept}")
+    return kept
 
 
 def build(results_dir, datasets, alpha, shots_sel, label, caption, out):
@@ -89,9 +118,11 @@ def main():
                     help="dinov2 results (the Table 2 run)")
     ap.add_argument("--clipb_dir",
                     default="output/backbone_headline/clip-base")
+    ap.add_argument("--clipl_dir",
+                    default="output/backbone_headline/clip-large")
     ap.add_argument("--out_dir", default="output/headline/plots")
-    ap.add_argument("--shots", type=int, nargs="+", default=[2, 4, 8, 14],
-                    help="shared grid of both backbone runs")
+    ap.add_argument("--shots", type=int, nargs="+", default=[2, 4, 8, 12],
+                    help="requested grid, intersected per results dir")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -106,19 +137,23 @@ def main():
          {0.1: "tab:headline-main", 0.05: "tab:headline-appendix-a005"}),
         ("clipb", "CLIP ViT-B", args.clipb_dir,
          {0.1: "tab:headline-clipb", 0.05: "tab:headline-clipb-a005"}),
+        ("clipl", "CLIP ViT-L", args.clipl_dir,
+         {0.1: "tab:headline-clipl", 0.05: "tab:headline-clipl-a005"}),
     ]
     for bb_tag, bb_name, res_dir, lab in backbones:
+        shots_sel = available_shots(res_dir, MAIN_DS, args.shots)
         for alpha, atag in ((0.1, "a01"), (0.05, "a005")):
-            build(res_dir, MAIN_DS, alpha, args.shots, lab[alpha],
+            build(res_dir, MAIN_DS, alpha, shots_sel, lab[alpha],
                   f"Headline comparison on {bb_name} embeddings: "
                   + base_cap + f" Target miscoverage $\\alpha={alpha:g}$.",
                   os.path.join(args.out_dir,
                                f"table_headline_{bb_tag}_{atag}.tex"))
+    shots_sel = available_shots(args.headline_dir, INTERNAL_DS, args.shots)
     for alpha, atag in ((0.1, "a01"), (0.05, "a005")):
-        build(args.headline_dir, INTERNAL_DS, alpha, args.shots,
+        build(args.headline_dir, INTERNAL_DS, alpha, shots_sel,
               f"tab:headline-internal-{atag}",
               f"INTERNAL (not for submission): datasets outside the "
-              f"09-01 scope at $\\alpha={alpha:g}$.",
+              f"09-06 scope at $\\alpha={alpha:g}$.",
               os.path.join(args.out_dir,
                            f"table_headline_internal_{atag}.tex"))
 

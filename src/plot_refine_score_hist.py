@@ -35,7 +35,7 @@ from conformal_prediction import (PrototypeSoftmaxNCM,       # noqa: E402
 from headline_experiment import build_frozen_transform       # noqa: E402
 from r1_headline_experiment import balanced_split            # noqa: E402
 
-DS = ["cifar10", "cifar100", "miniimagenet", "eurosat"]
+DS = ["cifar10", "cifar100", "eurosat"]     # 09-06 roster (miniIN dropped)
 DS_LABEL = {"cifar10": "CIFAR-10", "cifar100": "CIFAR-100",
             "miniimagenet": "miniImageNet", "eurosat": "EuroSAT"}
 ALPHA = 0.1
@@ -172,35 +172,68 @@ def main():
                     help="cosine = softmax-free family member (bounded, "
                          "geometry-readable); softmax = the champion "
                          "prototype-softmax LAC with per-arm pilot T")
+    ap.add_argument("--datasets", nargs="+", default=DS,
+                    help="panel roster, in display order")
+    ap.add_argument("--logy", action="store_true",
+                    help="log-scale density axis; makes the softmax "
+                         "variant readable (its mass saturates at 0/1)")
+    ap.add_argument("--xscale", default="linear",
+                    choices=["linear", "logit"],
+                    help="logit: spread the 0/1 ends of the softmax score "
+                         "(logit-spaced bins, per-class mass-normalized "
+                         "heights); only meaningful with --score softmax")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     sfx = "" if args.score == "cosine" else "_softmax"
 
-    fig, axes = plt.subplots(2, len(DS), figsize=(5.5, 2.9))
+    fig, axes = plt.subplots(2, len(args.datasets), figsize=(5.5, 2.9))
     fig.subplots_adjust(left=0.075, right=0.995, top=0.85, bottom=0.15,
                         hspace=0.14, wspace=0.22)
     stats = {}
-    for j, ds in enumerate(DS):
+    for j, ds in enumerate(args.datasets):
         emb_dir = args.eurosat_dir if ds == "eurosat" else args.emb_dir
         print(f"[{ds}] fitting frozen transform + scoring ...", flush=True)
         arms = run_dataset(ds, emb_dir, args.shots, args.test_size,
                            args.seed, args.score)
-        lo = min(a["true"].min() for a in arms.values()) - 0.03
-        hi = max(np.percentile(a["false"], 99.5)
-                 for a in arms.values()) + 0.03
-        bins = np.linspace(lo, hi, 80)
+        if args.xscale == "logit":
+            # logit-spaced bins resolve both saturated ends of the softmax
+            # score; heights = per-class probability mass per bin, so the
+            # two colors are comparable despite the (K-1)x count imbalance
+            eps = 1e-5
+            lo, hi = eps, 1.0 - eps
+            edges = 1.0 / (1.0 + np.exp(-np.linspace(
+                np.log(lo / (1 - lo)), np.log(hi / (1 - hi)), 61)))
+        else:
+            lo = min(a["true"].min() for a in arms.values()) - 0.03
+            hi = max(np.percentile(a["false"], 99.5)
+                     for a in arms.values()) + 0.03
+            edges = np.linspace(lo, hi, 80)
         for i, arm in enumerate(("raw", "refined")):
             st = arms[arm]
             ax = axes[i][j]
-            ax.hist(st["false"], bins=bins, density=True, alpha=0.45,
-                    color=C_FALSE, lw=0,
-                    label=r"false class  $s(x,c),\,c\neq y$")
-            ax.hist(st["true"], bins=bins, density=True, alpha=0.55,
-                    color=C_TRUE, lw=0, label=r"true class  $s(x,y)$")
-            ax.axvline(st["q_hat"], color="k", ls="--", lw=1.0,
-                       label=r"$\hat{q}_{1-\alpha}$")
+            sf, stt = st["false"], st["true"]
+            if args.xscale == "logit":
+                sf, stt = np.clip(sf, lo, hi), np.clip(stt, lo, hi)
+                hkw_f = dict(weights=np.full(sf.shape, 1.0 / len(sf)))
+                hkw_t = dict(weights=np.full(stt.shape, 1.0 / len(stt)))
+            else:
+                hkw_f = hkw_t = dict(density=True)
+            ax.hist(sf, bins=edges, alpha=0.45, color=C_FALSE, lw=0,
+                    label=r"false class  $s(x,c),\,c\neq y$", **hkw_f)
+            ax.hist(stt, bins=edges, alpha=0.55, color=C_TRUE, lw=0,
+                    label=r"true class  $s(x,y)$", **hkw_t)
+            ax.axvline(min(max(st["q_hat"], lo), hi), color="k", ls="--",
+                       lw=1.0, label=r"$\hat{q}_{1-\alpha}$")
+            if args.xscale == "logit":
+                ax.set_xscale("logit")
+                ax.set_xticks([1e-3, 0.5, 1 - 1e-3])
+                ax.set_xticklabels([r"$10^{-3}$", r"$\frac{1}{2}$",
+                                    r"$1{-}10^{-3}$"], fontsize=6.5)
             ax.set_xlim(lo, hi)
+            if args.logy:
+                ax.set_yscale("log")
             ax.set_yticks([])
+            ax.minorticks_off()
             note = (f"cov {st['coverage']:.2f}\n"
                     f"$\\langle|C|\\rangle$ {st['avg_size']:.2f}\n"
                     f"leak {st['leak']:.2f}")
@@ -247,16 +280,23 @@ def main():
         "true-class mass below the quantile and moves false-class mass "
         "above it, so the same coverage is bought with fewer false labels "
         f"in the set (leak = mean false classes inside the set). {score_txt}; "
-        "the transform is fit on the unlabeled pool only.")
+        "the transform is fit on the unlabeled pool only."
+        + (" The score axis is logit-scaled to resolve both saturated ends "
+           "of the softmax score; bar heights are per-class probability "
+           "mass per bin." if args.xscale == "logit" else "")
+        + (" The density axis is logarithmic, so the visually small tails "
+           "near the quantile carry the probability mass that decides "
+           "set membership." if args.logy else ""))
     with open(stem + "_caption.txt", "w", encoding="utf-8") as f:
         f.write(caption + "\n")
     with open(os.path.join(args.out_dir,
                            f"refine_score_hist_stats{sfx}.json"),
               "w") as f:
         json.dump({"alpha": ALPHA, "shots": args.shots, "seed": args.seed,
-                   "score": args.score, "stats": stats}, f, indent=2)
+                   "score": args.score, "logy": args.logy,
+                   "datasets": args.datasets, "stats": stats}, f, indent=2)
     print(f"saved {stem}.pdf/.png")
-    for ds in DS:
+    for ds in args.datasets:
         r, p = stats[ds]["raw"], stats[ds]["refined"]
         print(f"  {ds:14s} avg|C| {r['avg_size']:6.2f} -> {p['avg_size']:6.2f}"
               f"   leak {r['leak']:5.2f} -> {p['leak']:5.2f}"

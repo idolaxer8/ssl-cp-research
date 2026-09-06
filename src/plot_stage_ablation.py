@@ -117,21 +117,24 @@ def main():
     ap.add_argument("--data_dir", default="output/pipeline_ablation")
     ap.add_argument("--out_dir", default="output/pipeline_ablation/plots")
     ap.add_argument("--shots", type=int, nargs="+", default=[2, 4, 8])
+    ap.add_argument("--datasets", nargs="+", default=DS,
+                    help="panel roster, in display order")
     ap.add_argument("--layout", choices=["grid", "row"], default="grid",
-                    help="grid: 2x2 panels (default); row: 1x4 panels, "
+                    help="grid: 2x2 panels (default); row: 1xN panels, "
                          "half the height, for the page-limited main text")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
     results = []
-    for ds in DS:
+    for ds in args.datasets:
         with open(os.path.join(args.data_dir,
                                f"results_{ds}_stageabl.json")) as f:
             results.append(json.load(f))
 
     if args.layout == "row":
+        n = len(results)
         fig = plt.figure(figsize=(5.5, 2.15))
-        outer = fig.add_gridspec(1, 4, wspace=0.30,
+        outer = fig.add_gridspec(1, n, wspace=0.30,
                                  left=0.085, right=0.995, top=0.80,
                                  bottom=0.13)
     else:
@@ -168,20 +171,23 @@ def main():
 
     # headline numbers for the caption + a machine-readable dump
     covs = [c["cov"] for c in stats]
+    n_cells = len(args.datasets) * len(args.shots)
     full_wins = sum(
-        1 for ds in DS for s in args.shots
+        1 for ds in args.datasets for s in args.shots
         if min(c["sz"] for c in stats
                if c["dataset"] == ds and c["shots"] == s)
         >= next(c["sz"] for c in stats if c["dataset"] == ds
                 and c["shots"] == s and c["arm"] == "TWD") - 5e-3)
+    n_word = {2: "two", 3: "three", 4: "four"}.get(len(args.datasets),
+                                                   str(len(args.datasets)))
     caption = (
-        "Stage ablation of the frozen refinement on the four headline "
+        f"Stage ablation of the frozen refinement on the {n_word} headline "
         "datasets (DINOv2 ViT-B, prototype-softmax score, exact full CP, "
         "20 trials, $\\alpha=0.1$): mean prediction-set size for every "
         "on/off combination of truncation (T), whitening (W) and "
         "smoothing (S), at 2/4/8 labels per class. Bars above the panel "
         "cap are clipped and annotated. The full pipeline (T+W+S) gives "
-        f"the smallest sets in {full_wins}/{len(DS) * len(args.shots)} "
+        f"the smallest sets in {full_wins}/{n_cells} "
         "dataset\\,$\\times$\\,budget cells; W alone floors the "
         "temperature fit and inflates sets, T first stabilizes it "
         "(the T$\\to$W order story of Sec. 4). Every arm is exact full "
@@ -192,8 +198,8 @@ def main():
               "w") as f:
         json.dump({"cells": stats, "full_wins": full_wins,
                    "cov_range": [min(covs), max(covs)]}, f, indent=2)
-    print(f"saved {stem}.pdf/.png  full wins {full_wins}/"
-          f"{len(DS) * len(args.shots)}  cov {min(covs):.3f}-{max(covs):.3f}")
+    print(f"saved {stem}.pdf/.png  full wins {full_wins}/{n_cells}"
+          f"  cov {min(covs):.3f}-{max(covs):.3f}")
 
 
 if __name__ == "__main__":
