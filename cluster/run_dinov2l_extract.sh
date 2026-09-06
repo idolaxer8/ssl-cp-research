@@ -48,11 +48,25 @@ SHOTS="${SHOTS:-2 4 8 12}"       # sec5-reorg grid (tables cap at 12)
 RUN_HEADLINE="${RUN_HEADLINE:-1}"
 
 # resolve the labeled / pool ImageFolder for a dataset, allowing the
-# eurosat-style carve names as fallback
+# eurosat-style carve layout data/<ds>_subset/{labeled,pool}.
+# NEVER return a carve ROOT: ImageFolder would take the folder names
+# labeled/pool as the two classes (this exact bug produced a broken
+# 2-class eurosat file on 09-06; delete such a .pt before re-running).
 resolve_dir() {                  # $1 = ds, $2 = "" | "_unlabeled"
-    local ds="$1" part="$2"
-    for cand in "data/${ds}${part}" "data/${ds}_subset${part}"; do
-        if [ -d "$cand" ]; then echo "$cand"; return; fi
+    local ds="$1" part="$2" cands
+    if [ "$part" = "_unlabeled" ]; then
+        cands="data/${ds}_unlabeled data/${ds}_subset_unlabeled data/${ds}_subset/pool data/${ds}/pool"
+    else
+        cands="data/${ds} data/${ds}_subset/labeled data/${ds}/labeled"
+    fi
+    for cand in $cands; do
+        if [ -d "$cand" ]; then
+            if [ -d "$cand/labeled" ] || [ -d "$cand/pool" ]; then
+                echo "[guard] $cand is a carve root, not an ImageFolder -- skipped" >&2
+                continue
+            fi
+            echo "$cand"; return
+        fi
     done
     echo ""
 }
@@ -69,8 +83,8 @@ extract_one() {
     unl_dir="$(resolve_dir "$ds" "_unlabeled")"
     if [ -z "$lab_dir" ]; then
         echo "[MISS] no labeled ImageFolder for $ds (tried data/${ds},"
-        echo "       data/${ds}_subset) -- put the SAME folder the dinov2-base"
-        echo "       rows used on the pod, then re-run."
+        echo "       data/${ds}_subset/labeled, data/${ds}/labeled) -- put the"
+        echo "       SAME folder the dinov2-base rows used on the pod, re-run."
         return
     fi
     echo "[extract] $PRESET / $ds  labeled=$lab_dir  (batch=$BATCH, 518 px)"
@@ -79,8 +93,9 @@ extract_one() {
         --output_name "${ON}/embeddings_${ds}${SUF}.pt"
     if [ -z "$unl_dir" ]; then
         echo "[MISS] no pool ImageFolder for $ds (tried data/${ds}_unlabeled,"
-        echo "       data/${ds}_subset_unlabeled) -- the experiment needs the"
-        echo "       10k pool; extract it once the carve is on the pod."
+        echo "       data/${ds}_subset_unlabeled, data/${ds}_subset/pool,"
+        echo "       data/${ds}/pool) -- the experiment needs the 10k pool;"
+        echo "       extract it once the carve is on the pod."
         return
     fi
     echo "[extract] $PRESET / $ds  pool=$unl_dir"
