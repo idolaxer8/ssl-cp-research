@@ -1,0 +1,26 @@
+\begin{table}[t]
+\centering
+\small
+\caption{Headline comparison on CLIP ViT-L embeddings: mean prediction-set size ($\pm$ SE, 50 trials, balanced split) with marginal coverage in parentheses. Split CP and SemiCP are shown at their best score (THR/APS/RAPS) and train fraction per cell (strongest-baseline convention). FRCP = the frozen pool-fitted refinement with exact full CP. Bold: smallest set per dataset and budget. Target miscoverage $\alpha=0.05$.}
+\label{tab:headline-clipl-a005}
+\begin{tabular}{llccc}
+\toprule
+dataset & method & 2 shots & 4 shots & 8 shots\\
+\midrule
+\multirow{4}{*}{CIFAR-10} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.96$\pm$0.36 {\scriptsize(0.986)} & 1.61$\pm$0.09 {\scriptsize(0.963)}\\
+ & CV+ & 6.14$\pm$0.33 {\scriptsize(0.974)} & 2.15$\pm$0.12 {\scriptsize(0.967)} & 1.18$\pm$0.02 {\scriptsize(0.960)}\\
+ & SemiCP (best) & 7.32$\pm$0.50 {\scriptsize(0.941)} & 3.42$\pm$0.44 {\scriptsize(0.940)} & 1.66$\pm$0.25 {\scriptsize(0.945)}\\
+ & FRCP (ours) & \textbf{1.89$\pm$0.14 {\scriptsize(0.968)}} & \textbf{1.40$\pm$0.07 {\scriptsize(0.960)}} & \textbf{1.13$\pm$0.02 {\scriptsize(0.954)}}\\
+\midrule
+\multirow{4}{*}{CIFAR-100} & Split CP (best) & 96.72$\pm$0.09 {\scriptsize(0.968)} & 47.05$\pm$2.57 {\scriptsize(0.976)} & 12.68$\pm$0.42 {\scriptsize(0.962)}\\
+ & CV+ & 62.68$\pm$1.32 {\scriptsize(0.984)} & 18.99$\pm$0.42 {\scriptsize(0.964)} & 8.34$\pm$0.15 {\scriptsize(0.961)}\\
+ & SemiCP (best) & 96.16$\pm$0.15 {\scriptsize(0.962)} & 46.81$\pm$3.21 {\scriptsize(0.965)} & 11.12$\pm$0.47 {\scriptsize(0.955)}\\
+ & FRCP (ours) & \textbf{22.00$\pm$0.81 {\scriptsize(0.975)}} & \textbf{9.50$\pm$0.35 {\scriptsize(0.957)}} & \textbf{6.65$\pm$0.16 {\scriptsize(0.951)}}\\
+\midrule
+\multirow{4}{*}{EuroSAT} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 7.40$\pm$0.34 {\scriptsize(0.970)} & 3.27$\pm$0.19 {\scriptsize(0.966)}\\
+ & CV+ & 7.24$\pm$0.26 {\scriptsize(0.977)} & 4.10$\pm$0.16 {\scriptsize(0.962)} & \textbf{2.35$\pm$0.07 {\scriptsize(0.958)}}\\
+ & SemiCP (best) & 8.61$\pm$0.33 {\scriptsize(0.962)} & 5.50$\pm$0.33 {\scriptsize(0.949)} & 3.30$\pm$0.39 {\scriptsize(0.924)}\\
+ & FRCP (ours) & \textbf{5.71$\pm$0.24 {\scriptsize(0.967)}} & \textbf{4.00$\pm$0.16 {\scriptsize(0.955)}} & 3.03$\pm$0.10 {\scriptsize(0.950)}\\
+\bottomrule
+\end{tabular}
+\end{table}

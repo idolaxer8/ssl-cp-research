@@ -1,0 +1,17 @@
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\caption{Per-trial compute time in seconds on CIFAR-100 ($K=100$, 500 test points, single GPU, median over 5 trials), timed standalone on the headline protocol at target grid budgets. Split-based rows include their probe fit and all three scores; CV+ includes its per-fold probe fits. FRCP additionally pays a one-off pool-transform fit of 13.4\,s and a 0.3\,s temperature pilot, shared by every trial, budget and test batch.}
+\label{tab:runtime-cifar100}
+\begin{tabular}{lcccc}
+\toprule
+method & 2 shots & 4 shots & 8 shots & 12 shots\\
+\midrule
+Split CP & 0.40 & 0.70 & 0.80 & 0.95\\
+CV+ & 0.34 & 1.76 & 2.94 & 3.75\\
+SemiCP & 0.76 & 1.15 & 1.40 & 1.73\\
+FRCP (ours) & 0.78 & 0.83 & 0.99 & 1.32\\
+\bottomrule
+\end{tabular}
+\end{table}

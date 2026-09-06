@@ -226,6 +226,9 @@ number of $k$-means groups, which is set to the class count.
 % ICLR style file is not in this mirror so we cannot confirm it loads.
 % If it does, "Results at $\alpha = 0.05$" also works.
 
+% REGENERATED 2026-09-06 (sec5 reorg): three-dataset roster, columns
+% {2,4,8,12}. Content = generator-emitted table_headline_dinov2_a005.tex
+% (caption kept in the appendix house style).
 \begin{table}[h]
 \caption{Mean prediction-set size ($\pm$ SE) with marginal coverage in
 parentheses, at target miscoverage $\alpha = 0.05$ over 50 trials per
@@ -236,27 +239,22 @@ cell. Layout and conventions follow Table~\ref{tab:headline-main}.}
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{llcccc}
 \toprule
-dataset & method & 2 shots & 4 shots & 8 shots & 14 shots\\
+dataset & method & 2 shots & 4 shots & 8 shots & 12 shots\\
 \midrule
-\multirow{4}{*}{CIFAR-10} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.68$\pm$0.37 {\scriptsize(0.978)} & 1.71$\pm$0.14 {\scriptsize(0.964)} & 1.36$\pm$0.12 {\scriptsize(0.974)}\\
- & CV+ & 5.43$\pm$0.32 {\scriptsize(0.975)} & 1.72$\pm$0.09 {\scriptsize(0.962)} & 1.07$\pm$0.01 {\scriptsize(0.958)} & 1.00$\pm$0.01 {\scriptsize(0.954)}\\
- & SemiCP (best) & 7.46$\pm$0.43 {\scriptsize(0.961)} & 2.62$\pm$0.30 {\scriptsize(0.942)} & 1.46$\pm$0.20 {\scriptsize(0.941)} & 1.25$\pm$0.18 {\scriptsize(0.947)}\\
- & FRCP (ours) & \textbf{1.11$\pm$0.05 {\scriptsize(0.964)}} & \textbf{1.00$\pm$0.02 {\scriptsize(0.960)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.948)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.952)}}\\
+\multirow{4}{*}{CIFAR-10} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.68$\pm$0.37 {\scriptsize(0.978)} & 1.71$\pm$0.14 {\scriptsize(0.964)} & 1.33$\pm$0.09 {\scriptsize(0.972)}\\
+ & CV+ & 5.43$\pm$0.32 {\scriptsize(0.975)} & 1.72$\pm$0.09 {\scriptsize(0.962)} & 1.07$\pm$0.01 {\scriptsize(0.958)} & 1.01$\pm$0.01 {\scriptsize(0.957)}\\
+ & SemiCP (best) & 7.46$\pm$0.43 {\scriptsize(0.961)} & 2.62$\pm$0.30 {\scriptsize(0.942)} & 1.46$\pm$0.20 {\scriptsize(0.941)} & 1.03$\pm$0.01 {\scriptsize(0.949)}\\
+ & FRCP (ours) & \textbf{1.11$\pm$0.05 {\scriptsize(0.964)}} & \textbf{1.00$\pm$0.02 {\scriptsize(0.960)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.948)}} & \textbf{0.96$\pm$0.00 {\scriptsize(0.951)}}\\
 \midrule
-\multirow{4}{*}{CIFAR-100} & Split CP (best) & 96.71$\pm$0.10 {\scriptsize(0.969)} & 26.90$\pm$3.04 {\scriptsize(0.977)} & 3.40$\pm$0.11 {\scriptsize(0.961)} & 2.26$\pm$0.06 {\scriptsize(0.958)}\\
- & CV+ & 24.06$\pm$1.40 {\scriptsize(0.984)} & 3.97$\pm$0.10 {\scriptsize(0.962)} & 2.39$\pm$0.04 {\scriptsize(0.958)} & \textbf{1.87$\pm$0.02 {\scriptsize(0.955)}}\\
- & SemiCP (best) & 95.98$\pm$0.16 {\scriptsize(0.962)} & 21.66$\pm$3.19 {\scriptsize(0.969)} & 3.27$\pm$0.15 {\scriptsize(0.957)} & 2.25$\pm$0.08 {\scriptsize(0.956)}\\
- & FRCP (ours) & \textbf{5.15$\pm$0.34 {\scriptsize(0.969)}} & \textbf{2.28$\pm$0.06 {\scriptsize(0.952)}} & \textbf{2.00$\pm$0.03 {\scriptsize(0.951)}} & 1.91$\pm$0.02 {\scriptsize(0.950)}\\
+\multirow{4}{*}{CIFAR-100} & Split CP (best) & 96.71$\pm$0.10 {\scriptsize(0.969)} & 26.90$\pm$3.04 {\scriptsize(0.977)} & 3.40$\pm$0.11 {\scriptsize(0.961)} & 2.40$\pm$0.06 {\scriptsize(0.958)}\\
+ & CV+ & 24.06$\pm$1.40 {\scriptsize(0.984)} & 3.97$\pm$0.10 {\scriptsize(0.962)} & 2.39$\pm$0.04 {\scriptsize(0.958)} & 1.97$\pm$0.02 {\scriptsize(0.957)}\\
+ & SemiCP (best) & 95.98$\pm$0.16 {\scriptsize(0.962)} & 21.66$\pm$3.19 {\scriptsize(0.969)} & 3.27$\pm$0.15 {\scriptsize(0.957)} & 2.33$\pm$0.08 {\scriptsize(0.956)}\\
+ & FRCP (ours) & \textbf{5.15$\pm$0.34 {\scriptsize(0.969)}} & \textbf{2.28$\pm$0.06 {\scriptsize(0.952)}} & \textbf{2.00$\pm$0.03 {\scriptsize(0.951)}} & \textbf{1.94$\pm$0.03 {\scriptsize(0.951)}}\\
 \midrule
-\multirow{4}{*}{miniImageNet} & Split CP (best) & 96.88$\pm$0.12 {\scriptsize(0.969)} & 15.14$\pm$2.86 {\scriptsize(0.976)} & 1.44$\pm$0.05 {\scriptsize(0.958)} & 1.16$\pm$0.01 {\scriptsize(0.954)}\\
- & CV+ & 9.92$\pm$0.85 {\scriptsize(0.978)} & 1.45$\pm$0.02 {\scriptsize(0.958)} & 1.18$\pm$0.01 {\scriptsize(0.956)} & \textbf{1.10$\pm$0.00 {\scriptsize(0.954)}}\\
- & SemiCP (best) & 95.33$\pm$0.20 {\scriptsize(0.953)} & 6.11$\pm$1.08 {\scriptsize(0.961)} & 1.28$\pm$0.03 {\scriptsize(0.952)} & 1.15$\pm$0.01 {\scriptsize(0.953)}\\
- & FRCP (ours) & \textbf{1.90$\pm$0.12 {\scriptsize(0.970)}} & \textbf{1.22$\pm$0.02 {\scriptsize(0.956)}} & \textbf{1.14$\pm$0.01 {\scriptsize(0.954)}} & 1.12$\pm$0.01 {\scriptsize(0.951)}\\
-\midrule
-\multirow{4}{*}{EuroSAT} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.76$\pm$0.36 {\scriptsize(0.974)} & 3.15$\pm$0.22 {\scriptsize(0.964)} & 2.70$\pm$0.19 {\scriptsize(0.964)}\\
- & CV+ & 6.34$\pm$0.25 {\scriptsize(0.977)} & 3.44$\pm$0.15 {\scriptsize(0.956)} & \textbf{2.25$\pm$0.08 {\scriptsize(0.956)}} & \textbf{1.71$\pm$0.04 {\scriptsize(0.956)}}\\
- & SemiCP (best) & 8.21$\pm$0.33 {\scriptsize(0.969)} & 4.57$\pm$0.25 {\scriptsize(0.940)} & 2.56$\pm$0.23 {\scriptsize(0.936)} & 1.97$\pm$0.20 {\scriptsize(0.934)}\\
- & FRCP (ours) & \textbf{4.90$\pm$0.23 {\scriptsize(0.972)}} & \textbf{3.10$\pm$0.15 {\scriptsize(0.950)}} & 2.32$\pm$0.10 {\scriptsize(0.947)} & 1.97$\pm$0.04 {\scriptsize(0.950)}\\
+\multirow{4}{*}{EuroSAT} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.76$\pm$0.36 {\scriptsize(0.974)} & 3.15$\pm$0.22 {\scriptsize(0.964)} & 2.74$\pm$0.14 {\scriptsize(0.958)}\\
+ & CV+ & 6.34$\pm$0.25 {\scriptsize(0.977)} & 3.44$\pm$0.15 {\scriptsize(0.956)} & \textbf{2.25$\pm$0.08 {\scriptsize(0.956)}} & \textbf{1.90$\pm$0.05 {\scriptsize(0.959)}}\\
+ & SemiCP (best) & 8.21$\pm$0.33 {\scriptsize(0.969)} & 4.57$\pm$0.25 {\scriptsize(0.940)} & 2.56$\pm$0.23 {\scriptsize(0.936)} & 2.35$\pm$0.21 {\scriptsize(0.948)}\\
+ & FRCP (ours) & \textbf{4.90$\pm$0.23 {\scriptsize(0.972)}} & \textbf{3.10$\pm$0.15 {\scriptsize(0.950)}} & 2.32$\pm$0.10 {\scriptsize(0.947)} & 2.04$\pm$0.05 {\scriptsize(0.952)}\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -265,8 +263,10 @@ dataset & method & 2 shots & 4 shots & 8 shots & 14 shots\\
 \section{Refinement ablation tables}
 \label{app:ablation}
 
-Tables~\ref{tab:r1b-decomposition-cifar100}
-and~\ref{tab:r1b-decomposition-miniimagenet} give the numbers behind
+% miniImageNet companion table REMOVED 2026-09-06 (dataset dropped from
+% the comparison, user call); its content survives at
+% output/r1_headline/plots/table_r1b_miniimagenet.tex if it returns.
+Table~\ref{tab:r1b-decomposition-cifar100} gives the numbers behind
 Figure~\ref{fig:ablation}, for every stage and score combination.
 
 \begin{table}[h]
@@ -293,33 +293,6 @@ prototype-cosine & raw & 18.39$\pm$1.00 & 2.91$\pm$0.05 & 2.19$\pm$0.02\\
 geodesic top-$k$ & raw & 15.84$\pm$0.59 & 2.26$\pm$0.05 & 1.60$\pm$0.01\\
  & $+$T,W & 6.39$\pm$0.32 & 1.66$\pm$0.02 & 1.37$\pm$0.01\\
  & $+$T,W,D (full) & 5.75$\pm$0.41 & 1.51$\pm$0.02 & 1.35$\pm$0.01\\
-\bottomrule
-\end{tabular}
-\end{center}
-\end{table}
-
-\begin{table}[h]
-\caption{Stage decomposition on \emph{mini}ImageNet, conventions as in
-Table~\ref{tab:r1b-decomposition-cifar100}.}
-\label{tab:r1b-decomposition-miniimagenet}
-\begin{center}
-\small
-\begin{tabular}{llccc}
-\toprule
- & & \multicolumn{3}{c}{miniImageNet}\\
-NCM & transform & 2 & 6 & 14\\
-\midrule
-prototype-softmax & raw & 2.57$\pm$0.17 & 1.04$\pm$0.00 & 0.99$\pm$0.00\\
- & $+$T,W & 1.38$\pm$0.04 & 1.01$\pm$0.00 & 0.99$\pm$0.00\\
- & $+$T,W,D (full) & \textbf{1.23$\pm$0.02} & \textbf{0.99$\pm$0.00} & 0.97$\pm$0.00\\
-\addlinespace
-prototype-cosine & raw & 5.85$\pm$0.59 & 1.15$\pm$0.01 & 1.08$\pm$0.00\\
- & $+$T,W & 1.72$\pm$0.07 & 1.07$\pm$0.01 & 1.04$\pm$0.00\\
- & $+$T,W,D (full) & 1.37$\pm$0.03 & 1.02$\pm$0.00 & 0.99$\pm$0.00\\
-\addlinespace
-geodesic top-$k$ & raw & 4.68$\pm$0.28 & 1.04$\pm$0.00 & 0.97$\pm$0.00\\
- & $+$T,W & 1.76$\pm$0.12 & 1.00$\pm$0.00 & \textbf{0.95$\pm$0.00}\\
- & $+$T,W,D (full) & 1.39$\pm$0.08 & \textbf{0.99$\pm$0.00} & \textbf{0.95$\pm$0.00}\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -473,19 +446,33 @@ finite-sample floor full CP escapes.
 % moved to figs/_superseded/; the a005 companion is now the
 % generator-emitted figs/table_headline_clipb_a005.tex (ours-last row
 % order, label tab:headline-clipb-a005).
+% REWORKED 2026-09-06 (sec5 reorg): the CLIP comparison left the main
+% text (user call) and the encoder is UPGRADED to CLIP ViT-L, which
+% STRENGTHENS the claim (7/9 + 8/9 cells vs 6/9 + 6/9 on ViT-B, FRCP
+% sets ~halve on cifar100). Tables from
+% output/backbone_headline/clip-large/results_*.json via
+% make_headline_tables.py; the ViT-B tables remain generator-emitted
+% (table_headline_clipb_*.tex) if a reviewer asks. CLIP grid currently
+% {2,4,8}: the s=12 cells have not been run for this encoder.
 \section{Backbone transfer}
 \label{app:backbones}
 
-The full CLIP ViT-B comparison at $\alpha = 0.1$ is
-Table~\ref{tab:headline-clipb} in the main text.
-Table~\ref{tab:headline-clipb-a005} is its companion at the tighter
-miscoverage level, with the layout and conventions of
-Table~\ref{tab:headline-main}. The pipeline and per-dataset
-configuration of Appendix~\ref{app:config} carry over unchanged. Only
-the pool statistics are refitted, and the softmax temperature is
-re-piloted for the encoder.
+Tables~\ref{tab:headline-clipl} and~\ref{tab:headline-clipl-a005}
+repeat the comparison of Table~\ref{tab:headline-main} on CLIP
+ViT-L~\citep{radford2021clip} embeddings of dimension $d = 1024$, at
+both miscoverage levels and on the budget grid $s \in \{2, 4, 8\}$ run
+for this encoder. The pipeline and per-dataset configuration of
+Appendix~\ref{app:config} carry over unchanged. Only the pool
+statistics are refitted, and the softmax temperature is re-piloted for
+the encoder. FRCP is smallest in 7 of 9 cells at $\alpha = 0.1$ and 8
+of 9 at $\alpha = 0.05$, and the EuroSAT crossover of the main table
+is again the only exception. The advantage also widens with encoder
+quality: on the smaller CLIP ViT-B the corresponding counts are 6 of 9
+at both levels, and the FRCP sets themselves roughly halve on
+CIFAR-100 in the move to ViT-L, 21.1 to 11.7 at two shots.
 
-\input{figs/table_headline_clipb_a005.tex}
+\input{figs/table_headline_clipl_a01.tex}
+\input{figs/table_headline_clipl_a005.tex}
 
 % ===================================================================
 % Gap B2 (Section 5.4) score- vs representation-level smoothing. ADDED
@@ -575,3 +562,46 @@ $n$ inner products serve all $K$ candidates and the sweep is scalar
 arithmetic, $O(n)$ per candidate. With $n = sK$ and $s \ge 2$ in every
 reported run, the per-test-point total $O(nd' + Kd' + nK)$ collapses to
 $O(n(d' + K))$.
+
+% ===================================================================
+% ADDED 2026-09-06 (sec5 reorg): the score-distribution figure moved
+% here from the main text (user call) and was REGENERATED on the
+% deployed prototype-softmax score with a logit-scaled axis
+% (src/plot_refine_score_hist.py --score softmax --xscale logit,
+% shots 4, seed 42, single balanced split; stats in
+% output/headline/plots/refine_score_hist_stats_softmax.json). The old
+% cosine member (fig_refine_score_hist.pdf) is superseded: it did not
+% show the deployed score. Appended LAST so the hard-coded A-F letters
+% of the earlier sections do not move.
+% ===================================================================
+\section{Refinement and the score distribution}
+\label{app:scorehist}
+
+Figure~\ref{fig:score-hist} shows what the frozen refinement does to
+the distribution of the deployed prototype-softmax score. Because the
+piloted temperatures are sharp, the score saturates near 0 and 1, so
+the axis is logit-scaled and both saturated ends are resolved. Before
+refinement the false-class mass leans on the calibration quantile from
+above and spills across it. After refinement the true-class mass
+concentrates well below the quantile and the false-class mass
+separates cleanly above it on CIFAR-10 and CIFAR-100, which is why the
+same coverage is bought with fewer false labels in the set. On EuroSAT
+the two masses stay entangled and the gain is correspondingly small,
+consistent with its position in Table~\ref{tab:headline-main}.
+
+\begin{figure}[h]
+\begin{center}
+\includegraphics[width=\linewidth]{fig_refine_score_hist_softmax.pdf}
+\end{center}
+\caption{Refinement and the score distribution. True-class (green) and
+false-class (red) mass of the deployed prototype-softmax score
+$s = 1 - p_T(c \,|\, z)$ over the test set, before (top) and after
+(bottom) the frozen refinement T$\to$W$\to$S, with the calibration
+quantile $\hat q_{1-\alpha}$ dashed, at four labels per class and
+$\alpha = 0.1$ on a single balanced split (DINOv2 ViT-B, per-panel
+pilot temperature annotated). The score axis is logit-scaled to
+resolve both saturated ends, and bar heights are per-class probability
+mass per bin. Annotations give coverage, mean set size, and leak, the
+mean number of false labels inside the set.}
+\label{fig:score-hist}
+\end{figure}

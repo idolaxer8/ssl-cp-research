@@ -1,37 +1,26 @@
-\begin{table}[h]
-\caption{Table~\ref{tab:headline-main}, DINOv2 ViT-B half, with
-standard errors: mean prediction-set size ($\pm$ SE) with marginal
-coverage in parentheses at $\alpha = 0.1$ over 50 trials. Split CP and
-SemiCP take their best score and train fraction in each cell. Bold
-marks the smallest set per dataset and budget.}
-\label{tab:headline-dinov2-a01}
-\begin{center}
+\begin{table}[t]
+\centering
 \small
-\setlength{\tabcolsep}{4pt}
+\caption{Headline comparison on DINOv2 ViT-B embeddings: mean prediction-set size ($\pm$ SE, 50 trials, balanced split) with marginal coverage in parentheses. Split CP and SemiCP are shown at their best score (THR/APS/RAPS) and train fraction per cell (strongest-baseline convention). FRCP = the frozen pool-fitted refinement with exact full CP. Bold: smallest set per dataset and budget. Target miscoverage $\alpha=0.1$.}
+\label{tab:headline-main}
 \begin{tabular}{llcccc}
 \toprule
-dataset & method & 2 shots & 4 shots & 8 shots & 14 shots\\
+dataset & method & 2 shots & 4 shots & 8 shots & 12 shots\\
 \midrule
-\multirow{4}{*}{CIFAR-10} & Split CP (best) & 9.81$\pm$0.04 {\scriptsize(0.988)} & 2.61$\pm$0.25 {\scriptsize(0.944)} & 1.06$\pm$0.04 {\scriptsize(0.921)} & 0.98$\pm$0.01 {\scriptsize(0.928)}\\
- & CV+ & 3.59$\pm$0.27 {\scriptsize(0.951)} & 1.17$\pm$0.04 {\scriptsize(0.922)} & 0.95$\pm$0.01 {\scriptsize(0.914)} & 0.92$\pm$0.01 {\scriptsize(0.910)}\\
- & SemiCP (best) & 6.36$\pm$0.46 {\scriptsize(0.930)} & 1.61$\pm$0.16 {\scriptsize(0.892)} & 1.01$\pm$0.04 {\scriptsize(0.897)} & 0.96$\pm$0.04 {\scriptsize(0.903)}\\
- & FRCP (ours) & \textbf{0.99$\pm$0.01 {\scriptsize(0.945)}} & \textbf{0.93$\pm$0.01 {\scriptsize(0.921)}} & \textbf{0.92$\pm$0.01 {\scriptsize(0.910)}} & \textbf{0.91$\pm$0.01 {\scriptsize(0.902)}}\\
+\multirow{4}{*}{CIFAR-10} & Split CP (best) & 9.81$\pm$0.04 {\scriptsize(0.988)} & 2.61$\pm$0.25 {\scriptsize(0.944)} & 1.06$\pm$0.04 {\scriptsize(0.921)} & 0.96$\pm$0.01 {\scriptsize(0.916)}\\
+ & CV+ & 3.59$\pm$0.27 {\scriptsize(0.951)} & 1.17$\pm$0.04 {\scriptsize(0.922)} & 0.95$\pm$0.01 {\scriptsize(0.914)} & 0.93$\pm$0.01 {\scriptsize(0.916)}\\
+ & SemiCP (best) & 6.36$\pm$0.46 {\scriptsize(0.930)} & 1.61$\pm$0.16 {\scriptsize(0.892)} & 1.01$\pm$0.04 {\scriptsize(0.897)} & 0.93$\pm$0.01 {\scriptsize(0.904)}\\
+ & FRCP (ours) & \textbf{0.99$\pm$0.01 {\scriptsize(0.945)}} & \textbf{0.93$\pm$0.01 {\scriptsize(0.921)}} & \textbf{0.92$\pm$0.01 {\scriptsize(0.910)}} & \textbf{0.91$\pm$0.01 {\scriptsize(0.908)}}\\
 \midrule
-\multirow{4}{*}{CIFAR-100} & Split CP (best) & 92.92$\pm$0.15 {\scriptsize(0.931)} & 8.76$\pm$1.09 {\scriptsize(0.945)} & 1.93$\pm$0.05 {\scriptsize(0.918)} & 1.41$\pm$0.02 {\scriptsize(0.914)}\\
- & CV+ & 8.34$\pm$0.50 {\scriptsize(0.952)} & 2.09$\pm$0.03 {\scriptsize(0.914)} & 1.49$\pm$0.02 {\scriptsize(0.911)} & 1.27$\pm$0.01 {\scriptsize(0.909)}\\
- & SemiCP (best) & 91.94$\pm$0.23 {\scriptsize(0.920)} & 5.83$\pm$0.76 {\scriptsize(0.927)} & 1.78$\pm$0.04 {\scriptsize(0.909)} & 1.38$\pm$0.02 {\scriptsize(0.909)}\\
- & FRCP (ours) & \textbf{2.43$\pm$0.09 {\scriptsize(0.939)}} & \textbf{1.41$\pm$0.02 {\scriptsize(0.908)}} & \textbf{1.26$\pm$0.01 {\scriptsize(0.901)}} & \textbf{1.22$\pm$0.01 {\scriptsize(0.900)}}\\
+\multirow{4}{*}{CIFAR-100} & Split CP (best) & 92.92$\pm$0.15 {\scriptsize(0.931)} & 8.76$\pm$1.09 {\scriptsize(0.945)} & 1.93$\pm$0.05 {\scriptsize(0.918)} & 1.49$\pm$0.02 {\scriptsize(0.913)}\\
+ & CV+ & 8.34$\pm$0.50 {\scriptsize(0.952)} & 2.09$\pm$0.03 {\scriptsize(0.914)} & 1.49$\pm$0.02 {\scriptsize(0.911)} & 1.32$\pm$0.01 {\scriptsize(0.910)}\\
+ & SemiCP (best) & 91.94$\pm$0.23 {\scriptsize(0.920)} & 5.83$\pm$0.76 {\scriptsize(0.927)} & 1.78$\pm$0.04 {\scriptsize(0.909)} & 1.44$\pm$0.02 {\scriptsize(0.909)}\\
+ & FRCP (ours) & \textbf{2.43$\pm$0.09 {\scriptsize(0.939)}} & \textbf{1.41$\pm$0.02 {\scriptsize(0.908)}} & \textbf{1.26$\pm$0.01 {\scriptsize(0.901)}} & \textbf{1.22$\pm$0.01 {\scriptsize(0.899)}}\\
 \midrule
-\multirow{4}{*}{miniImageNet} & Split CP (best) & 92.59$\pm$0.17 {\scriptsize(0.925)} & 2.72$\pm$0.44 {\scriptsize(0.941)} & 1.04$\pm$0.01 {\scriptsize(0.914)} & 0.97$\pm$0.01 {\scriptsize(0.905)}\\
- & CV+ & 2.27$\pm$0.14 {\scriptsize(0.943)} & 1.07$\pm$0.01 {\scriptsize(0.913)} & 0.99$\pm$0.00 {\scriptsize(0.911)} & \textbf{0.96$\pm$0.00 {\scriptsize(0.905)}}\\
- & SemiCP (best) & 76.16$\pm$3.60 {\scriptsize(0.945)} & 1.42$\pm$0.06 {\scriptsize(0.914)} & 1.00$\pm$0.00 {\scriptsize(0.902)} & 0.97$\pm$0.00 {\scriptsize(0.905)}\\
- & FRCP (ours) & \textbf{1.23$\pm$0.02 {\scriptsize(0.943)}} & \textbf{1.01$\pm$0.00 {\scriptsize(0.913)}} & \textbf{0.98$\pm$0.00 {\scriptsize(0.906)}} & 0.97$\pm$0.00 {\scriptsize(0.901)}\\
-\midrule
-\multirow{4}{*}{EuroSAT} & Split CP (best) & 9.75$\pm$0.06 {\scriptsize(0.980)} & 3.97$\pm$0.27 {\scriptsize(0.944)} & 2.04$\pm$0.13 {\scriptsize(0.915)} & 1.55$\pm$0.05 {\scriptsize(0.928)}\\
- & CV+ & 4.76$\pm$0.23 {\scriptsize(0.948)} & 2.19$\pm$0.08 {\scriptsize(0.902)} & 1.52$\pm$0.03 {\scriptsize(0.916)} & \textbf{1.25$\pm$0.02 {\scriptsize(0.915)}}\\
- & SemiCP (best) & 7.47$\pm$0.38 {\scriptsize(0.946)} & 3.80$\pm$0.20 {\scriptsize(0.908)} & 1.65$\pm$0.10 {\scriptsize(0.884)} & 1.30$\pm$0.06 {\scriptsize(0.888)}\\
- & FRCP (ours) & \textbf{3.59$\pm$0.17 {\scriptsize(0.941)}} & \textbf{2.06$\pm$0.08 {\scriptsize(0.916)}} & \textbf{1.51$\pm$0.04 {\scriptsize(0.901)}} & 1.41$\pm$0.02 {\scriptsize(0.903)}\\
+\multirow{4}{*}{EuroSAT} & Split CP (best) & 9.75$\pm$0.06 {\scriptsize(0.980)} & 3.97$\pm$0.27 {\scriptsize(0.944)} & 2.04$\pm$0.13 {\scriptsize(0.915)} & 1.58$\pm$0.07 {\scriptsize(0.918)}\\
+ & CV+ & 4.76$\pm$0.23 {\scriptsize(0.948)} & 2.19$\pm$0.08 {\scriptsize(0.902)} & 1.52$\pm$0.03 {\scriptsize(0.916)} & \textbf{1.31$\pm$0.02 {\scriptsize(0.913)}}\\
+ & SemiCP (best) & 7.47$\pm$0.38 {\scriptsize(0.946)} & 3.80$\pm$0.20 {\scriptsize(0.908)} & 1.65$\pm$0.10 {\scriptsize(0.884)} & 1.44$\pm$0.06 {\scriptsize(0.903)}\\
+ & FRCP (ours) & \textbf{3.59$\pm$0.17 {\scriptsize(0.941)}} & \textbf{2.06$\pm$0.08 {\scriptsize(0.916)}} & \textbf{1.51$\pm$0.04 {\scriptsize(0.901)}} & 1.44$\pm$0.03 {\scriptsize(0.907)}\\
 \bottomrule
 \end{tabular}
-\end{center}
 \end{table}
