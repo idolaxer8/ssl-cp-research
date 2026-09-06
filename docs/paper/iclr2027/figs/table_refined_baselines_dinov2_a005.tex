@@ -1,0 +1,44 @@
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\caption{Fair-representation control on DINOv2 ViT-B embeddings: mean prediction-set size ($\pm$ SE, 50 trials, balanced split) with marginal coverage in parentheses, when the split-CP baselines are handed the same pool-fitted refinement FRCP uses. Baselines are shown at their best score and train fraction per cell. Bold marks the smallest set per dataset and budget. Target miscoverage $\alpha=0.05$.}
+\label{tab:refined-baselines-dinov2-a005}
+\begin{tabular}{llcccc}
+\toprule
+dataset & method & 2 shots & 4 shots & 8 shots & 14 shots\\
+\midrule
+\multirow{7}{*}{CIFAR-10} & Split CP (raw) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.68$\pm$0.37 {\scriptsize(0.978)} & 1.71$\pm$0.14 {\scriptsize(0.964)} & 1.36$\pm$0.12 {\scriptsize(0.974)}\\
+ & Split CP (refined) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 7.64$\pm$0.30 {\scriptsize(0.982)} & 2.00$\pm$0.22 {\scriptsize(0.961)} & 1.49$\pm$0.18 {\scriptsize(0.965)}\\
+ & CV+ (raw) & 5.43$\pm$0.32 {\scriptsize(0.975)} & 1.72$\pm$0.09 {\scriptsize(0.962)} & 1.07$\pm$0.01 {\scriptsize(0.958)} & 1.00$\pm$0.01 {\scriptsize(0.954)}\\
+ & CV+ (refined) & 7.59$\pm$0.30 {\scriptsize(0.971)} & 3.15$\pm$0.20 {\scriptsize(0.975)} & 1.18$\pm$0.04 {\scriptsize(0.957)} & 1.01$\pm$0.01 {\scriptsize(0.968)}\\
+ & SemiCP (raw) & 7.46$\pm$0.43 {\scriptsize(0.961)} & 2.62$\pm$0.30 {\scriptsize(0.942)} & 1.46$\pm$0.20 {\scriptsize(0.941)} & 1.25$\pm$0.18 {\scriptsize(0.947)}\\
+ & SemiCP (refined) & 8.17$\pm$0.39 {\scriptsize(0.961)} & 3.98$\pm$0.43 {\scriptsize(0.936)} & 1.54$\pm$0.19 {\scriptsize(0.950)} & 1.20$\pm$0.10 {\scriptsize(0.965)}\\
+ & FRCP (ours) & \textbf{1.11$\pm$0.05 {\scriptsize(0.964)}} & \textbf{1.00$\pm$0.02 {\scriptsize(0.960)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.948)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.952)}}\\
+\midrule
+\multirow{7}{*}{CIFAR-100} & Split CP (raw) & 96.71$\pm$0.10 {\scriptsize(0.969)} & 26.90$\pm$3.04 {\scriptsize(0.977)} & 3.40$\pm$0.11 {\scriptsize(0.961)} & 2.26$\pm$0.06 {\scriptsize(0.958)}\\
+ & Split CP (refined) & 96.92$\pm$0.10 {\scriptsize(0.969)} & 20.83$\pm$3.42 {\scriptsize(0.968)} & 3.14$\pm$0.18 {\scriptsize(0.958)} & 2.43$\pm$0.09 {\scriptsize(0.956)}\\
+ & CV+ (raw) & 24.06$\pm$1.40 {\scriptsize(0.984)} & 3.97$\pm$0.10 {\scriptsize(0.962)} & 2.39$\pm$0.04 {\scriptsize(0.958)} & \textbf{1.87$\pm$0.02 {\scriptsize(0.955)}}\\
+ & CV+ (refined) & 15.15$\pm$1.24 {\scriptsize(0.974)} & 2.82$\pm$0.11 {\scriptsize(0.952)} & 2.26$\pm$0.06 {\scriptsize(0.952)} & 1.94$\pm$0.03 {\scriptsize(0.952)}\\
+ & SemiCP (raw) & 95.98$\pm$0.16 {\scriptsize(0.962)} & 21.66$\pm$3.19 {\scriptsize(0.969)} & 3.27$\pm$0.15 {\scriptsize(0.957)} & 2.25$\pm$0.08 {\scriptsize(0.956)}\\
+ & SemiCP (refined) & 95.89$\pm$0.17 {\scriptsize(0.959)} & 14.30$\pm$2.52 {\scriptsize(0.958)} & 3.16$\pm$0.31 {\scriptsize(0.956)} & 2.57$\pm$0.10 {\scriptsize(0.958)}\\
+ & FRCP (ours) & \textbf{5.15$\pm$0.34 {\scriptsize(0.969)}} & \textbf{2.28$\pm$0.06 {\scriptsize(0.952)}} & \textbf{2.00$\pm$0.03 {\scriptsize(0.951)}} & 1.91$\pm$0.02 {\scriptsize(0.950)}\\
+\midrule
+\multirow{7}{*}{miniImageNet} & Split CP (raw) & 96.88$\pm$0.12 {\scriptsize(0.969)} & 15.14$\pm$2.86 {\scriptsize(0.976)} & 1.44$\pm$0.05 {\scriptsize(0.958)} & 1.16$\pm$0.01 {\scriptsize(0.954)}\\
+ & Split CP (refined) & 96.72$\pm$0.11 {\scriptsize(0.967)} & 16.12$\pm$3.83 {\scriptsize(0.970)} & 1.20$\pm$0.03 {\scriptsize(0.954)} & 1.09$\pm$0.01 {\scriptsize(0.952)}\\
+ & CV+ (raw) & 9.92$\pm$0.85 {\scriptsize(0.978)} & 1.45$\pm$0.02 {\scriptsize(0.958)} & 1.18$\pm$0.01 {\scriptsize(0.956)} & 1.10$\pm$0.00 {\scriptsize(0.954)}\\
+ & CV+ (refined) & 6.02$\pm$0.79 {\scriptsize(0.971)} & 1.24$\pm$0.03 {\scriptsize(0.956)} & \textbf{1.10$\pm$0.01 {\scriptsize(0.954)}} & \textbf{1.06$\pm$0.00 {\scriptsize(0.952)}}\\
+ & SemiCP (raw) & 95.33$\pm$0.20 {\scriptsize(0.953)} & 6.11$\pm$1.08 {\scriptsize(0.961)} & 1.28$\pm$0.03 {\scriptsize(0.952)} & 1.15$\pm$0.01 {\scriptsize(0.953)}\\
+ & SemiCP (refined) & 94.79$\pm$1.75 {\scriptsize(0.971)} & 4.24$\pm$1.21 {\scriptsize(0.955)} & 1.20$\pm$0.02 {\scriptsize(0.955)} & 1.18$\pm$0.03 {\scriptsize(0.960)}\\
+ & FRCP (ours) & \textbf{1.90$\pm$0.12 {\scriptsize(0.970)}} & \textbf{1.22$\pm$0.02 {\scriptsize(0.956)}} & 1.14$\pm$0.01 {\scriptsize(0.954)} & 1.12$\pm$0.01 {\scriptsize(0.951)}\\
+\midrule
+\multirow{7}{*}{EuroSAT} & Split CP (raw) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.76$\pm$0.36 {\scriptsize(0.974)} & 3.15$\pm$0.22 {\scriptsize(0.964)} & 2.70$\pm$0.19 {\scriptsize(0.964)}\\
+ & Split CP (refined) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 8.54$\pm$0.19 {\scriptsize(0.977)} & 5.25$\pm$0.30 {\scriptsize(0.957)} & 4.67$\pm$0.24 {\scriptsize(0.962)}\\
+ & CV+ (raw) & 6.34$\pm$0.25 {\scriptsize(0.977)} & 3.44$\pm$0.15 {\scriptsize(0.956)} & \textbf{2.25$\pm$0.08 {\scriptsize(0.956)}} & \textbf{1.71$\pm$0.04 {\scriptsize(0.956)}}\\
+ & CV+ (refined) & 9.05$\pm$0.16 {\scriptsize(0.986)} & 5.94$\pm$0.23 {\scriptsize(0.958)} & 3.77$\pm$0.16 {\scriptsize(0.958)} & 2.72$\pm$0.10 {\scriptsize(0.962)}\\
+ & SemiCP (raw) & 8.21$\pm$0.33 {\scriptsize(0.969)} & 4.57$\pm$0.25 {\scriptsize(0.940)} & 2.56$\pm$0.23 {\scriptsize(0.936)} & 1.97$\pm$0.20 {\scriptsize(0.934)}\\
+ & SemiCP (refined) & 8.74$\pm$0.35 {\scriptsize(0.953)} & 6.47$\pm$0.41 {\scriptsize(0.932)} & 5.10$\pm$0.40 {\scriptsize(0.949)} & 3.63$\pm$0.31 {\scriptsize(0.951)}\\
+ & FRCP (ours) & \textbf{4.90$\pm$0.23 {\scriptsize(0.972)}} & \textbf{3.10$\pm$0.15 {\scriptsize(0.950)}} & 2.32$\pm$0.10 {\scriptsize(0.947)} & 1.97$\pm$0.04 {\scriptsize(0.950)}\\
+\bottomrule
+\end{tabular}
+\end{table}

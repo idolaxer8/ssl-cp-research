@@ -1,0 +1,647 @@
+% ALIGNED 2026-09-03 (2nd) to the Overleaf ido_paper.tex Ido pasted in
+% chat (gold). Ido applied the 09-03 paste blocks with his own edits:
+%   - 4.1 opener: the two-stage roadmap paragraph ("FRCP consists of
+%     two stages ... Algorithm~\ref{alg:frcp}") is GONE; the
+%     configuration sentence ("Which stages are active ... before any
+%     labeled data are seen") moved up into the opening paragraph.
+%   - Truncation: paste_method41_open wording ("Its purpose is not
+%     compression. The pool measures its low-variance directions
+%     poorly ...").
+%   - Whitening: paste_method41_whitening wording, eq:sigmaw is now a
+%     numbered display, "which is invertible: distances are read in
+%     units of within-class spread" added.
+%   - Smoothing: neighbourhood sentence reworded; the Lemma pointer
+%     and the "Section~5 lists the settings" pointer are gone.
+%   - 4.2: "Two updates are at work, each touching one class" replaces
+%     the leave-one-out-symmetry sentence; the "Unlike split
+%     conformal prediction, no labeled example is reserved" sentence
+%     is gone; cost paragraphs are paste_method42_cost with the
+%     Appendix~\ref{app:cost} pointer (option from
+%     paste_method42_cost_ref). CARRIED AS PASTED: the denominator
+%     update reads $exp_{\mathrm{old}}$ / $exp_{\mathrm{new}}$ (italic
+%     "exp"); the mirror had $e_{\mathrm{old}}$. Suggest \exp or e^{}.
+%   - Algorithm 1: paste_method41_algo (whitening line normalises,
+%     eq:sigmaw referenced).
+%   - 4.3: the "Two results back the construction" and "Four
+%     quantities control the outcome" lead-ins are gone; closing
+%     paragraph is paste_method43_lemma (h descriptive, never
+%     computed at run time; the false "enlarge the certified set"
+%     claim is out).
+% Overleaf keeps hard-coded "Appendix~A" (x2) and "Section~5" here;
+% the mirror carries them as pasted.
+% v-note 2026-08-31: sec:levels folded into 5.3; the h_w pointer in 4.3
+% retargeted to sec:ablation. NOT yet on Overleaf.
+% Sections 3 (Background) + 4 (Method) -- MIRROR OF OVERLEAF
+% EDIT 2026-08-31 (Section 5.4 closure, M5): the 4.3 sentence that said the
+%   score-diffusion assumption "becomes a measured impurity budget here" -- a
+%   quantity the paper did not measure -- now names the measured neighborhood
+%   homophily h_w and points to Section~\ref{sec:levels} /
+%   Table~\ref{tab:h-cert} (Gap B1, output/dwt_theory/h_cert_roster.json), and
+%   the "whitening enlarges the certified set" clause now points to the same
+%   table's certified-fraction column. No other change to Sections 3-4.
+% ido_paper.tex, aligned 2026-08-25. Overleaf is source of truth.
+% v6: post-verification fixes applied (S score caps, v/u/g notation,
+%   sufficient-condition wording, Remark de-refrained) + user Overleaf
+%   edits absorbed (goal sentence "We wish to minimize...", 4.3 Remark
+%   CUT by user, preserved as comment below).
+% OVERLEAF PREAMBLE: add  \usepackage{algorithm}\usepackage{algpseudocode}
+% Numbering: Background=3, Method=4 (4.1 refine, 4.2 fcp, 4.3 theory), Experiments=5.
+% PREAMBLE also needs: \usepackage{amsthm} +
+%   \newtheorem{proposition}{Proposition} \newtheorem{lemma}{Lemma}
+% No PR / participation-ratio mention (user decision 08-23).
+% v8 (2026-08-26): eq:coverage MOVED to related.tex (user call -- the
+%   guarantee display now lives where §2 states it; §3 references
+%   \eqref{eq:coverage} instead). All other \eqref{eq:coverage} uses in
+%   this file unchanged and still resolve. NOT yet applied on Overleaf.
+% v9 (2026-08-26, Background polish pass, user notes):
+%   - regime paragraph ("The regime of interest...") CUT -- redundant
+%     with the training-split block; s = n/K now defined inside that
+%     block, and the pool's m >> n / cheap-to-grow point merged into the
+%     two-resources paragraph (rule 11 resolved along the way);
+%   - bridge added at the end of the training-split block ("At small s
+%     no allocation escapes the bind") so full CP enters as the remedy;
+%   - K-multiplication duplication removed from the design-goal
+%     paragraph (kept once, in the full-CP block);
+%   - user P1 edits absorbed (already matched the mirror).
+% v7 (2026-08-25): NAMING -- third stage renamed "denoising" ->
+%   "smoothing" (user decision): prose, \textbf{Smoothing.}, lemma title
+%   "When smoothing helps", notation T_den -> T_smo. Internal labels
+%   (lem:denoise, eq:qe) kept. SUPERSEDED by v18 for the lemma label.
+% v18 (2026-08-26): label lem:denoise -> lem:smooth (user call), the
+%   last live "denoise" string in the paper. eq:qe keeps its name (qe =
+%   query expansion, the operator, not the stage). The remaining
+%   "denois" hits in this file are provenance comments and the real
+%   filename docs/dwt_denoise_theorem.md -- both left alone.
+%   NOT yet applied on Overleaf.
+
+% v16 (2026-08-26, Section 4.3 + Algorithm 1 sweep):
+%   - LEMMA READING, set-size clause CUT (user call). "the points one
+%     expects to inflate prediction sets" asserted the norm -> set-size
+%     inference that dwt_denoise_theorem.md sec 4 explicitly rejects:
+%     "representation error in the norm sense is simply not the quantity
+%     CP set size feels ... the damage lives in specific directions".
+%     Replaced with the scope of the claim: representation-level, not
+%     set-size; condition sufficient, not necessary; where it fails the
+%     bound is silent and smoothing can carry a point AWAY from its
+%     class (empirically true -- qe harms at h ~ 0.26 on aircraft at
+%     every tested setting). NO configuration/gate language, per user:
+%     a gate is not necessarily being introduced.
+%   - "provably repairs" -> "improves" (tone rule, overclaiming verbs).
+%   - v17 (user rewrite, 08-26): the compressed one-line reading
+%     ("improves every point that is more displaced than its
+%     neighborhood is noisy and impure") REPLACED by the user's literal,
+%     theory-facing version. It walks the sufficient condition term by
+%     term -- displacement eps must exceed the average neighborhood
+%     displacement plus a penalty proportional to the foreign-weight
+%     fraction -- then states the two-sided consequence, then the scope.
+%     Rationale: the compressed form packed four quantities into an
+%     intuition that was harder to parse than the lemma itself.
+%     "Its reading is direct." dropped (throat-clearing). The
+%     determinism sentence moved from the paragraph opener into the
+%     scope paragraph so it is not stated twice; the opener is now just
+%     the proof pointer. Paragraph split before "The result is
+%     therefore".
+%   - v19 (user call): the negative-scope note COMPRESSED. It had
+%     grown to ~75 words across a paragraph break and said the same
+%     thing three ways -- "sufficient, not necessary", "when it does
+%     not hold the lemma makes no claim", and "a sufficiently impure
+%     neighborhood may move v farther" are one fact, and the
+%     representation-vs-set-size point sat in a third place. Now two
+%     sentences, ~30 words, both at the end of the lemma paragraph:
+%     the sufficiency-plus-possible-harm point, then the level of the
+%     claim. Determinism moved back into the opening sentence pair,
+%     where it does not compete with the scope note. The old second
+%     paragraph opener is gone, so the paragraph now starts on the
+%     score-diffusion analogue.
+%     Two precision options NOT applied, user's text kept verbatim:
+%     "average neighborhood displacement" is strictly a WEIGHTED average
+%     (weights w_u/W are what the lemma tracks), and the penalty's
+%     constant of proportionality Delta(v) is left unnamed.
+%   - ALGORITHM 1, temperature T added to \Require. It was missing once
+%     eq:score gained T in v12 -- a regression from that fix.
+%   - v21 (user call): the whitening line's nested prose ("Ledoit--Wolf
+%     shrinkage of the within-group covariance of {t_j}, pooled over C
+%     k-means groups") REPLACED by math. Split into two lines: the
+%     pooled within-group scatter Sigma_w (named, still prose -- its
+%     double sum is long and 4.1 displays it), then the shrinkage
+%     itself in closed form, with lambda named the Ledoit--Wolf
+%     coefficient exactly as 4.1 phrases it. The shrinkage was the part
+%     the prose was hiding; the pooling is self-explanatory once named.
+%     Costs one numbered line, 11 -> 12.
+%   - v20 (user call): ALGORITHM 1 DECLUTTERED. v16 had 8 \Comment
+%     annotations, several restating the complexity analysis that 4.2
+%     already gives in prose -- the pseudocode was carrying the cost
+%     argument twice. Now 5 short comments and none inside the loop:
+%     three one-word stage names in Stage 1 (they map the lines to
+%     4.1's bold paragraphs) and two amortization markers in Stage 2
+%     ("once per labeled sample", "once per test point"), which is what
+%     makes the O(n(d' + K)) claim legible without restating it. The
+%     O(.) figures themselves now live only in 4.2.
+%     Also tightened: 13 numbered lines -> 11. The k-means step folded
+%     into the whitening line, the standalone \widehat\Sigma_U symbol
+%     dropped in favour of cov(U) inline (it was never reused), and the
+%     eq:qe neighbor-set note moved from a \Comment into the line text.
+%   - ALGORITHM 1, Stage 2 rewritten to show the structure the cost
+%     analysis rests on. The old loop read as augment -> recompute
+%     prototypes -> recompute all scores, i.e. the naive procedure,
+%     while 4.2 claims O(n(d' + K)) per test point. Now explicit: the
+%     cal logit matrix F once at O(nKd'); the shared test-to-cal
+%     products g once per test point at O(nd'); then per candidate a
+%     column rebuild, a denominator swap and a comparison count, each
+%     O(n). Matches _predict_prototype_softmax_gpu (~L2430-2520).
+%
+%   NOT changed, flagged for your call: 4.3 still says the impurity
+%   budget is "measured", but no h is reported anywhere in the paper.
+%   Either report it (the chain-free table has D1 cert rate .027 ->
+%   .150 on aircraft under whitening, x5.5) or drop the word.
+% NOT yet applied on Overleaf.
+
+% v12 (2026-08-26, SECTION 4.2 polish pass):
+%   - eq:score CORRECTED: the softmax temperature T was MISSING. Code
+%     is s_i = 1 - softmax_c(f_c / T)[y_i] with f_c = cos(z_i, mu_c),
+%     logit='cosine' (conformal_prediction.py PrototypeSoftmaxNCM,
+%     ~L1472). Without T the equation is not the deployed score, and
+%     with cosine logits in [-1,1] an untempered softmax is nearly flat
+%     -- so the omission also made the score look naive. Added T to the
+%     display + two sentences on why it is needed and that validity is
+%     T-independent (code: "validity is T-independent, T is an
+%     efficiency knob").
+%   - EMPTY-CLASS CONVENTION: added in v12, CUT again in v14 (user
+%     call, correct). The reported protocol is balanced with s >= 2, so
+%     leave-one-out always leaves at least one point in the class and
+%     the branch is unreachable in every reported run. My v12 claim
+%     that it "fires constantly at s = 1-2" was wrong for s = 2. The
+%     convention is preserved as a comment at the cut site.
+%   - KEPT from that edit: "Removing point i perturbs only the
+%     prototype of its own label" -- it disambiguates the mu^{(k,-i)}_c
+%     notation (which otherwise reads as K recomputations) and it is
+%     load-bearing for the cost paragraph's one-column claim.
+%   - COMPUTATIONAL COST promoted to its own \textbf{} paragraph pair
+%     with a real complexity analysis (user request): closed-form LOO
+%     mean update, one-column logit-matrix change, bounded-cosine
+%     denominator swap O(n) vs O(nK) per candidate, then the accounting
+%     -- O(nKd') shared precompute, O(nd') per test point SHARED across
+%     candidates, O(nK) candidate sweep, comparison count not a sort =>
+%     O(n(d' + K)) per test point vs K refits. All verified against the
+%     GPU path (_predict_prototype_softmax_gpu, ~L2430-2520).
+%   - "dissolves" REMOVED (tone rule, overclaiming verbs).
+%   - v15 (user call): SCOPE NOTE added to close the cost analysis.
+%     Every term in the accounting scales with n, so the per-test-point
+%     cost is cheap only because n = sK is small. Split CP answers a
+%     test point in time independent of n, an advantage that grows with
+%     the budget. States plainly that FRCP is not proposed for the
+%     abundant-label regime. Deliberately scoped to COST, not to the
+%     method's value -- Section 5 has FRCP tightest on Cars at every
+%     budget, so a blanket "no advantage at large s" would contradict
+%     our own results.
+%   - CUT: the closing "division of labor is the central design
+%     principle" paragraph -- rule 2, it restates the design goal that
+%     already closes Section 3 AND opens Section 4, with no added depth
+%     (unlike the smoothing case, this is pure refrain). Restore if you
+%     want the subsection to land on the thesis rather than on compute.
+%   - KEPT per user call: the augmented-sample walkthrough and the
+%     "Unlike split CP, no labeled example is reserved for training"
+%     paragraph -- the FCP procedure is complex enough to be worth
+%     illustrating in full.
+%
+%   T PROVENANCE (user decision 08-26): T is fixed by a sweep, like
+%   every other parameter in the pipeline; sweeps go to an appendix if
+%   a reviewer asks. Justifying each parameter assignment in the method
+%   section is redundant, so 4.2 now says only "We fix T per dataset
+%   and report the values in Section 5" -- no provenance claim, no
+%   validity-knob aside (Section 4.3 owns validity).
+%
+%   *** CARRY TO THE SECTION 5 PASS ***
+%   experiments.tex "\textbf{Configuration.}" and the Table 2 caption
+%   BOTH assert the configuration is fixed "from unlabeled-pool
+%   statistics alone, before any labeled data are seen". That holds for
+%   the refinement knobs but NOT for T, which resolve_softmax_T fits on
+%   a labeled pilot split (r1_headline_experiment.py:130). T must be
+%   excluded from the scope of that sentence, or the sentence reworded,
+%   when Section 5 is polished. An existing VERIFY comment there already
+%   flags the same thing ("auto-T; fixed T=0.07 in W->D follow-ups").
+% NOT yet applied on Overleaf.
+
+% v11 (2026-08-26, user notes on the 4.1 pass):
+%   - CITATION POLICY corrected: rule 3 bans re-ARGUING a point, not
+%     re-CITING its anchor. bateni2020improved + min2026street restored
+%     at the Mahalanobis identity (claim only, no re-argument); the
+%     DAPS/SNAPS + query-expansion motivation restored in the smoothing
+%     paragraph with zargarbashi2023conformal + song2024similarity.
+%   - TRUNCATION: named as PCA and explicitly NOT compression; the
+%     d(d+1)/2 parameter-count argument REPLACED by the sharper
+%     mechanism (inverse square root divides by sqrt of eigenvalue, so
+%     the worst-estimated directions are the most amplified), anchored
+%     on jegou2012negative -- VERIFIED 08-26 against the ECCV PDF:
+%     "For large values of D', the whitening stage negatively impacts
+%     the performance by magnifying the noise on the low-energy
+%     components." First use of this citation outside related.tex.
+%   - SMOOTHING: v10 was less clear than v6 (user call). Motivation
+%     restored ahead of the economics, and the paragraph split in two:
+%     [definition + eq:qe + mechanics] then [operator lineage +
+%     why-before-the-label + K-cost + order + lemma pointer].
+%     Standing amendment to rule 3: for a complex idea, repeating the
+%     concept across sections is allowed and helpful; what stays banned
+%     is rephrasing earlier text without adding depth.
+% NOT yet applied on Overleaf.
+
+% v10 (2026-08-26, SECTION 4.1 polish pass):
+%   - rule 3 (expand on revisit) applied to all three stages: the
+%     intro-level one-liners are no longer paraphrased here. Truncation
+%     now argues the parameter count d(d+1)/2 -> d'(d'+1)/2; whitening
+%     now argues WHY within-group and not total covariance (k-means as
+%     label-free class proxy, between-class separation must survive) --
+%     content that was missing from the paper entirely; smoothing now
+%     explains the pieces of eq:qe (gamma, max{.,0}, unit self-weight,
+%     free normalization).
+%   - rule 3 de-duplication: the DAPS/SNAPS + query-expansion lineage
+%     recap CUT (owned by related.tex); the few-shot/retrieval metric
+%     re-argument CUT with it, so bateni2020improved + min2026street no
+%     longer double-cited here (rule 7, vary the anchors). Both now
+%     reach the reader as \ref{sec:related} pointers.
+%   - rule 2 (validity refrain): closing "exchangeability is preserved"
+%     restatement reduced to a pointer; "applied identically to every
+%     labeled and test embedding" moved up into the opening paragraph
+%     where the map is defined.
+%   - CONSISTENCY: config list now (d', C, kappa, gamma), matching
+%     Algorithm 1's \Require (C and gamma were previously undeclared).
+%   - rule 4: short punch sentences added ("Its role is preparatory.",
+%     "Only the within-class part is nuisance.", "The order is
+%     forced."); "deliberately" removed from the ordering argument.
+%   - order claim verified against code: headline drivers set
+%     qe_stage='post' (r1_headline_experiment.py:120, frozen 08-20), so
+%     eq:pipeline T_smo o T_wht o T_trc is the deployed order; the
+%     library default qe_stage='pre' is legacy, not the paper's method.
+%   - NOTE: no stage-ORDER ablation exists in Section 5 (only stage
+%     addition), so 4.1 makes the ordering a design argument and
+%     promises no experiment.
+% NOT yet applied on Overleaf.
+
+\section{Background}
+\label{sec:background}
+
+Let $\phi$ denote an encoder pre-trained without labels from the target task, fixed throughout the procedure, mapping images to $\mathbb{R}^d$. We work directly in its
+embedding space and write $x = \phi(a) \in \mathbb{R}^d$ for the
+representation of image $a$. We observe a labeled sample
+$\mathcal{D}_n = \{(x_i, y_i)\}_{i=1}^{n}$ with $y_i \in [K] :=
+\{1, \dots, K\}$, an unlabeled pool $\mathcal{U} = \{u_j\}_{j=1}^{m}$
+drawn from the same image distribution and independent of
+$\mathcal{D}_n$, and a test embedding $x_{n+1}$ with hidden label
+$y_{n+1}$. Our only distributional assumption is that
+$(x_1, y_1), \dots, (x_{n+1}, y_{n+1})$ are exchangeable. For a target
+miscoverage level $\alpha \in (0,1)$, we seek a set-valued predictor
+that decides, for every candidate label $k \in [K]$, whether $k$ enters
+the prediction set $\Gamma_\alpha(x_{n+1})$, so that the coverage
+requirement~\eqref{eq:coverage} holds for the pair
+$(x_{n+1}, y_{n+1})$, while keeping the sets as close to singletons as
+the coverage constraint permits.
+CP builds such predictors from a nonconformity score $S(x, k)$, a
+real-valued measure of how poorly the pair $(x, k)$ conforms to the
+labeled data. The choice of score governs efficiency, while coverage
+comes from the calibration construction. Given scores
+$S_i = S(x_i, y_i)$ on a calibration sample of size $n_{\mathrm{cal}}$
+drawn from the labeled data, the threshold is the inflated empirical
+quantile
+\begin{equation}
+\label{eq:quantile}
+\hat q_\alpha \;=\; S_{(\lceil (1-\alpha)(n_{\mathrm{cal}}+1) \rceil)} ,
+\end{equation}
+the $\lceil (1-\alpha)(n_{\mathrm{cal}}+1) \rceil$-th smallest
+calibration score, and the prediction set collects every candidate that
+scores no worse:
+\begin{equation}
+\label{eq:set}
+\Gamma_\alpha(x_{n+1}) \;=\;
+\bigl\{\, k \in [K] \;:\; S(x_{n+1}, k) \le \hat q_\alpha \,\bigr\} .
+\end{equation}
+Exchangeability of the calibration and test pairs then implies
+\eqref{eq:coverage}~\citep{vovk2005algorithmic,
+papadopoulos2002inductive}.
+
+\textbf{The cost of a training split.} In the standard split pipeline
+the score comes from a trained model: the labeled data are divided as
+$n = n_{\mathrm{tr}} + n_{\mathrm{cal}}$, a $K$-way classifier is
+fitted on the first part, and \eqref{eq:quantile} and \eqref{eq:set}
+are computed on the second. Writing $s = n/K$ for the average number
+of labels per class, our regime of interest is small $s$, where both
+portions are starved at once and reducing either has a direct cost.
+With few training examples, the classifier separates the correct class
+from the $K-1$ alternatives only weakly, so the sets stay valid but wide.
+Increasing the training portion does not solve
+the problem for free, because it simultaneously shrinks the calibration
+sample, and small $n_{\mathrm{cal}}$ carries its own penalty:
+conditional on the calibration draw, coverage follows a Beta
+distribution with variance approximately
+$\alpha(1-\alpha)/(n_{\mathrm{cal}}+2)$, and \citet{zhou2026semicp}
+analyze precisely this limited-label instability, quantifying
+non-negligible probabilities of severe under-coverage at small
+calibration sizes alongside heavier-tailed set sizes.
+Class-conditional variants are stricter still, requiring at least
+$\lceil 1/\alpha \rceil - 1$ calibration labels per class (nine at
+$\alpha = 0.1$), beyond reach when $s$ is small and the same labels
+must also train the classifier. At small $s$ no allocation escapes the bind, cross-validation hybrids included~\citep{barber2021predictive}: every split starves one side or the other.
+
+\textbf{Full conformal prediction.} Full CP~\citep{vovk2005algorithmic}
+removes the split. For each candidate label
+$k \in [K]$, the labeled sample is augmented with the hypothesized pair
+$(x_{n+1}, k)$ and all $n{+}1$ points are scored symmetrically, so the
+entire labeled sample does calibration work. Removing the split pays off only
+if the score itself needs no training, which is what a general-purpose backbone provides: a representation where candidate labels can be scored from the labeled points directly.
+The framework also disciplines method design: to keep the augmented sample symmetric,
+every label-dependent quantity must be recomputed for each of the $K$
+candidate labels of every test point, so label-dependent machinery
+multiplies computation by $K$, whereas label-free components are fitted
+once and shared across all candidates.
+
+These observations separate three resources, each supplying what the others cannot. The frozen encoder gives a representation at no label cost. The unlabeled pool can be far larger ($m \gg n$)
+and what it adds is geometry: the structure, variance, and local density of that representation, which is what the refinement uses. The labeled sample is then reserved, in its entirety, for conformal calibration.
+
+\section{Method}
+\label{sec:method}
+\subsection{Pool-fitted representation refinement}
+\label{sec:refine}
+
+The refinement map
+$T_{\mathcal{U}} : \mathbb{R}^{d} \to \mathbb{R}^{d'}$ is constructed
+from the unlabeled pool alone and applied to every embedding,
+$z = T_{\mathcal{U}}(x)$. Labeled points and the test point pass
+through the same map. It composes three label-free stages,
+\begin{equation}
+\label{eq:pipeline}
+T_{\mathcal{U}} \;=\; T_{\mathrm{smo}} \circ T_{\mathrm{wht}} \circ
+T_{\mathrm{trc}} ,
+\end{equation}
+each fitted on $\mathcal{U}$ and each addressing a distinct defect of
+the raw embeddings. Which stages are active, and the few constants each
+one takes, are fixed per dataset from pool statistics, before any
+labeled data are seen.
+
+\textbf{Truncation.} With pool mean
+$\mu_{\mathcal{U}} = \frac{1}{m}\sum_j u_j$ and pool covariance
+$\widehat\Sigma_{\mathcal{U}} = \frac{1}{m}\sum_j (u_j -
+\mu_{\mathcal{U}})(u_j - \mu_{\mathcal{U}})^{\top}$, let
+$V \in \mathbb{R}^{d \times d'}$ collect the leading $d'$ eigenvectors
+of $\widehat\Sigma_{\mathcal{U}}$. The first stage is the centered
+projection $T_{\mathrm{trc}}(x) = V^{\top}(x - \mu_{\mathcal{U}})$,
+PCA fitted on the pool. Its purpose is not compression. The pool measures its low-variance directions poorly, and the next stage divides by that measurement, so error in those directions would be magnified rather than removed. \citet{jegou2012negative} report exactly this in retrieval, where whitening a descriptor at full dimension amplifies the noise on its low-energy components and costs accuracy. Truncation removes those directions first, leaving whitening a subspace the pool measures well.
+
+\textbf{Whitening.} $T_{\mathrm{wht}}$ rescales the truncated space, and
+the question is which covariance to rescale by. A distance-based score
+reads variation between classes, while variation inside a class, from
+pose or lighting, is nuisance. Dividing by the pool's total covariance
+would flatten both, so only the within-class part is standardized.
+Labels are unavailable, so $k$-means groups stand in for classes: the
+pool projections are partitioned into $C$ groups and one covariance is
+pooled from every point's deviation from its own group mean,
+\begin{equation}
+\label{eq:sigmaw}
+\widehat\Sigma_{\mathrm{w}} \;=\; \frac{1}{m} \sum_{g=1}^{C}
+\sum_{j \in G_g} (t_j - \bar t_g)(t_j - \bar t_g)^{\top} ,
+\end{equation}
+with $G_g$ the $g$-th group and $\bar t_g$ its mean. One shared estimate
+draws on all $m$ points rather than the few in any single group. The
+stage is the rescaling
+$T_{\mathrm{wht}}(t) = \widehat\Sigma_{\mathrm{w}}^{-1/2}\, t$, which is
+invertible: distances are read in units of within-class spread.
+Euclidean distance in the rescaled space is Mahalanobis distance under
+$\widehat\Sigma_{\mathrm{w}}$, the metric that few-shot classification
+and training-free retrieval both settle on for frozen
+embeddings~\citep{bateni2020improved, min2026street}.
+
+\textbf{Smoothing.} $T_{\mathrm{smo}}$ averages each whitened
+embedding with its nearest pool neighbors. Write $v$ for a whitened embedding, normalized to unit length. The pool is carried through the same two stages and normalized the same way, and $N_{\kappa}(v)$ collects the $\kappa$ pool points of largest cosine with $v$, written $u$. Then
+\begin{equation}
+\label{eq:qe}
+T_{\mathrm{smo}}(v) \;=\;
+\frac{v + \sum_{u \in N_{\kappa}(v)} w_u\, u}
+     {\bigl\| v + \sum_{u \in N_{\kappa}(v)} w_u\, u \bigr\|},
+\qquad
+w_u = \max\{\cos(v, u),\, 0\}^{\gamma} ,
+\end{equation}
+where the exponent $\gamma$ concentrates weight on the closest
+neighbors and the truncation at zero discards those pointing away from
+$v$. The point itself enters at unit weight, so the operation corrects
+an embedding rather than replacing it by its neighborhood, and the
+closing normalization is free because the score reads cosines.
+
+The operator is weighted query expansion from image
+retrieval~\citep{radenovic2019finetuning}, and the reason to want it in
+a conformal pipeline comes from score smoothing on graphs: DAPS and
+SNAPS shrink each node's nonconformity score toward the scores of its
+neighbors, and the sets tighten when neighborhoods are
+label-homogeneous~\citep{zargarbashi2023conformal, song2024similarity}.
+FRCP performs the same averaging one level earlier, on the
+representation rather than the score, which is what allows it to
+precede any hypothesized label. The saving is structural. A correction
+carried by the embedding is computed once per point, whereas smoothing
+the score itself would repeat for each of the $K$ candidates
+(Section~\ref{sec:background}). The order of the stages is likewise
+forced: smoothing consumes neighborhoods, and a neighborhood is worth
+only as much as the metric that selects it, which the two preceding
+stages have just repaired.
+
+\subsection{Full conformal prediction with a training-free prototype score}
+\label{sec:fcp}
+
+After refinement, each labeled example is represented as
+$z_i = T_{\mathcal{U}}(x_i)$ and the test point as
+$z_{n+1} = T_{\mathcal{U}}(x_{n+1})$. For a candidate label
+$k \in [K]$, form the augmented sample
+$(z_1, y_1), \dots, (z_n, y_n), (z_{n+1}, k)$ and write $\ell_i$ for
+the label of point $i$ in it, so $\ell_i = y_i$ for $i \le n$ and
+$\ell_{n+1} = k$. Let $\mu^{(k, -i)}_{c}$ denote the mean of the
+refined embeddings carrying label $c$ in the augmented sample after
+removing point $i$. Each point is scored against these leave-one-out
+prototypes through a temperature-scaled softmax over cosine
+similarities,
+\begin{equation}
+\label{eq:score}
+S^{(k)}_{i} \;=\;
+1 - \frac{\exp\bigl(\cos(z_i,\, \mu^{(k,-i)}_{\ell_i}) / T\bigr)}
+         {\sum_{c=1}^{K} \exp\bigl(\cos(z_i,\, \mu^{(k,-i)}_{c}) / T\bigr)} ,
+\end{equation}
+so a point conforms when it lies close to the prototype of its own
+label and far from the others. The temperature carries weight here.
+Cosine similarities are confined to $[-1, 1]$, so an untempered
+softmax over them is nearly flat and the resulting score separates
+candidates only weakly. We fix $T$ per dataset and report the values
+in Section~5.
+
+Two updates are at work, each touching one class. Inserting
+$(z_{n+1}, k)$ moves the prototype of class $k$ alone, and removing
+point $i$ moves the prototype of $\ell_i$ alone, so every other
+$\mu^{(k,-i)}_{c}$ is the plain class mean of the labeled sample.
+% CUT (user call 08-26): the empty-class convention. The implementation
+% carries it -- if leave-one-out empties a point's own class the
+% prototype is undefined, the point takes the maximal score, and the
+% same rule fires for cal and test points so symmetry survives -- but
+% the reported protocol is balanced with s >= 2 (grid s in
+% {2,4,...,14}, experiments.tex L120), so at s = 2 leave-one-out still
+% leaves one point in the class and the rule never fires. Documenting a
+% branch no reported run reaches costs three sentences and invites the
+% reviewer to picture a degenerate regime. Restore only if an
+% unbalanced-split or s = 1 experiment enters the paper.
+The conformal p-value of candidate $k$ compares the test score with
+all others,
+\begin{equation}
+\label{eq:pvalue}
+p_k \;=\; \frac{1}{n+1} \sum_{i=1}^{n+1}
+\mathbf{1}\bigl\{ S^{(k)}_{i} \ge S^{(k)}_{n+1} \bigr\} ,
+\qquad
+\Gamma_\alpha(x_{n+1}) \;=\; \bigl\{\, k \in [K] : p_k > \alpha \,\bigr\} .
+\end{equation}
+Under exchangeability of the labeled and test pairs, this construction
+satisfies \eqref{eq:coverage} at any finite $n$~\citep{vovk2005algorithmic}.
+
+\textbf{Computational cost.} Full CP is usually set aside as
+impractical because every candidate label demands a refit. For the
+prototype score that refit is closed form. Prototypes are linear in
+the data, so the leave-one-out update is
+$\mu^{(-i)}_{c} = (n_c \mu_c - z_i)/(n_c - 1)$, with no inverse to
+recompute and no rank-one correction to propagate. Folding
+$(z_{n+1}, k)$ into the sample moves only the class-$k$ prototype, so
+exactly one column of the cached calibration logit matrix changes.
+Only the class-$k$ term of each calibration point's softmax denominator
+moves, so $D \leftarrow D - exp_{\mathrm{old}} + exp_{\mathrm{new}}$, at $O(n)$
+per candidate rather than $O(nK)$.
+
+The work then falls into three tiers. Once for the whole run, the class
+sums and the calibration logits are formed in $O(nKd')$. Once per test
+point, its inner products against the calibration sample are formed in
+$O(nd')$, and this is all the geometry the candidates need, since
+folding the test point into class $k$ shifts that prototype by a
+multiple of $z_{n+1}$ (Appendix~\ref{app:cost}). The sweep over candidates is then arithmetic on
+scalars, $O(nK)$ for all $K$ together, with each p-value a comparison
+count rather than a sort. Conformalizing one test point costs
+$O(n(d' + K))$, against the $K$ refits a trained score would require.
+Candidates and test points batch into matrix products on a GPU.
+Every quantity above scales with $n$, so the per-test-point cost stays
+small precisely because the labeled sample is small. Split CP
+calibrates once and then answers each test point in time independent of
+$n$, an advantage that grows with a budget this method does not target.
+
+\begin{algorithm}[t]
+\caption{FRCP: pool-fitted refinement + full conformal prediction}
+\label{alg:frcp}
+\begin{algorithmic}[1]
+\Require pool $\mathcal{U}$, labeled sample $\mathcal{D}_n$, test point
+$x_{n+1}$, level $\alpha$, configuration $(d', C, \kappa, \gamma)$,
+temperature $T$
+\Statex \textbf{Stage 1: fit $T_{\mathcal{U}}$ on the pool (label-free, once)}
+\State $\mu_{\mathcal{U}} \gets \operatorname{mean}(\mathcal{U})$,
+       $V \gets$ leading $d'$ eigenvectors of $\operatorname{cov}(\mathcal{U})$
+       \Comment{truncation}
+\State $t_j \gets V^{\top}(u_j - \mu_{\mathcal{U}})$ for all $u_j \in \mathcal{U}$
+\State $\widehat\Sigma_{\mathrm{w}} \gets$ pooled within-group covariance
+       of $\{t_j\}$ over $C$ $k$-means groups, \eqref{eq:sigmaw}
+\State $\tilde t_j \gets \widehat\Sigma_{\mathrm{w}}^{-1/2} t_j \,\big/\,
+       \bigl\| \widehat\Sigma_{\mathrm{w}}^{-1/2} t_j \bigr\|$ for all $j$
+       \Comment{whitening}
+\State $T_{\mathcal{U}}(x) \gets T_{\mathrm{smo}}\bigl(\widehat\Sigma_{\mathrm{w}}^{-1/2}
+       V^{\top}(x - \mu_{\mathcal{U}})\bigr)$ by \eqref{eq:qe}
+       \Comment{smoothing}
+\Statex \textbf{Stage 2: full conformal prediction on the refined embeddings}
+\State $z_i \gets T_{\mathcal{U}}(x_i)$ for $i = 1, \dots, n$, and
+       $z_{n+1} \gets T_{\mathcal{U}}(x_{n+1})$
+\State $F_{ic} \gets \cos\bigl(z_i, \mu^{(-i)}_{c}\bigr)$ for all
+       $i \in [n]$, $c \in [K]$
+       \Comment{once per labeled sample}
+\State $g_i \gets \langle z_{n+1},\, z_i \rangle$ for $i = 1, \dots, n$
+       \Comment{once per test point}
+\For{each candidate label $k \in [K]$}
+  \State rebuild column $k$ of $F$ from $g$, folding in $(z_{n+1}, k)$
+  \State $S^{(k)}_i \gets$ \eqref{eq:score} at temperature $T$, for all $i \le n{+}1$
+  \State $p_k \gets$ \eqref{eq:pvalue}
+\EndFor
+\State \Return $\Gamma_\alpha(x_{n+1}) = \{k \in [K] : p_k > \alpha\}$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Theoretical analysis}
+\label{sec:theory}
+\begin{proposition}[Refinement preserves validity]
+\label{prop:validity}
+Let $T_{\mathcal{U}}$ be any measurable function of the pool
+$\mathcal{U}$, with $\mathcal{U}$ independent of
+$(x_1, y_1), \dots, (x_{n+1}, y_{n+1})$. If these pairs are
+exchangeable, then conditional on $\mathcal{U}$ the transformed pairs
+$(T_{\mathcal{U}}(x_1), y_1), \dots, (T_{\mathcal{U}}(x_{n+1}),
+y_{n+1})$ are exchangeable, and the prediction set of
+\eqref{eq:pvalue} satisfies \eqref{eq:coverage}.
+\end{proposition}
+
+The proof (Appendix~A) is short: conditional on $\mathcal{U}$,
+$T_{\mathcal{U}}$ is a fixed map applied to every coordinate of an
+exchangeable sequence, which preserves exchangeability, and the full
+conformal guarantee holds conditionally on $\mathcal{U}$, hence also
+marginally. The proposition asks nothing about the quality of the
+refinement: $T_{\mathcal{U}}$ may be arbitrarily ill-suited to the
+task and \eqref{eq:coverage} still holds. Whether refinement helps is
+decided entirely in the geometry, which is where the next result
+operates.
+
+For the smoothing stage, drop the final normalization in
+\eqref{eq:qe}, which the cosine score ignores, and consider smoothing
+with a generic neighborhood weight,
+$\hat z = (1-\beta)\, v + \beta\, \nu(v)$, where
+$\nu(v) = \sum_{u \in N_{\kappa}(v)} (w_u / W)\, u$ and
+$W = \sum_{u} w_u$. The deployed map \eqref{eq:qe} corresponds to the
+implicit weight $\beta = W/(1+W)$. Fix any reference centers
+$\{\theta_c\}_{c \in [K]}$ in the whitened space, for instance the
+population class means, and suppose each pool neighbor $u$ carries an
+unknown class $c(u)$. For a point
+$v$ with class $y$, define its displacement
+$\varepsilon = \lVert v - \theta_y \rVert$, each neighbor's own
+displacement $r_u = \lVert u - \theta_{c(u)} \rVert$, the weighted
+homophily $h = \frac{1}{W} \sum_{u : c(u) = y} w_u$, and the foreign
+spread $\Delta(v) = \max_{u : c(u) \neq y} \lVert \theta_{c(u)} -
+\theta_y \rVert$.
+
+\begin{lemma}[When smoothing helps]
+\label{lem:smooth}
+For any $\beta \in (0, 1]$ and any nonnegative weights, the smoothed
+point $\hat z = (1-\beta)\, v + \beta\, \nu(v)$ satisfies
+\begin{equation}
+\label{eq:d1}
+\lVert \hat z - \theta_y \rVert \;\le\;
+(1-\beta)\, \varepsilon \;+\;
+\beta \Bigl[\, \textstyle\sum_{u} \frac{w_u}{W}\, r_u
+\;+\; (1 - h)\, \Delta(v) \,\Bigr] .
+\end{equation}
+In particular, $\lVert \hat z - \theta_y \rVert < \varepsilon$
+whenever
+$\sum_{u} \frac{w_u}{W}\, r_u + (1 - h)\, \Delta(v) < \varepsilon$.
+\end{lemma}
+
+The bound is a triangle inequality, proved in Appendix~A. It is
+deterministic, holding conditional on the realized embeddings with no
+distributional assumptions. The sufficient condition has a simple
+geometric interpretation. The current displacement $\varepsilon$ must
+exceed the sum of two terms: the average neighborhood displacement
+from the relevant class centers, and a penalty proportional to the
+neighborhood's foreign-weight fraction. When this condition holds,
+smoothing provably decreases the distance to $\theta_y$. The condition
+is sufficient only, and where it fails an impure enough neighborhood
+can move $v$ farther instead. The guarantee concerns the
+representation, not prediction-set size.
+
+The lemma is the representation-space analogue of the guarantee behind
+score diffusion~\citep{zargarbashi2023conformal}. What is assumed there,
+that neighbors carry close ground truth, appears here as the weighted
+homophily $h$, a property of the realized neighborhood rather than a
+quantity the method estimates. The pool is unlabeled, so $h$ is never
+computed at run time and the condition is a diagnostic rather than a
+test the pipeline can apply.
+
+
+% --- provenance comments whose anchor text is no longer in the
+% --- Overleaf body (kept at the 09-03 alignment):
+% Remark on the conformal phase (static-calibration reduction) was CUT
+% by the user on Overleaf (2026-08-25). Preserved here in case it is
+% wanted later (e.g., as an appendix note or rebuttal material):
+%   Freezing the n labeled scores at their unaugmented values and
+%   ranking only the test score reproduces the sets of eq (pvalue) up
+%   to O(1/n) perturbations, and set-for-set in our experiments.
+%   Per-candidate refitting therefore contributes nothing measurable to
+%   efficiency, while the augmented construction remains the object
+%   Proposition 1 certifies.

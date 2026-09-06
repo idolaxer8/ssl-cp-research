@@ -1,0 +1,77 @@
+% ALIGNED 2026-09-03 to the Overleaf ido_paper.tex Ido pasted in chat
+% (gold). Body text identical to the 09-02 mirror. Only the Figure 1
+% caption changed: Ido's own 70-word caption replaced the 09-02
+% schematic caption (and supersedes the unapplied 122-word
+% docs/paper/paste_fig1_caption.tex). It names panel (d) as a measured
+% CIFAR-100 / DINOv2 example, six candidates in the backbone space,
+% two in the refined space. CARRIED AS PASTED: "refinement affect on"
+% (should be "effect"), and a stray space before the closing brace.
+% Section 1 -- Introduction. MIRROR aligned 2026-09-02 to the
+% Overleaf version Ido pasted in chat, which is gold. Supersedes the
+% 09-01 alignment to paste_intro_v9.tex.
+% Applied from paste_intro_v10/v11: A-1 (question moved to the head of
+% P4), EDIT 2 (stages named after a colon), EDIT 3 (P5 closing carries
+% disjointness and fixedness only), C-1 (new P5 opener), D-1 ("do not
+% always provide it" replacing "can weaken that separation"), B-1 (P6
+% closing generalised). NOT applied: group E (point predictions) and
+% the Section 2 CLIP sentence, both declined.
+%
+% OPEN: the rule 8 numbers call. This mirror carries the variant that
+% keeps 79%% in the results paragraph and leaves contribution 3
+% count-free. OPTION 8B in paste_intro_v9.tex swaps it.
+
+\section{Introduction}
+\label{sec:intro}
+Transfer learning is now a standard approach to vision tasks: a model pre-trained on a large corpus is frozen and reused, while the new task is addressed using whatever labels are available, often only a handful per class. Point predictions in this regime are frequently accurate. Their confidence estimates are less dependable, since a classifier trained on only a few labeled examples can be poorly calibrated~\citep{guo2017calibration}. This leaves the practitioner with a prediction but no principled statement of its uncertainty. Conformal prediction (CP) provides such a statement without requiring the underlying model to be calibrated. It converts any score into prediction sets that contain the true label at a target miscoverage level, with distribution-free, finite-sample guarantees~\citep{vovk2005algorithmic, angelopoulos2023gentle}.
+
+The models being transferred are increasingly self-supervised. DINOv2~\citep{oquab2023dinov2} and CLIP~\citep{radford2021clip} learn representations without task labels and have become widely used feature extractors in applied computer vision: freeze the backbone, extract an embedding, and attach a lightweight head. Their representations place semantically related images close together, so a few labels per class already support reasonable predictions, and a recent large-scale evaluation finds such backbones well suited to conformalization~\citep{fillioux2026conformal}. The difficulty is how those scarce labels are used. A split conformal pipeline fits a $K$-way classifier on part of the labeled sample and calibrates on the remainder~\citep{papadopoulos2002inductive}, forcing one small sample to serve two estimation problems. At a handful of labels per class, neither is well supported.
+
+Recent approaches reduce this tension by incorporating unlabeled data into calibration, but they still assume an already available classifier. SemiCP enlarges the calibration set with an unlabeled pool, constructing approximate nonconformity scores for the unlabeled examples from the predictions of a pre-trained classifier~\citep{zhou2026semicp}. The unlabeled data stabilizes calibration, but the scoring function still rests on a task-specific model. Cross-validation approaches instead reuse the labeled data across training folds, avoiding a single fixed split but requiring multiple models trained on subsets of an already scarce sample. Their coverage guarantee is also weaker than that of full or split conformal prediction, and for CV+ \citet{barber2021predictive} give a bound that depends on the number of folds and approaches $1 - 2\alpha$ in the jackknife+ limit.
+
+ Can prediction sets remain valid and informative at such small label budgets without training a task-specific model at all? In this work, we propose \emph{FRCP} (Feature-Refined Full Conformal Prediction), which removes task-specific training from the conformal pipeline. The first ingredient is full CP~\citep{vovk2005algorithmic}, which avoids the split between fitting and calibration by recomputing the nonconformity score with each candidate label included rather than holding data out. The second is a score that requires no fitted model. Each class is summarized by averaging the labeled embeddings that carry it, and we call that average the class prototype. A test embedding is then compared with the prototypes to obtain a nonconformity score for each candidate label. Full CP is traditionally regarded as computationally demanding, and the cost lies in the calibration re-score. Each candidate label defines a different augmented sample, so every calibration point must be scored again against it, and each of those scores is leave-one-out, computed with that point removed. For a trained score, every one of these evaluations is a model refit. For the prototype score, both the leave-one-out removal and the insertion of the candidate label displace a single class mean, so each is a closed-form update, and full conformalization of an entire test set becomes practical.
+
+The score still has to do its work in the embedding space it is given. Sets shrink when the score separates the true label from the $K-1$ alternatives, yet raw backbone embeddings do not always provide it. FRCP therefore refines the representation before conformalization, in three stages fitted solely on an unlabeled pool and illustrated in Figure~\ref{fig:intuition}: truncation, whitening, and smoothing. Some directions of the raw space are too noisy for the pool to estimate reliably, so truncation discards them. Others carry variation shared across classes rather than variation that distinguishes them, so whitening rescales the retained dimensions to reduce their influence. Each embedding is also displaced from its class by variation specific to its own image, so smoothing averages it with its pool neighbors. No stage uses labels. The pool is disjoint from the labeled sample and the map is then held fixed, so the exchangeability that full CP rests on is undisturbed and the guarantee is preserved.
+
+Empirically, FRCP remains effective deep into the label-scarce regime. It returns the smallest sets among the methods we compare in nearly every comparison at the low end of the label grid, on both frozen encoders and at both target miscoverage levels, while pool-based refinement reduces set size by up to 79\% relative to full CP on raw embeddings. The gap closes as labels accumulate and the budget stops being the binding constraint.
+
+Our contributions are summarized as follows:
+\begin{itemize}
+\item We introduce FRCP, which pairs full conformal prediction with a training-free prototype score on frozen self-supervised embeddings, so that the whole label budget serves conformal calibration.
+\item We construct a label-free refinement of the embedding space (truncation, whitening, and smoothing) fitted solely on an unlabeled pool, with theory addressing both its validity and its benefit.
+\item We evaluate across image-classification benchmarks and label budgets against split CP and SemiCP with THR, APS, and RAPS scores, and against CV+, complemented by ablations of the refinement stages. FRCP returns the smallest sets in nearly every comparison at eight labels per class and below, on both frozen encoders and at both target miscoverage levels, and the trained-head baselines close the gap only once labels become plentiful.
+\end{itemize}
+% Figure 1 -- the refinement intuition (added 08-27, user figure
+% docs/paper/figs/representation_refinment_intuition.pdf).
+% PREPARED for inclusion and saved as figs/fig1_refinement_intuition.pdf:
+%   - the source is a landscape drawing typeset on a portrait A4 page
+%     with /Rotate 0, so \includegraphics would have set it sideways.
+%     Deskewed by 90 degrees;
+%   - cropped from 8.27 x 11.69 in of mostly white page down to the ink
+%     bounding box, 5.63 x 3.16 in, which is about \linewidth, so it is
+%     included unscaled;
+%   - filename spelling corrected ("refinment" -> "refinement"). The
+%     original file is untouched.
+% Re-export note (09-02): each new Claude Design export arrives again as a
+%     landscape drawing on a portrait A4 page, so the deskew and crop must be
+%     redone every time. src/prepare_fig1.py does both and reports the drawn
+%     height. Skipping it produces "Float too large for page by ~39pt",
+%     because \linewidth then scales the whole 841.92pt A4 page. The raw
+%     export is kept at docs/paper/figs/fig1_refinement_intuition_raw_0902.pdf.
+% This SUPERSEDES the old fig1_pipeline.pdf stub: that sketched the
+% pipeline only, while this also carries the geometry and the conformal
+% step, and it is where fig:pipeline used to point. The single
+% \ref{fig:pipeline} in the text above is now \ref{fig:intuition}.
+\begin{figure}[t]
+\begin{center}
+\includegraphics[width=\linewidth]{fig1_refinement_intuition.pdf}
+\end{center}
+\caption{A demonstration of refinement affect on prediction sets. Panels (a) to (c)
+are schematic. (a) Backbone classes are elongated along shared
+directions. (b) Truncation and whitening rescale the space,
+shrinking the directions the classes share. (c) Smoothing then
+carries $v_{n+1}$ to $z_{n+1}$, toward the class center $\theta_y$.
+Panel (d) is a measured example: one CIFAR-100 image on frozen DINOv2 embeddings.
+It draws the six of 100 candidates whose p-value clears $\alpha$ in the backbone space.
+Two survive in the refined space. }
+\label{fig:intuition}
+\end{figure}

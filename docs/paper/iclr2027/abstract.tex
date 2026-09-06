@@ -1,0 +1,121 @@
+% ALIGNED 2026-09-03 (3rd alignment) to the Overleaf ido_paper.tex Ido
+% pasted in chat (gold). Ido's own edits since the 09-02 version:
+%   - note M applied: "Pre-trained self-supervised foundation models"
+%     -> "self-supervised foundation models". CARRIED AS PASTED: the
+%     sentence now starts lowercase ("... conformal inference.
+%     self-supervised ..."), needs a capital S on Overleaf.
+%   - note K applied, minimal form: "improving prediction-set
+%     efficiency" -> "improving efficiency".
+%   - close changed: "FRCP gives the smallest sets at the scarcest
+%     budgets, with the advantage narrowing as labels increase" ->
+%     "our method gives the smallest sets in every comparison at the
+%     scarcest budgets". The narrowing clause is gone from the
+%     abstract (it survives in intro P6 and the conclusion).
+%   - note L (examples -> embeddings) NOT applied. Still open.
+% Abstract -- MIRROR OF OVERLEAF ido_paper.tex, aligned 2026-09-02 (2nd
+% alignment that day). Overleaf is source of truth. USER-WRITTEN
+% version, pasted by Ido in chat. Supersedes the earlier 09-02 paste
+% and everything before it (docs/paper/paste_abstract_v2.tex remains a
+% superseded stub).
+%
+% What changed against the earlier 09-02 version:
+%   1. The encoder clause is GONE, not reworded. Option B ("from a
+%      general-purpose encoder trained without task supervision") was
+%      selected in chat and then dropped in favour of option D. S5 now
+%      says "directly to these embeddings", carried by S4. This closes
+%      the 09-02 concern more cleanly than B did: with no explicit
+%      independence claim there is nothing for a reviewer to quote.
+%      "a new task" survives in S1 as framing only.
+%   2. S4 now names the object: "Pre-trained self-supervised
+%      foundation models", the first use of "foundation model" in the
+%      paper. This answers the question of whether the abstract
+%      foregrounds SSL as part of the remedy. It does now.
+%   3. NEW sentence S6, "While this resolves the label-allocation
+%      trade-off, prediction-set efficiency still depends on the
+%      representation", which makes the hand-off from the label
+%      problem to the efficiency problem explicit.
+%   4. Option E adopted for the close, lightly reworded: "FRCP gives
+%      the smallest sets at the scarcest budgets, with the advantage
+%      narrowing as labels increase."
+%   5. "constructed solely from" -> "fitted solely on"; "the conformal
+%      coverage guarantee" -> "conformal coverage"; "both calibration
+%      and test points" -> "calibration and test points"; "labeled
+%      embeddings" -> "labeled examples"; "Code is released." removed.
+%
+% PHRASES NOW OWNED BY THE ABSTRACT, do NOT reuse elsewhere:
+%   "lack a calibrated measure of uncertainty"
+%   "forcing a scarce label budget to be divided between model
+%    training and conformal inference"
+%   "each class can be represented by the mean of its labeled
+%    examples"
+%   "allowing the entire labeled sample to be used for conformal
+%    inference"  (the participle form is BACK, un-retired)
+%   "While this resolves the label-allocation trade-off,
+%    prediction-set efficiency still depends on the representation"
+%   "The same refinement map is applied to calibration and test
+%    points"
+%   "FRCP gives the smallest sets at the scarcest budgets"
+% RETIRED, now free for use elsewhere:
+%   "lack a calibrated notion of uncertainty"
+%   "adapting the representation to the geometry of the conformal
+%    task"
+%   "each class can instead be represented by the mean of its
+%    labeled embeddings"  (the "embeddings" form)
+%   "The efficiency of these prediction sets depends on the
+%    underlying representation"
+%   "pre-trained independently of the target task"  (clause deleted)
+%
+% COLLISION FOUND 09-02, NOT YET FIXED. intro.tex:163 opens
+%   "Full CP resolves the label-allocation problem, but the efficiency
+%    of its prediction sets still depends on the representation the
+%    score operates on."
+% which is the new S6 in a different suit. Same clause structure, same
+% two claims, no added depth in that sentence. Rule 3. The abstract
+% owns it, so the INTRO sentence is the one to change. The rest of
+% that paragraph does add depth and should stay.
+%
+% ALSO OPEN, three small ones, see the foot of this file:
+%   K. "prediction-set efficiency" appears twice, S6 and S8.
+%   L. "the mean of its labeled examples" should be embeddings.
+%   M. "Pre-trained self-supervised foundation models" stacks three
+%      modifiers on one object.
+%
+% No dataset or backbone counts, no numeric placeholders. The close
+% now states a comparative result, which it did not before.
+
+\begin{abstract}
+Adapting a large pre-trained vision model to a new task from only a handful of labels is now routine, yet the resulting predictions lack a calibrated measure of uncertainty. Conformal prediction (CP) provides such a measure by turning any scoring function into prediction sets with distribution-free, finite-sample guarantees. Applying CP in this setting, however, poses a practical challenge: standard split conformal methods require fitting a $K$-way classifier before calibration, forcing a scarce label budget to be divided between model training and conformal inference. self-supervised foundation models offer a way around this trade-off by providing embeddings from which each class can be represented by the mean of its labeled examples. We propose \emph{FRCP} (Feature-Refined Full Conformal Prediction), which applies full (transductive) conformal prediction with a training-free prototype score directly to these embeddings, allowing the entire labeled sample to be used for conformal inference. While this resolves the label-allocation trade-off, prediction-set efficiency still depends on the representation. FRCP therefore further refines it using truncation, whitening, and smoothing, all fitted solely on an unlabeled image pool. The same refinement map is applied to calibration and test points, preserving conformal coverage while improving efficiency. Across image-classification benchmarks and label budgets, our method gives the smallest sets in every comparison at the scarcest budgets.
+\end{abstract}
+
+
+% --- provenance comments whose anchor text is no longer in the
+% --- Overleaf body (kept at the 09-03 alignment):
+% ------------------------------------------------------------
+% K. "prediction-set efficiency" twice in three sentences, S6
+%    ("prediction-set efficiency still depends on the representation")
+%    and S8 ("while improving prediction-set efficiency"). Rules 2 and
+%    4. S6 owns the term, so S8 gives it up:
+%
+%    The same refinement map is applied to calibration and test
+%    points, so the coverage guarantee is undisturbed and only the
+%    sets get smaller.
+%
+%    Or, minimally: "... preserving conformal coverage while
+%    improving efficiency."
+%
+% L. "each class can be represented by the mean of its labeled
+%    examples" -- the prototype is the mean of the labeled
+%    EMBEDDINGS. An example is an image. The preceding "by providing
+%    embeddings from which" softens it but does not make it right.
+%    Two fixes:
+%      "... the mean of its labeled embeddings"        (revert)
+%      "... the mean of the embeddings of its labeled examples"
+%
+% M. "Pre-trained self-supervised foundation models" carries three
+%    modifiers, and a foundation model is pre-trained by definition.
+%    "Self-supervised foundation models" says the same in one word
+%    less, and stops "pre-trained" appearing in both S1 and S4.
+%
+% N. "Code is released." was dropped. Check whether the paper
+%    promises code anywhere else, and keep the two consistent.
+% ------------------------------------------------------------

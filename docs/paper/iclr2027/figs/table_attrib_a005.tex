@@ -1,0 +1,27 @@
+\begin{table}[t]
+\centering
+\small
+\caption{Attributing the gain to full CP, not to the score: mean prediction-set size ($\pm$ SE, 50 trials, balanced split) with marginal coverage in parentheses. All three rows use the identical frozen pool-fitted transform and frozen score (prototype softmax) and vary only the conformal construction. jackknife+ uses $n$ leave-one-out folds; split CP is shown at its best train fraction per cell. FRCP is copied from the headline runs. Bold: smallest set per dataset and budget. Target miscoverage $\alpha=0.05$.}
+\label{tab:attrib-a005}
+\begin{tabular}{llcccc}
+\toprule
+dataset & construction & 2 shots & 4 shots & 8 shots & 14 shots\\
+\midrule
+\multirow{3}{*}{CIFAR-10} & FRCP (full CP) & \textbf{1.11$\pm$0.05 {\scriptsize(0.964)}} & \textbf{1.00$\pm$0.02 {\scriptsize(0.960)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.948)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.952)}}\\
+ & jackknife+ & \textbf{1.11$\pm$0.05 {\scriptsize(0.964)}} & \textbf{1.00$\pm$0.02 {\scriptsize(0.961)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.948)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.951)}}\\
+ & split CP (best frac) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 1.11$\pm$0.04 {\scriptsize(0.966)} & 0.98$\pm$0.01 {\scriptsize(0.950)} & \textbf{0.96$\pm$0.01 {\scriptsize(0.946)}}\\
+\midrule
+\multirow{3}{*}{CIFAR-100} & FRCP (full CP) & \textbf{5.15$\pm$0.34 {\scriptsize(0.969)}} & \textbf{2.28$\pm$0.06 {\scriptsize(0.952)}} & \textbf{2.00$\pm$0.03 {\scriptsize(0.951)}} & 1.91$\pm$0.02 {\scriptsize(0.950)}\\
+ & jackknife+ & \textbf{5.15$\pm$0.34 {\scriptsize(0.969)}} & \textbf{2.28$\pm$0.06 {\scriptsize(0.952)}} & \textbf{2.00$\pm$0.03 {\scriptsize(0.951)}} & 1.91$\pm$0.02 {\scriptsize(0.950)}\\
+ & split CP (best frac) & 7.73$\pm$0.83 {\scriptsize(0.950)} & 2.71$\pm$0.20 {\scriptsize(0.949)} & 2.15$\pm$0.05 {\scriptsize(0.948)} & \textbf{1.89$\pm$0.04 {\scriptsize(0.947)}}\\
+\midrule
+\multirow{3}{*}{miniImageNet} & FRCP (full CP) & \textbf{1.90$\pm$0.12 {\scriptsize(0.970)}} & \textbf{1.22$\pm$0.02 {\scriptsize(0.956)}} & \textbf{1.14$\pm$0.01 {\scriptsize(0.954)}} & \textbf{1.12$\pm$0.01 {\scriptsize(0.951)}}\\
+ & jackknife+ & \textbf{1.91$\pm$0.12 {\scriptsize(0.970)}} & \textbf{1.22$\pm$0.02 {\scriptsize(0.956)}} & \textbf{1.14$\pm$0.01 {\scriptsize(0.954)}} & \textbf{1.12$\pm$0.01 {\scriptsize(0.951)}}\\
+ & split CP (best frac) & 2.33$\pm$0.22 {\scriptsize(0.952)} & 1.35$\pm$0.03 {\scriptsize(0.954)} & \textbf{1.14$\pm$0.01 {\scriptsize(0.950)}} & 1.14$\pm$0.01 {\scriptsize(0.952)}\\
+\midrule
+\multirow{3}{*}{EuroSAT} & FRCP (full CP) & \textbf{4.90$\pm$0.23 {\scriptsize(0.972)}} & \textbf{3.10$\pm$0.15 {\scriptsize(0.950)}} & \textbf{2.32$\pm$0.10 {\scriptsize(0.947)}} & \textbf{1.97$\pm$0.04 {\scriptsize(0.950)}}\\
+ & jackknife+ & 4.99$\pm$0.24 {\scriptsize(0.972)} & 3.11$\pm$0.15 {\scriptsize(0.952)} & \textbf{2.32$\pm$0.10 {\scriptsize(0.947)}} & \textbf{1.97$\pm$0.04 {\scriptsize(0.950)}}\\
+ & split CP (best frac) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 3.87$\pm$0.21 {\scriptsize(0.943)} & 2.85$\pm$0.16 {\scriptsize(0.940)} & 2.17$\pm$0.10 {\scriptsize(0.948)}\\
+\bottomrule
+\end{tabular}
+\end{table}

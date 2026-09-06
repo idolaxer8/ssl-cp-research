@@ -1,0 +1,22 @@
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\caption{Score-level versus representation-level smoothing, like for like. Mean prediction-set size (marginal coverage in parentheses) over 50 balanced trials at target miscoverage $\alpha=0.05$, under one construction (static-calibration full CP) so the comparison is purely at the set-size level. All four arms start from truncation$+$whitening (T$+$W); rows add the representation-level smoothing stage, the score-level SNAPS pool correction ($\eta=0.5$, $k=10$, neighbours from the unlabeled pool, its leave-one-out variant), or both. SNAPS is soft-gated and its $\eta,k$ are not tuned on the roster, so its coverage is reported as measured. $t$ is mean per-trial wall-clock at $s=8$. Bold: smallest set per dataset and budget.}
+\label{tab:snaps-vs-smoothing-a005}
+\begin{tabular}{llccccc}
+\toprule
+dataset & arm & 2 shots & 4 shots & 8 shots & 14 shots & $t$ (s)\\
+\midrule
+\multirow{4}{*}{CIFAR-100} & T+W (no smoothing) & 7.59 {\scriptsize(0.976)} & 2.52 {\scriptsize(0.957)} & 1.94 {\scriptsize(0.953)} & 1.76 {\scriptsize(0.951)} & 0.10\\
+ & $+$ smoothing (repr.\ level) & \textbf{5.14 {\scriptsize(0.969)}} & 2.28 {\scriptsize(0.952)} & 2.00 {\scriptsize(0.951)} & 1.91 {\scriptsize(0.950)} & 0.37\\
+ & $+$ SNAPS (score level) & 5.60 {\scriptsize(0.975)} & \textbf{2.19 {\scriptsize(0.955)}} & \textbf{1.82 {\scriptsize(0.952)}} & \textbf{1.71 {\scriptsize(0.952)}} & 0.37\\
+ & $+$ both (stacked) & 5.22 {\scriptsize(0.967)} & 2.36 {\scriptsize(0.950)} & 2.10 {\scriptsize(0.950)} & 2.02 {\scriptsize(0.950)} & 0.62\\
+\midrule
+\multirow{4}{*}{miniImageNet} & T+W (no smoothing) & 2.61 {\scriptsize(0.973)} & 1.28 {\scriptsize(0.958)} & 1.17 {\scriptsize(0.952)} & 1.15 {\scriptsize(0.951)} & 0.10\\
+ & $+$ smoothing (repr.\ level) & \textbf{1.91 {\scriptsize(0.971)}} & 1.22 {\scriptsize(0.957)} & 1.14 {\scriptsize(0.954)} & 1.12 {\scriptsize(0.951)} & 0.37\\
+ & $+$ SNAPS (score level) & 2.02 {\scriptsize(0.972)} & \textbf{1.21 {\scriptsize(0.959)}} & \textbf{1.12 {\scriptsize(0.952)}} & \textbf{1.11 {\scriptsize(0.951)}} & 0.37\\
+ & $+$ both (stacked) & \textbf{1.91 {\scriptsize(0.969)}} & 1.22 {\scriptsize(0.958)} & 1.14 {\scriptsize(0.954)} & \textbf{1.11 {\scriptsize(0.952)}} & 0.60\\
+\bottomrule
+\end{tabular}
+\end{table}

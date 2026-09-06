@@ -46,7 +46,7 @@ def get(rows, arm, shots):
     return r[0] if r else None
 
 
-def panel(ax_bar, ax_mat, res, shots_sel, stats):
+def panel(ax_bar, ax_mat, res, shots_sel, stats, compact=False):
     rows = res["rows"]
     n_sh = len(shots_sel)
     width = 0.8 / n_sh
@@ -79,8 +79,12 @@ def panel(ax_bar, ax_mat, res, shots_sel, stats):
                             color="#333333")
     ax_bar.set_ylim(0, cap * 1.04)
     ax_bar.set_xlim(-0.55, len(COMBOS) - 0.45)
-    ax_bar.set_title(f"{DS_LABEL[res['dataset']]}   (K = {res['K']})",
-                     loc="left", pad=3)
+    if compact:
+        ax_bar.set_title(f"{DS_LABEL[res['dataset']]}, $K={res['K']}$",
+                         loc="left", pad=3, fontsize=7.5)
+    else:
+        ax_bar.set_title(f"{DS_LABEL[res['dataset']]}   (K = {res['K']})",
+                         loc="left", pad=3)
     plt.setp(ax_bar.get_xticklabels(), visible=False)
     ax_bar.tick_params(axis="x", length=0)
     ax_bar.grid(axis="y", color="#000000", alpha=0.08, lw=0.6)
@@ -100,7 +104,9 @@ def panel(ax_bar, ax_mat, res, shots_sel, stats):
     ax_mat.set_xlim(-0.55, len(COMBOS) - 0.45)
     ax_mat.set_ylim(-0.5, 2.5)
     ax_mat.set_xticks(range(len(COMBOS)))
-    ax_mat.set_xticklabels([lab for _, lab in COMBOS], fontsize=7)
+    ax_mat.set_xticklabels([("TW" if lab == "T+W" else lab) if compact
+                            else lab for _, lab in COMBOS],
+                           fontsize=6 if compact else 7)
     for sp in ("top", "right", "left", "bottom"):
         ax_mat.spines[sp].set_visible(False)
     ax_mat.tick_params(length=0)
@@ -111,6 +117,9 @@ def main():
     ap.add_argument("--data_dir", default="output/pipeline_ablation")
     ap.add_argument("--out_dir", default="output/pipeline_ablation/plots")
     ap.add_argument("--shots", type=int, nargs="+", default=[2, 4, 8])
+    ap.add_argument("--layout", choices=["grid", "row"], default="grid",
+                    help="grid: 2x2 panels (default); row: 1x4 panels, "
+                         "half the height, for the page-limited main text")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -120,17 +129,27 @@ def main():
                                f"results_{ds}_stageabl.json")) as f:
             results.append(json.load(f))
 
-    fig = plt.figure(figsize=(5.5, 4.6))
-    outer = fig.add_gridspec(2, 2, hspace=0.34, wspace=0.24,
-                             left=0.09, right=0.99, top=0.90, bottom=0.07)
+    if args.layout == "row":
+        fig = plt.figure(figsize=(5.5, 2.15))
+        outer = fig.add_gridspec(1, 4, wspace=0.30,
+                                 left=0.085, right=0.995, top=0.80,
+                                 bottom=0.13)
+    else:
+        fig = plt.figure(figsize=(5.5, 4.6))
+        outer = fig.add_gridspec(2, 2, hspace=0.34, wspace=0.24,
+                                 left=0.09, right=0.99, top=0.90,
+                                 bottom=0.07)
     stats = []
     for j, res in enumerate(results):
-        inner = outer[j // 2, j % 2].subgridspec(
+        cell = outer[0, j] if args.layout == "row" else outer[j // 2, j % 2]
+        inner = cell.subgridspec(
             2, 1, height_ratios=[3.1, 1.0], hspace=0.06)
         ax_bar = fig.add_subplot(inner[0])
         ax_mat = fig.add_subplot(inner[1], sharex=ax_bar)
-        panel(ax_bar, ax_mat, res, args.shots, stats)
-        if j % 2 == 0:
+        panel(ax_bar, ax_mat, res, args.shots, stats,
+              compact=(args.layout == "row"))
+        first_col = (j == 0) if args.layout == "row" else (j % 2 == 0)
+        if first_col:
             ax_bar.set_ylabel("mean set size")
             ax_mat.set_yticks([2, 1, 0])
             ax_mat.set_yticklabels([lab for _, lab in STAGES], fontsize=6.8)
@@ -138,10 +157,11 @@ def main():
             ax_mat.set_yticks([])
     handles, labels = fig.axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", ncol=3,
-               bbox_to_anchor=(0.5, 0.97), columnspacing=1.6,
-               handlelength=1.2, handletextpad=0.5)
+               bbox_to_anchor=(0.5, 0.99 if args.layout == "row" else 0.97),
+               columnspacing=1.6, handlelength=1.2, handletextpad=0.5)
 
-    stem = os.path.join(args.out_dir, "fig_stage_ablation")
+    stem = os.path.join(args.out_dir, "fig_stage_ablation"
+                        + ("_row" if args.layout == "row" else ""))
     fig.savefig(stem + ".pdf", bbox_inches="tight")
     fig.savefig(stem + ".png", bbox_inches="tight", dpi=300)
     plt.close(fig)

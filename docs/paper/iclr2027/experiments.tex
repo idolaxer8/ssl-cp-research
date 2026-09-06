@@ -1,3 +1,16 @@
+% ALIGNED 2026-09-03 (2nd) to the Overleaf ido_paper.tex Ido pasted in
+% chat (gold). Ido applied paste_sec51_datasets, paste_sec51_setup,
+% paste_sec52_prose, paste_sec52_captions and paste_scores_naming
+% (THR/APS/RAPS named only via the citation in 5.1 Baselines and no
+% longer in the Table 2 caption; the "reference backbone" phrasing is
+% gone, both encoders named once in Datasets). Configuration paragraph
+% now states d'=128, C=K, kappa=10, gamma=3 in the main text and says
+% T is "the one quantity resolved per dataset and encoder, fixed once
+% from a small pilot split", with "Appendix~B reports the values".
+% OPEN: Appendix B's table has NO temperature column, so that pointer
+% is currently unmet. CARRIED AS PASTED: "implementation(adaptations"
+% (missing space). Hard-coded Appendix~B/C/D/E/F pointers kept as on
+% Overleaf.
 % v9 (2026-09-02, results-display rework -- user call: two headline
 %   tables, stage-ablation figure, cosine score-histogram figure).
 %     - Table 3 NEW (tab:headline-clipb): the full CLIP ViT-B comparison,
@@ -74,55 +87,40 @@
 
 \section{Experiments}
 \label{sec:experiments}
-
 \subsection{Setup}
 \label{sec:setup}
-
-\textbf{Datasets.} We evaluate on four image-classification
-benchmarks chosen to span a range of difficulty for the frozen
-backbone. CIFAR-10 and CIFAR-100~\citep{krizhevsky2009learning} and
-\emph{mini}ImageNet~\citep{vinyals2016matching} sit at the easier end,
-with classes the embedding separates readily.
-EuroSAT~\citep{helber2019eurosat} sits at the harder end, since it
-moves the backbone off its pretraining domain: its images are
-Sentinel-2 satellite tiles rather than consumer photographs.
-Class counts range from ten to a hundred, so the label budget rather
-than the label space sets the regime. The reference backbone is a
-frozen DINOv2 ViT-B/14~\citep{oquab2023dinov2} ($d = 768$), and
-Section~\ref{sec:headline} repeats every comparison on a second frozen
-encoder, CLIP ViT-B.
-For each dataset the unlabeled pool $\mathcal{U}$ is drawn from held-out
+\textbf{Datasets.} We evaluate on four standard image-classification
+benchmarks: CIFAR-10 and CIFAR-100~\citep{krizhevsky2009learning},
+\emph{mini}ImageNet~\citep{vinyals2016matching}, and
+EuroSAT~\citep{helber2019eurosat}. The first three are consumer
+photographs of the kind the backbone saw in pre-training, while EuroSAT
+is Sentinel-2 satellite imagery and sits further from it.
+Embeddings come from two frozen encoders, DINOv2
+ViT-B/14~\citep{oquab2023dinov2} and CLIP ViT-B~\citep{radford2021clip},
+both of dimension $d = 768$, and every comparison is run on each. For
+each dataset the unlabeled pool $\mathcal{U}$ holds 10,000 held-out
 images of the same distribution and never overlaps the labeled sample.
-
-\textbf{Configuration.} Following Section~\ref{sec:refine}, FRCP is
-run per dataset at a fixed configuration: which refinement stages are
-active, the truncation dimension $d'$, the number of $k$-means groups
-$C$, the neighborhood size $\kappa$ and weight exponent $\gamma$, and
-the score together with its temperature $T$. Each is fixed before the
-reported runs and held constant across every trial and budget. All four
-datasets use the prototype softmax score of
-\eqref{eq:score}. Appendix~B lists the settings
-per dataset and the sweeps behind them.
-% Per-dataset values must be re-verified against the results JSONs
-% before they are written into Appendix B (v4 note still open). The
-% wording "fixed before the reported runs" is deliberate: T is fitted
-% on a labeled pilot split (resolve_softmax_T), not from pool
-% statistics alone.
-
-\textbf{Baselines.} We compare against split CP with THR, APS, and RAPS
-scores on a trained linear head~\citep{sadinle2019least, romano2020aps,
-angelopoulos2021raps}, SemiCP~\citep{zhou2026semicp}, which augments
-calibration with nearest-neighbor-matched unlabeled scores, and
+\textbf{Configuration.} One configuration serves every dataset and both
+encoders. Truncation keeps $d' = 128$ dimensions, whitening pools the within-group covariance over
+$C = K$ $k$-means groups, and smoothing averages each embedding over
+$\kappa = 10$ pool neighbors with weight exponent $\gamma = 3$. The
+score is the prototype softmax of \eqref{eq:score}. Its temperature $T$
+is the one quantity resolved per dataset and encoder, fixed once from a
+small pilot split and then held constant across every trial and budget.
+Appendix~B reports the values.
+\textbf{Baselines.} We compare against split CP on a trained linear
+head, scored by the three standard conformal
+scores~\citep{sadinle2019least, romano2020aps, angelopoulos2021raps},
+SemiCP~\citep{zhou2026semicp}, which augments calibration with
+nearest-neighbor-matched unlabeled scores, and
 CV+~\citep{barber2021predictive}.
 % probe+CP row pending g3 (R2): selftrain / pool-MLP reviewer arms.
 Every split-based baseline divides its labels between training and
 calibration. We grant each its most favorable allocation per cell,
 selected with hindsight from $n_{\mathrm{tr}}/n \in \{0.25, 0.5,
-0.75\}$, and SemiCP additionally its best score, so all comparisons
-favor the baselines. SemiCP follows the official implementation
-(adaptations in Appendix~E). The unlabeled pool is available to every
-method that can consume one.
-
+0.75\}$, and its best score, so all comparisons favor the baselines.
+SemiCP follows the official implementation(adaptations in Appendix~E).
+The unlabeled pool is available to every method that can consume one.
 \textbf{Protocol.} The labeled budget is indexed by shots per class
 $s = n/K$, on a grid $s \in \{2, 4, 6, 8, 10, 12, 14\}$. Each cell
 averages 50 independent trials that resample the labeled sample, the
@@ -137,24 +135,17 @@ the class-conditional
 coverage gap
 $\mathrm{CovGap} = \frac{1}{K}\sum_c |\mathrm{cov}_c - (1-\alpha)|$ in
 percentage points, reported in Appendix~F.
-
 \subsection{FRCP against trained-head baselines}
 \label{sec:headline}
-
-Tables~\ref{tab:headline-main} and~\ref{tab:headline-clipb} report
-mean prediction-set size and marginal coverage across the budget grid,
-on the reference backbone and on CLIP ViT-B. The second encoder refits
-only the pool statistics, every per-dataset setting carries over
-unchanged, and it is run at the four budgets the tables report.
-
+Tables~\ref{tab:headline-main} and~\ref{tab:headline-clipb} report mean
+prediction-set size and marginal coverage across the budget grid, one
+table per encoder.
 \begin{table}[t]
-\caption{Mean prediction-set size ($\pm$ SE) with marginal coverage in
-parentheses on the reference backbone, DINOv2 ViT-B, at target
-miscoverage $\alpha = 0.1$ over 50 trials per cell. Split CP and
-SemiCP are each shown at their best score (THR, APS, or RAPS) and
-train fraction per cell, so every comparison favors the baselines.
-FRCP uses the prototype softmax score throughout. Bold marks the
-smallest set per dataset and budget.}
+\caption{Mean prediction-set size ($\pm$ standard error) with marginal
+coverage in parentheses, on DINOv2 ViT-B at target miscoverage
+$\alpha = 0.1$ over 50 trials. Split CP and SemiCP take their best
+score and train fraction in each cell, so every comparison favors the
+baselines. Bold marks the smallest set per dataset and budget.}
 \label{tab:headline-main}
 \begin{center}
 \small
@@ -186,12 +177,9 @@ dataset & method & 2 shots & 4 shots & 8 shots & 14 shots\\
 \end{tabular}
 \end{center}
 \end{table}
-
 \begin{table}[t]
-\caption{The comparison of Table~\ref{tab:headline-main} repeated on
-CLIP ViT-B, refitting only the pool statistics. Same protocol and
-reading: mean set size ($\pm$ SE) with coverage in parentheses, best
-baseline configuration per cell, bold the smallest set per dataset and
+\caption{Table~\ref{tab:headline-main} repeated on CLIP ViT-B. Same
+protocol, and bold again marks the smallest set per dataset and
 budget.}
 \label{tab:headline-clipb}
 \begin{center}
@@ -224,70 +212,48 @@ dataset & method & 2 shots & 4 shots & 8 shots & 14 shots\\
 \end{tabular}
 \end{center}
 \end{table}
-
 \textbf{Below the boundary, spending every label on calibration wins.}
-At $s = 2$ split CP and SemiCP return most of the label space on every
-dataset and both encoders, from 63 to 98 percent of the $K$
-candidates. FRCP returns between 1.0 and 3.6 labels per set on the
-reference backbone and the smallest set in all eight dataset and
-encoder cells. CV+ is the only competitive alternative at that budget,
-at 1.3 to 3.6 times the FRCP set size and under the weaker
-$1 - 2\alpha$ guarantee. Across the two tables FRCP returns the
-smallest sets in 24 of 32 cells, including every cell at two shots.
-
+At $s = 2$ split CP and SemiCP return 63 to 98 percent of the $K$
+candidates on every dataset and encoder, while FRCP returns 1.0 to 3.6
+labels and the smallest set in all eight cells. CV+ is the only
+competitive alternative there, at 1.3 to 3.6 times the FRCP size and
+under the weaker $1 - 2\alpha$ guarantee. Across the two tables FRCP is
+smallest in 24 of 32 cells.
 \textbf{Set sizes are comparable only because coverage is.} FRCP holds
 marginal coverage at or above the target in all 32 cells, between
 0.900 and 0.948. SemiCP falls below it in four cells on each encoder,
 reaching 0.870 on EuroSAT under CLIP, so part of the size advantage it
 shows at larger budgets is bought back from coverage rather than
 earned on efficiency.
-
-\textbf{The advantage narrows as the budget grows, sooner on the
-weaker encoder.} On DINOv2 FRCP still returns the smallest sets on all
-four datasets at $s = 8$. By $s = 14$ CV+ passes it on
-\emph{mini}ImageNet and on EuroSAT, and the remaining margins on
-CIFAR-10 and CIFAR-100 are a few percent. On CLIP the crossover comes
-earlier, at $s = 4$ on EuroSAT and $s = 8$ on CIFAR-100, while
-CIFAR-10 holds through $s = 14$ and \emph{mini}ImageNet to $s = 8$.
-The whole-budget-to-calibration trade therefore pays where the budget
-is smallest and fades as it grows, which is the boundary
-Section~\ref{sec:intro} locates, and that boundary arrives sooner
-where the encoder separates classes less cleanly.
-
-\textbf{Representation quality moves the absolute sizes, not the
-small-budget ranking.} CLIP sets are larger across the board, on
-CIFAR-100 by more than four times at the largest budget (5.26 against
-1.22 at $s = 14$), yet at two shots the ranking is unchanged and CV+
-is the strongest baseline in every one of those cells on both
-encoders. Appendix~\ref{app:backbones} reports the full grids at both
-miscoverage levels.
-
-\textbf{Runtime.} Conformalizing the 500-point CIFAR-100 test set
-takes 0.4 seconds at $s = 2$ and 1.3 seconds at $s = 14$ on one GPU,
-after a one-off 8.4 seconds to fit $T_{\mathcal{U}}$ on the pool.
-Split CP needs 0.2 and 0.7 seconds, since it scores against a single
-fitted head. CV+ needs 0.2 and 3.2 seconds, so beyond the smallest
-budgets the closed-form refit of \eqref{eq:score} makes full CP the
-cheaper of the two.
-
-\textbf{Full CP or the score?} Because every baseline differs from FRCP in
-both the construction and the score, Appendix~\ref{app:attrib} adds two arms
-that hold the frozen transform and score fixed and vary only the construction.
-Jackknife+ with the same score reproduces FRCP set for set, so the
-transductive refit earns no efficiency and full CP's value is the exact
-guarantee. Split CP with the same score loses at two shots and converges by
-eight without ever collapsing, which places most of the margin over the
-trained-head baselines on the training-free score and the rest on spending
-every label on calibration.
-
+\textbf{The advantage narrows as the budget grows, sooner on the weaker
+encoder.} On DINOv2 FRCP is still smallest on all four datasets at
+$s = 8$, and by $s = 14$ CV+ passes it on \emph{mini}ImageNet and
+EuroSAT, with the margins on CIFAR-10 and CIFAR-100 down to a few
+percent. On CLIP the crossover arrives earlier, at $s = 4$ on EuroSAT
+and $s = 8$ on CIFAR-100 and \emph{mini}ImageNet, while CIFAR-10 holds
+to $s = 14$. CLIP sets are larger throughout, on CIFAR-100 by more than
+four times at the largest budget, 5.26 against 1.22. Neither shift
+reaches the small-budget ranking, where CV+ remains the strongest
+baseline in every cell on both encoders. Appendix~\ref{app:backbones}
+reports the full grids at both miscoverage levels.
+\textbf{Runtime.} Conformalizing the 500-point CIFAR-100 test set takes
+0.4 seconds at $s = 2$ and 1.3 at $s = 14$ on one GPU, after a one-off
+8.4 seconds to fit $T_{\mathcal{U}}$. Split CP needs 0.2 and 0.7,
+CV+ 0.2 and 3.2, so beyond the smallest budgets the closed-form update
+of \eqref{eq:score} makes full CP the cheaper of the two.
+\textbf{Full CP or the score?} Every baseline differs from FRCP in both
+the construction and the score, so Appendix~\ref{app:attrib} varies only
+the construction. Jackknife+ with the same score reproduces FRCP set for
+set, so full CP earns the exact guarantee rather than efficiency. Split
+CP with the same score loses at two shots and converges by eight without
+collapsing, which places most of the margin on the training-free score
+and the rest on spending every label on calibration.
 \subsection{Refinement ablation}
 \label{sec:ablation}
-
 Figure~\ref{fig:ablation} ablates all eight subsets of the three
 refinement stages on every dataset under the deployed score, and
 Figure~\ref{fig:score-hist} shows what the surviving subset does to
 the score distributions. Appendix~D tabulates the decomposition.
-
 \begin{figure}[t]
 \begin{center}
 \includegraphics[width=\linewidth]{fig_stage_ablation.pdf}
@@ -295,50 +261,39 @@ the score distributions. Appendix~D tabulates the decomposition.
 \caption{Stage ablation. Mean prediction-set size for every subset of
 the refinement stages, truncation (T), whitening (W), and smoothing
 (S), at 2, 4, and 8 labels per class and $\alpha = 0.1$ over 20
-trials, under the deployed score with its temperature refitted per
-arm. The dot matrix marks the active stages. Bars above a panel cap
-are clipped and annotated with their value. Every arm is exact full CP
-with pool-fitted transforms (Proposition~\ref{prop:validity}), with
-coverage between 0.89 and 0.97 across all cells.}
+trials. The dot matrix marks the active stages. Bars above a panel cap
+are clipped and annotated with their value.}
 \label{fig:ablation}
 \end{figure}
-
 \begin{figure}[t]
 \begin{center}
 \includegraphics[width=\linewidth]{fig_refine_score_hist.pdf}
 \end{center}
-\caption{Refinement and the score distribution. True-class (green) and
-false-class (red) score mass on the test set, before (top) and after
-(bottom) the frozen refinement, with the calibration quantile
-$\hat q_{1-\alpha}$ dashed, on one balanced split at four labels per
-class. Both rows use the same training-free prototype cosine score,
-the softmax-free member of the deployed family, so the change is in
-the representation and not in the normalizer. Annotations give
-coverage, mean set size, and leak, the mean number of false labels
-inside the set.}
+\caption{Refinement and the score distribution. True-class (green) and false-class (red)
+score mass over the test set,
+each point contributing one true-class score and its $K-1$ false-class
+scores, before (top) and after (bottom) the frozen refinement, with the
+calibration quantile $\hat q_{1-\alpha}$ dashed, at four labels per class.
+Annotations give coverage, mean set size, and
+leak - the mean number of false labels inside the set.}
 \label{fig:score-hist}
 \end{figure}
-
 \textbf{Refinement pays most at small budgets, and only the full chain
 delivers it.} The full pipeline returns the smallest sets in all 12
 dataset and budget cells of Figure~\ref{fig:ablation}. On CIFAR-100 it
 reduces set size by 79\% at $s = 2$ (10.7 $\to$ 2.27), by 36\% at
-$s = 4$, and by 11\% at $s = 8$. No single stage comes close on that
-dataset at two shots: truncation alone reaches 4.16, smoothing alone
-4.56, and whitening alone 7.70. Truncation and whitening together
-deliver the largest step, and smoothing removes up to a further third
-(3.35 $\to$ 2.27).
+$s = 4$, and by 11\% at $s = 8$. No single stage gets below 4.16 there
+at two shots. Truncation and whitening together deliver the largest
+step, and smoothing removes up to a further third (3.35 $\to$ 2.27).
 
 \textbf{Order matters, not just membership.} Whitening alone
-destabilizes the temperature fit, which collapses to its floor on
-every dataset, and its sets inflate past the raw embedding on EuroSAT
-at all three budgets (6.40 against 5.52 at $s = 2$). With truncation
-first the fit is stable and the pair improves on either stage alone on
-three of the four datasets. Off-domain EuroSAT only breaks even at the
-pair, and there smoothing lands the decisive step (4.32 $\to$ 3.65 at
-$s = 2$). The figure thus recovers, in data, the ordering
-Section~\ref{sec:refine} fixes: truncation conditions the space that
-whitening equalizes, and smoothing acts last.
+destabilizes the temperature fit, which collapses to its floor on every
+dataset, and its sets inflate past the raw embedding on EuroSAT at all
+three budgets (6.40 against 5.52 at $s = 2$). With truncation first the
+fit is stable and the pair improves on either stage alone on three of
+the four datasets. EuroSAT only breaks even at the pair, and there
+smoothing lands the decisive step (4.32 $\to$ 3.65 at $s = 2$), which
+is the ordering Section~\ref{sec:refine} fixes.
 
 % --- PARKED 2026-08-31 (user call): the score-family presentation is
 % OPEN, both whether to address it and how. fig_r1b_ncm_* and the
@@ -346,32 +301,29 @@ whitening equalizes, and smoothing acts last.
 % \textbf{Score family.} The softmax normalization tightens the cosine
 % score by 18--26\% across budgets, and the top-$k$ ratio trails both
 % on this separable dataset.
-
 \textbf{Refinement separates the score mass around the quantile.}
-Figure~\ref{fig:score-hist} shows the mechanism the ablation
-aggregates. Refinement concentrates the true-class scores below the
-calibration quantile and pushes false-class mass above it, so the same
-coverage is bought with fewer false labels in the set: the leak falls
-from 3.03 to 0.11 on CIFAR-10 and from 2.68 to 0.78 on CIFAR-100 at
-essentially unchanged coverage. Even on off-domain EuroSAT, where the
-two masses stay entangled, the leak drops from 4.05 to 1.72. The pool
-neighborhoods that smoothing averages over explain where that last
-step is safe: whitening raises the weighted pool homophily $h_w$ on
-every dataset, and the fraction of labeled points
-Lemma~\ref{lem:smooth} certifies rises with it on three of the four,
-reaching 52 to 68\% (Table~\ref{tab:h-cert}). EuroSAT is the one
-inversion, homophily up but certificates down, and the certificate
-reads at the level of the representation exactly as
-Section~\ref{sec:theory} scopes it.
+Refinement concentrates the true-class scores below the calibration
+quantile and pushes false-class mass above it, so the same coverage is
+bought with fewer false labels in the set: the leak falls from 3.03 to
+0.11 on CIFAR-10 and from 2.68 to 0.78 on CIFAR-100 at essentially
+unchanged coverage. Even on EuroSAT, where the two masses stay
+entangled, the leak drops from 4.05 to 1.72.
 
 \textbf{Smoothing the representation, not the score.}
 Appendix~\ref{app:snaps} compares the two levels at which a pool
 correction can act (Table~\ref{tab:snaps-vs-smoothing}): the
 representation-level smoothing stage recovers more of the refinement
 gain than a score-level SNAPS correction at the small budgets that
-matter, at comparable per-trial cost, and stacking the two adds
-little.
+matter, at comparable per-trial cost, and stacking the two adds little.
 
+
+% --- provenance comments whose anchor text is no longer in the
+% --- Overleaf body (kept at the 09-03 alignment):
+% Per-dataset values must be re-verified against the results JSONs
+% before they are written into Appendix B (v4 note still open). The
+% wording "fixed before the reported runs" is deliberate: T is fitted
+% on a labeled pilot split (resolve_softmax_T), not from pool
+% statistics alone.
 % --- appendix stock ---------------------------------------------------
 % Stage table (r1b decomposition, 50 trials, raw / +T,W / full):
 % output/r1_headline/plots/table_r1b_cifar100.tex. The 2^3 grid behind

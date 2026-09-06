@@ -1,0 +1,36 @@
+\begin{table}[t]
+\centering
+\small
+\caption{Backbone transfer, semi-supervised ResNet-50: mean prediction-set size ($\pm$ SE) with marginal coverage in parentheses over 50 trials, layout and conventions of Table~\ref{tab:headline-main}. The pipeline and per-dataset configuration carry over unchanged, only the pool statistics are refitted. FRCP uses the prototype cosine score on CIFAR-100, where the pilot temperature fit collapses. Target miscoverage $\alpha=0.05$.}
+\label{tab:backbone-resnet50-a005}
+\begin{tabular}{llcccc}
+\toprule
+dataset & method & 2 shots & 4 shots & 8 shots & 14 shots\\
+\midrule
+\multirow{4}{*}{CIFAR-10} & FRCP & \textbf{4.76$\pm$0.20 {\scriptsize(0.970)}} & \textbf{3.33$\pm$0.17 {\scriptsize(0.959)}} & \textbf{2.58$\pm$0.11 {\scriptsize(0.960)}} & \textbf{2.08$\pm$0.07 {\scriptsize(0.947)}}\\
+ & CV+ & 7.73$\pm$0.27 {\scriptsize(0.983)} & 4.06$\pm$0.15 {\scriptsize(0.964)} & 3.03$\pm$0.10 {\scriptsize(0.961)} & 2.16$\pm$0.05 {\scriptsize(0.951)}\\
+ & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 7.82$\pm$0.29 {\scriptsize(0.970)} & 3.73$\pm$0.23 {\scriptsize(0.952)} & 3.49$\pm$0.18 {\scriptsize(0.956)}\\
+ & SemiCP (best) & 8.40$\pm$0.32 {\scriptsize(0.971)} & 5.91$\pm$0.30 {\scriptsize(0.943)} & 3.60$\pm$0.39 {\scriptsize(0.922)} & 2.44$\pm$0.21 {\scriptsize(0.922)}\\
+\midrule
+\multirow{4}{*}{CIFAR-100} & FRCP & \textbf{46.73$\pm$1.39 {\scriptsize(0.976)}} & \textbf{23.09$\pm$0.50 {\scriptsize(0.957)}} & 17.32$\pm$0.22 {\scriptsize(0.953)} & 15.46$\pm$0.13 {\scriptsize(0.952)}\\
+ & CV+ & 57.36$\pm$1.12 {\scriptsize(0.985)} & 25.25$\pm$0.60 {\scriptsize(0.965)} & \textbf{15.38$\pm$0.24 {\scriptsize(0.961)}} & \textbf{10.74$\pm$0.16 {\scriptsize(0.959)}}\\
+ & Split CP (best) & 96.74$\pm$0.11 {\scriptsize(0.969)} & 48.17$\pm$2.41 {\scriptsize(0.975)} & 19.56$\pm$0.49 {\scriptsize(0.962)} & 12.30$\pm$0.27 {\scriptsize(0.956)}\\
+ & SemiCP (best) & 96.12$\pm$0.25 {\scriptsize(0.962)} & 47.58$\pm$2.79 {\scriptsize(0.963)} & 19.30$\pm$0.66 {\scriptsize(0.960)} & 11.83$\pm$0.31 {\scriptsize(0.952)}\\
+\midrule
+\multirow{4}{*}{miniImageNet} & FRCP & \textbf{1.81$\pm$0.07 {\scriptsize(0.972)}} & \textbf{1.21$\pm$0.01 {\scriptsize(0.955)}} & \textbf{1.15$\pm$0.01 {\scriptsize(0.950)}} & \textbf{1.13$\pm$0.00 {\scriptsize(0.950)}}\\
+ & CV+ & 7.98$\pm$0.32 {\scriptsize(0.981)} & 1.83$\pm$0.03 {\scriptsize(0.962)} & 1.29$\pm$0.01 {\scriptsize(0.959)} & \textbf{1.14$\pm$0.01 {\scriptsize(0.955)}}\\
+ & Split CP (best) & 96.62$\pm$0.12 {\scriptsize(0.967)} & 8.43$\pm$2.02 {\scriptsize(0.975)} & 1.55$\pm$0.04 {\scriptsize(0.959)} & 1.22$\pm$0.02 {\scriptsize(0.956)}\\
+ & SemiCP (best) & 95.39$\pm$0.21 {\scriptsize(0.955)} & 4.06$\pm$0.35 {\scriptsize(0.964)} & 1.46$\pm$0.03 {\scriptsize(0.955)} & 1.20$\pm$0.01 {\scriptsize(0.955)}\\
+\midrule
+\multirow{4}{*}{EuroSAT} & FRCP & \textbf{3.83$\pm$0.23 {\scriptsize(0.962)}} & \textbf{2.44$\pm$0.17 {\scriptsize(0.948)}} & \textbf{1.69$\pm$0.06 {\scriptsize(0.947)}} & \textbf{1.57$\pm$0.04 {\scriptsize(0.954)}}\\
+ & CV+ & 9.56$\pm$0.11 {\scriptsize(0.988)} & 4.95$\pm$0.26 {\scriptsize(0.965)} & 2.47$\pm$0.08 {\scriptsize(0.959)} & 1.91$\pm$0.04 {\scriptsize(0.962)}\\
+ & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 7.79$\pm$0.29 {\scriptsize(0.960)} & 3.87$\pm$0.29 {\scriptsize(0.959)} & 3.11$\pm$0.20 {\scriptsize(0.963)}\\
+ & SemiCP (best) & 8.21$\pm$0.34 {\scriptsize(0.962)} & 5.70$\pm$0.28 {\scriptsize(0.948)} & 3.29$\pm$0.40 {\scriptsize(0.924)} & 2.47$\pm$0.26 {\scriptsize(0.946)}\\
+\midrule
+\multirow{4}{*}{FGVC-Aircraft} & FRCP & 94.96$\pm$0.22 {\scriptsize(0.983)} & 88.48$\pm$0.30 {\scriptsize(0.972)} & 77.92$\pm$0.42 {\scriptsize(0.961)} & 68.83$\pm$0.32 {\scriptsize(0.955)}\\
+ & CV+ & \textbf{91.42$\pm$0.55 {\scriptsize(0.982)}} & \textbf{74.49$\pm$0.53 {\scriptsize(0.971)}} & \textbf{55.89$\pm$0.42 {\scriptsize(0.967)}} & \textbf{41.43$\pm$0.34 {\scriptsize(0.961)}}\\
+ & Split CP (best) & 96.78$\pm$0.09 {\scriptsize(0.968)} & 83.89$\pm$1.19 {\scriptsize(0.972)} & 60.93$\pm$1.04 {\scriptsize(0.958)} & 45.76$\pm$0.88 {\scriptsize(0.955)}\\
+ & SemiCP (best) & 96.15$\pm$0.17 {\scriptsize(0.962)} & 82.30$\pm$1.33 {\scriptsize(0.968)} & 61.85$\pm$1.27 {\scriptsize(0.958)} & 44.37$\pm$0.99 {\scriptsize(0.952)}\\
+\bottomrule
+\end{tabular}
+\end{table}

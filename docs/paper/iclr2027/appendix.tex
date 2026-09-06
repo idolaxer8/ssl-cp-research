@@ -1,3 +1,13 @@
+% ALIGNED 2026-09-03: the Overleaf ido_paper.tex Ido pasted in chat now
+% carries this appendix verbatim (A Proofs, B config, C alpha 0.05,
+% D ablation tables, E baselines, F CovGap, G attribution, H backbone
+% transfer, I SNAPS vs smoothing, J candidate sweep), with the mirror's
+% header comment block pasted along with it. Body unchanged here. One
+% thing to CHECK on Overleaf: the chat paste ended mid-sentence at
+% "... collapses to" (app:cost, last line); the mirror's closing
+% "$O(n(d' + K))$." must be present there. NOTE the main text still
+% reaches B, C, D, E, F by hard-coded letter on Overleaf; only
+% app:ablation, app:backbones, app:attrib, app:snaps, app:cost use \ref.
 % Appendix. v1 (2026-08-27), NOT yet on Overleaf.
 % v3 (2026-08-31, backbone transfer): NEW section app:backbones between
 %   app:attrib and app:snaps -- see its block comment. NOT yet on Overleaf.
@@ -515,3 +525,53 @@ does not appear;
 its softer coupling to the labels is still not the exact per-candidate
 recomputation, so it is reported as measured and its $\eta$ and $k$ are not
 tuned on the roster.
+
+\section{The candidate sweep in closed form}
+\label{app:cost}
+
+Section~\ref{sec:fcp} states that one matrix-vector product per test
+point supplies every quantity the sweep over candidate labels needs.
+This section derives that claim.
+
+Write $z$ for the refined test embedding $z_{n+1}$, let
+$S_c = \sum_{j : y_j = c} z_j$ be the sum of the refined labeled
+embeddings of class $c$, and let $Z$ be the matrix whose rows are those
+embeddings. The score reads cosines and
+$\cos(u, v) = \cos(u, \lambda v)$ for any $\lambda > 0$, so a prototype
+can be carried as a sum rather than a mean.
+
+Candidate $k$ augments the sample with $(z, k)$, which replaces $S_k$ by
+$S_k + z$ and leaves every other class sum untouched. Logits for classes
+$c \neq k$ therefore involve the labeled sample alone and are formed
+once for the whole run. For class $k$, put
+\begin{equation}
+\label{eq:cost-parts}
+b_i \;=\; \langle z_i, S_k\rangle + \langle z_i, z\rangle ,
+\qquad
+A \;=\; \|S_k\|^{2} + 2\langle S_k, z\rangle + \|z\|^{2} ,
+\end{equation}
+so that $b_i = \langle z_i, S_k + z\rangle$ and $A = \|S_k + z\|^{2}$.
+A calibration point outside class $k$ is scored against $S_k + z$ and
+takes the logit $b_i / \sqrt{A}$. A point inside class $k$ is scored
+against $S_k + z - z_i$, and expanding that prototype gives
+\begin{equation}
+\label{eq:cost-member}
+\cos\bigl(z_i,\, \mu^{(k,-i)}_{k}\bigr) \;=\;
+\frac{b_i - \|z_i\|^{2}}
+     {\sqrt{A - 2 b_i + \|z_i\|^{2}}} .
+\end{equation}
+
+Every ingredient falls into three kinds. The quantities
+$\langle z_i, S_c\rangle$, $\|S_c\|^{2}$ and $\|z_i\|^{2}$ depend on the
+labeled sample alone and are built once, in $O(nKd')$. The quantities
+$\langle S_c, z\rangle$ and $\|z\|^{2}$ depend on the test point but not
+on $i$, at $O(Kd')$ per test point. The only ingredient coupling a
+calibration point to the test point is $\langle z_i, z\rangle$, and all
+$n$ of them arrive together as the product $Z z$ in $O(nd')$.
+
+That product carries no dependence on $k$. The candidate label selects
+only which cached column joins it in \eqref{eq:cost-parts}, so the same
+$n$ inner products serve all $K$ candidates and the sweep is scalar
+arithmetic, $O(n)$ per candidate. With $n = sK$ and $s \ge 2$ in every
+reported run, the per-test-point total $O(nd' + Kd' + nK)$ collapses to
+$O(n(d' + K))$.

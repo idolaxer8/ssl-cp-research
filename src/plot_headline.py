@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 # Okabe-Ito (colorblind-safe); ours = black, emphasized
 STYLE = {
     "ours":    dict(color="#000000", marker="o", ls="-",  lw=1.8, ms=4.5,
-                    zorder=5, label="Ours (frozen transform + full CP)"),
+                    zorder=5, label="FRCP"),
     "cvplus":  dict(color="#0072B2", marker="s", ls="--", lw=1.2, ms=3.8,
                     zorder=4, label="CV+"),
     "splitcp": dict(color="#E69F00", marker="^", ls="-.", lw=1.2, ms=4.2,
@@ -37,8 +37,8 @@ FROZEN_ARM = {"aircraft": "frozen_unwhitened_topk_asym",
               "stanford_cars": "frozen_unwhitened_topk_asym"}
 
 plt.rcParams.update({
-    "font.size": 8, "axes.labelsize": 8, "axes.titlesize": 8,
-    "legend.fontsize": 7, "xtick.labelsize": 7, "ytick.labelsize": 7,
+    "font.size": 9, "axes.labelsize": 9, "axes.titlesize": 9,
+    "legend.fontsize": 8, "xtick.labelsize": 8, "ytick.labelsize": 8,
     "axes.spines.top": False, "axes.spines.right": False,
     "axes.linewidth": 0.8, "legend.frameon": False,
     "font.family": "serif", "mathtext.fontset": "dejavuserif",
@@ -65,10 +65,16 @@ def make_fig(res, alpha, cap, out_base):
     arms = [("ours", frozen_arm), ("cvplus", "cvplus"),
             ("splitcp", "splitcp"), ("semicp", "semicp")]
 
+    # Width matches the ICLR text block (5.5 in), so the figure is
+    # included at \linewidth with NO downscaling and the 8/7 pt type
+    # below lands on the page at its stated size. At the old 6.8 in it
+    # was shrunk to ~77%, which is what made the labels look soft.
     fig, (ax1, ax2) = plt.subplots(
-        1, 2, figsize=(6.8, 2.55), gridspec_kw={"wspace": 0.30})
+        1, 2, figsize=(5.5, 3.0), layout="constrained")
+    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.09)
 
     clipped_by_x = {}                       # x -> [(value, color)] for stacks
+    cov_seen = []                           # coverage of the PLOTTED series only
     for key, arm in arms:
         S = series(rows, arm, alpha)
         if not len(S):
@@ -89,40 +95,60 @@ def make_fig(res, alpha, cap, out_base):
         # coverage panel
         st2 = {k: v for k, v in st.items()}
         ax2.plot(shots, cov, marker=st2.pop("marker"), **st2)
+        cov_seen.extend(cov.tolist())
 
     # off-scale values: per-x colored stacks just under the cap
     for x, vals in clipped_by_x.items():
         for i, (v, color) in enumerate(sorted(vals, reverse=True)):
-            ax1.text(x + 0.25, cap * (0.955 - 0.075 * i),
-                     f"↑{v:.0f}", fontsize=6.5, color=color,
-                     ha="left", va="top")
+            ax1.annotate(f"↑{v:.0f}", xy=(x, cap),
+                         xytext=(2.5, -3 - 8.5 * i),
+                         textcoords="offset points",
+                         fontsize=6.5, color=color, ha="left", va="top",
+                         annotation_clip=False)
 
     ax1.set_xlabel("labels per class (shots)")
     ax1.set_ylabel("mean prediction-set size")
     ax1.set_ylim(0, cap * 1.02)
-    ax1.set_title(f"(a)  {DS_LABEL.get(ds, ds)}   "
-                  fr"($\alpha$ = {alpha:g}, K = {res['K']})",
-                  loc="left", pad=4)
-    ax2.set_title("(b)", loc="left", pad=4)
+    # (a) and (b) get identical treatment. The dataset, alpha and K
+    # were only on (a) and unbalanced the two panels, so they move to
+    # the caption, which already carries them.
+    ax1.set_title("(a)", loc="left", pad=3)
+    ax2.set_title("(b)", loc="left", pad=3)
 
     ax2.axhline(1 - alpha, color="0.45", lw=0.8, ls=(0, (4, 3)), zorder=1)
-    ax2.text(min(x["shots"] for x in rows), 1 - alpha + 0.001,
-             f"target {1 - alpha:g}", fontsize=6, color="0.35",
-             va="bottom", ha="left")
+    # Left edge, just above the line: the curves all sit high at the
+    # smallest budgets, so this corner is the only empty one. (The
+    # right edge is where every method converges onto the target.)
+    ax2.text(0.015, 1 - alpha + 0.0012, f"target {1 - alpha:g}",
+             transform=ax2.get_yaxis_transform(), fontsize=6,
+             color="0.35", va="bottom", ha="left")
     ax2.set_xlabel("labels per class (shots)")
     ax2.set_ylabel("marginal coverage")
-    ax2.set_ylim(1 - alpha - 0.03, 1.004)
+    # Fit to the data rather than running to 1.0. With a fixed
+    # (1-alpha-0.03, 1.004) window the curves sat in a middle band with
+    # dead space above and below, so panel (b) read as vertically
+    # offset from (a), which fills its box. The target line stays in
+    # view either way.
+    # cov_seen, not every row: `rows` also holds the score x train_frac
+    # arms that lose the best-per-cell selection, some of which sit far
+    # below target and would drag the window back open.
+    lo = min([1 - alpha] + cov_seen) - 0.006
+    hi = max([1 - alpha] + cov_seen) + 0.006
+    ax2.set_ylim(lo, hi)
 
     for ax in (ax1, ax2):
         ax.set_xticks(sorted({x["shots"] for x in rows}))
 
     handles, labels = ax1.get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=4,
-               bbox_to_anchor=(0.5, 0.99), columnspacing=1.3,
-               handlelength=2.0, handletextpad=0.5)
+    fig.legend(handles, labels, loc="outside upper center", ncol=4,
+               columnspacing=1.4, handlelength=1.9, handletextpad=0.5,
+               borderaxespad=0.0)
 
-    fig.savefig(out_base + ".pdf", bbox_inches="tight")
-    fig.savefig(out_base + ".png", bbox_inches="tight", dpi=300)
+    # No bbox_inches="tight": it re-crops to the legend row and pulls
+    # the axes off-centre. constrained_layout already reserves the
+    # space, so the saved canvas is exactly figsize.
+    fig.savefig(out_base + ".pdf")
+    fig.savefig(out_base + ".png", dpi=400)
     plt.close(fig)
 
     cap_txt = (

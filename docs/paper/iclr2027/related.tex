@@ -1,0 +1,106 @@
+% ALIGNED 2026-09-03 (2nd) to the Overleaf ido_paper.tex Ido pasted in
+% chat (gold). Two edits by Ido: "PCA with whitening" -> "principal
+% component analysis (PCA) with whitening" (first use spelled out, so
+% 4.1 can now say PCA plainly), and "FRCP extends this lineage" -> "We
+% extends this lineage". CARRIED AS PASTED: "We extends" needs "We
+% extend" on Overleaf.
+% Section 2 -- Related work (mirror of the Overleaf ido_paper.tex section)
+% Status: v2 2026-08-23 -- user feedback applied:
+%   (1) SSL block kept but compressed (precedent: FCA has a models
+%       paragraph; SemiCP/SNAPS/MDCP do not); backbone count phrased
+%       flexibly (scope in flux: probably dinov2 + one CLIP + one more).
+%   (2) refinement block: no validity-refrain repetition; added the
+%       retrieval <-> nonconformity-score intuition; denoising moved OUT
+%       (now positioned next to DAPS/SNAPS in the last block).
+%   (3) full-CP paragraph expanded with real theory (p-value construction,
+%       coverage sandwich, closed-form lineage: ridge/kNN conformal).
+%   (4) few-labels block reflowed; ClusterCP dropped (appears once, in
+%       intro P2); baseline-suite sentence fixed to the true R2 roster.
+% No PR / participation-ratio mention (user decision 08-23).
+% NAMING (user decision 2026-08-25): "denoising stage" -> "smoothing
+% stage" paper-wide. NOT yet applied on Overleaf.
+% v3 (2026-08-26, section polish pass, user notes):
+%   - eq:coverage MOVED HERE from Background (guarantee was already in
+%     words in this paragraph; §3 now references \eqref{eq:coverage}
+%     instead of displaying it -- numbering unchanged, it stays eq (1));
+%   - added cherubin2021exact (ICML 2021, verified 08-26: exact full-CP
+%     acceleration via incremental/decremental learning) to the
+%     cheap-refit lineage;
+%   - RULE 11 applied: "targets $K \ge 100$ classes" -> "works at a few
+%     labels per class".
+% NOT yet applied on Overleaf.
+
+\section{Related work}
+\label{sec:related}
+
+\paragraph{Frozen self-supervised representations.}
+Vision transformers~\citep{dosovitskiy2021image} are increasingly used as general-purpose foundation models, with large-scale pre-training producing transferable visual representations. DINOv2 and its successors provide features that support lightweight probes across tasks without fine-tuning~\citep{oquab2023dinov2, simeoni2025dinov3}, while CLIP learns transferable image embeddings from language supervision~\citep{radford2021clip}. FRCP follows this paradigm with a frozen backbone and nearest-prototype prediction, evaluated on DINOv2 and CLIP.
+
+\paragraph{Representation refinement.}
+Post-hoc refinement of pre-trained descriptors is a long-standing lever
+in image retrieval: principal component analysis (PCA) with whitening suppresses co-occurrence
+structure and improves matching~\citep{jegou2012negative}, and the
+practice persists in current training-free systems, where
+\citet{min2026street} refine DINOv2 embeddings with PCA-based whitening
+for zero-shot cross-view retrieval. Few-shot classification converged on
+the same operation: Simple CNAPS shows that a regularized Mahalanobis
+metric, that is, whitened distances, outperforms Euclidean and cosine
+comparisons~\citep{bateni2020improved}. These findings transfer to
+conformal prediction for a simple reason: a training-free nonconformity
+score is itself a retrieval-style computation, ranking candidate classes
+by embedding distance. Thus, whatever sharpens distances for retrieval and
+nearest-class classification also sharpens the score's separation of
+true from false labels. Our approach imports truncation and whitening as its
+first two refinement stages, fitted on the unlabeled pool.
+
+\paragraph{Conformal prediction.}
+CP turns any score into prediction sets with finite-sample coverage,
+assuming only exchangeability of calibration and test
+data~\citep{vovk2005algorithmic, angelopoulos2023gentle}. In its
+original, full (transductive) form, each candidate label $k$ for a test
+point $x$ is scored after augmenting the calibration bag with the pair
+$(x, k)$, all $n{+}1$ scores are computed symmetrically, and $k$ enters
+the prediction set when its rank-based p-value exceeds
+$\alpha$~\citep{vovk2005algorithmic}. With $n$ labeled examples, the
+resulting set satisfies
+\begin{equation}
+\label{eq:coverage}
+\Pr\!\left[\, y \in \Gamma_\alpha(x) \,\right] \;\ge\; 1 - \alpha
+\end{equation}
+for the test pair $(x, y)$ at any sample size, with a matching upper
+bound of $1 - \alpha + \tfrac{1}{n+1}$ when ties occur with probability
+zero. Split
+CP~\citep{papadopoulos2002inductive, lei2018distribution} trades this
+construction for computation: a model is fitted once on a training split
+and only a threshold is calibrated on the rest, which made CP practical
+at scale and made THR, APS, and RAPS the standard classification
+scores~\citep{sadinle2019least, romano2020aps, angelopoulos2021raps}.
+Full CP has remained attractive wherever its cost can be tamed, a
+lineage that begins with the closed-form ridge regression confidence
+machine~\citep{nouretdinov2001ridge} and nearest-neighbor
+scores~\citep{vovk2005algorithmic} and continues in exact accelerations
+of full CP through incremental and decremental
+learning~\citep{cherubin2021exact}. We extends this lineage, combining full CP with a training-free score at modest computational cost.
+
+\paragraph{Conformal prediction with few labels or unlabeled data.}
+The label-scarce regime has been approached from three directions.
+\citet{fisch2021few} meta-learn nonconformity scores from auxiliary
+tasks so that few in-task labels suffice. SemiCP enlarges the
+calibration set itself, assigning unlabeled points
+nearest-neighbor-matched scores~\citep{zhou2026semicp}. Closest to our
+work, FCA runs full CP transductively over a few-shot adaptation set to
+jointly adapt and conformalize medical vision-language
+models~\citep{silva2025full}. FRCP shares its full-CP thesis but remains training-free and works at
+a few labels per class, where fitting even a linear probe strains the
+budget. Without the text tower its adaptation starts from, FCA
+degenerates in our setting to full CP under a prototype-style score on
+unrefined embeddings, which is the raw arm of the score ablation
+(Appendix~\ref{app:ablation}). A separate line smooths
+nonconformity scores over graph neighborhoods: DAPS diffuses scores
+along a given graph, and SNAPS extends the aggregation to
+feature-similar nodes~\citep{zargarbashi2023conformal,
+song2024similarity}. Our smoothing stage is the representation-level
+counterpart of this idea: descended from query expansion in
+retrieval~\citep{radenovic2019finetuning}, it averages each embedding
+with its unlabeled-pool neighbors before any score exists, rather than
+correcting scores afterwards.

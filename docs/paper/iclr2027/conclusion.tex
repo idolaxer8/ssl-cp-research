@@ -1,0 +1,43 @@
+% ALIGNED 2026-09-03 to the Overleaf ido_paper.tex Ido pasted in chat
+% (gold): Ido's own version of paste_conclusion.tex. "gives each of its
+% three inputs one job" framing; the closing limitation sentence
+% ("refinement ... does not create class separation the representation
+% lacks") is DROPPED by Ido.
+% Section 6 -- Conclusion. v2 (2026-08-27), user's phrasing with the
+% rules applied. NOT yet on Overleaf.
+% Changes to the draft you sent:
+%   - rule 1: the semicolon in "training split; because the resulting
+%     prototype updates are closed-form" is gone, split into two
+%     sentences (which also breaks up a 38-word sentence);
+%   - "fundamental limit" -> "a limit", per your note;
+%   - LIMITATION COMPRESSED from two sentences to one. Your draft said
+%     it twice: "cannot create class separation that is absent from the
+%     underlying representation" and "additional labels alone cannot
+%     recover informative prediction sets" are the same claim, and the
+%     second re-explains the first;
+%   - rule 4, one term per concept: the draft used both "few-label
+%     regime" and "label-scarce regime". Now label-scarce throughout,
+%     matching the abstract, intro and Section 3;
+%   - "in the label-scarce regime" appeared twice, so the results
+%     sentence now reads "in the regime it targets". That also keeps
+%     the claim honest, since Section 5 has CV+ taking some late-budget
+%     cells;
+%   - rule 4, throat-clearing: "In this work," cut. Put it back if you
+%     want the conventional opener, it is three words.
+% Rule 8 holds: no numbers here, they live in the intro (once) and
+% Section 5. Rule 2 holds: the coverage guarantee is not restated.
+% This section satisfies the "(Section~6)" pointer at the end of 5.2.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We introduce FRCP, which gives each of its three inputs one job. A
+frozen self-supervised backbone supplies the representation, so nothing
+is trained on the task. The unlabeled pool refines that representation
+through truncation, whitening, and smoothing. The labeled sample is
+reserved entirely for conformal inference, which full conformal
+prediction allows by scoring candidate labels against class prototypes
+rather than a trained head, at closed-form cost. Across the benchmarks
+and label budgets we study, FRCP returns the smallest prediction sets in
+the regime it targets, with the largest gains at the lowest budgets and
+diminishing gains as labels accumulate.
