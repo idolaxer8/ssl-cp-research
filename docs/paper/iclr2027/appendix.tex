@@ -448,27 +448,29 @@ finite-sample floor full CP escapes.
 % order, label tab:headline-clipb-a005).
 % REWORKED 2026-09-06 (sec5 reorg): the CLIP comparison left the main
 % text (user call) and the encoder is UPGRADED to CLIP ViT-L, which
-% STRENGTHENS the claim (7/9 + 8/9 cells vs 6/9 + 6/9 on ViT-B, FRCP
-% sets ~halve on cifar100). Tables from
+% STRENGTHENS the claim. Tables from
 % output/backbone_headline/clip-large/results_*.json via
 % make_headline_tables.py; the ViT-B tables remain generator-emitted
-% (table_headline_clipb_*.tex) if a reviewer asks. CLIP grid currently
-% {2,4,8}: the s=12 cells have not been run for this encoder.
+% (table_headline_clipb_*.tex) if a reviewer asks. s=12 cells run
+% locally 09-06 (checkpoint-merged into the {2,4,8,14} results), so the
+% grid matches the main table: {2,4,8,12}.
 \section{Backbone transfer}
 \label{app:backbones}
 
 Tables~\ref{tab:headline-clipl} and~\ref{tab:headline-clipl-a005}
 repeat the comparison of Table~\ref{tab:headline-main} on CLIP
 ViT-L~\citep{radford2021clip} embeddings of dimension $d = 1024$, at
-both miscoverage levels and on the budget grid $s \in \{2, 4, 8\}$ run
-for this encoder. The pipeline and per-dataset configuration of
-Appendix~\ref{app:config} carry over unchanged. Only the pool
-statistics are refitted, and the softmax temperature is re-piloted for
-the encoder. FRCP is smallest in 7 of 9 cells at $\alpha = 0.1$ and 8
-of 9 at $\alpha = 0.05$, and the EuroSAT crossover of the main table
-is again the only exception. The advantage also widens with encoder
-quality: on the smaller CLIP ViT-B the corresponding counts are 6 of 9
-at both levels, and the FRCP sets themselves roughly halve on
+both miscoverage levels and on the same budget grid. The pipeline and
+per-dataset configuration of Appendix~\ref{app:config} carry over
+unchanged. Only the pool statistics are refitted, and the softmax
+temperature is re-piloted for the encoder. FRCP is smallest in 9 of 12
+cells at $\alpha = 0.1$, and every loss is on EuroSAT, where the
+crossover arrives at $s = 4$ on this encoder. At $\alpha = 0.05$ it is
+smallest in 8 of 12, with CV+ passing narrowly at $s = 12$ on CIFAR-10
+and CIFAR-100, 1.07 against 1.11 and 5.87 against 6.04. The advantage
+also widens with encoder quality: on the shared $s \in \{2, 4, 8\}$
+cells the smaller CLIP ViT-B gives 6 of 9 at both levels against 7 of
+9 and 8 of 9 on ViT-L, and the FRCP sets themselves roughly halve on
 CIFAR-100 in the move to ViT-L, 21.1 to 11.7 at two shots.
 
 \input{figs/table_headline_clipl_a01.tex}

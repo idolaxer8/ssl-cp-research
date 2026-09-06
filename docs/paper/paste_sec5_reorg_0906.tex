@@ -8,8 +8,10 @@
 %   * Tables stop at 12 shots (columns {2,4,8,12}).
 %   * Main text = DINOv2 table + NEW runtime table + stage ablation.
 %   * CLIP table -> appendix, upgraded to CLIP ViT-L (strengthens the
-%     claim: FRCP smallest 7/9 at a01 and 8/9 at a005, vs 6/9 and 6/9
-%     on ViT-B). CLIP grid is {2,4,8} until an s=12 run exists.
+%     claim; on the shared {2,4,8} cells: 7/9 at a01 and 8/9 at a005 vs
+%     6/9 and 6/9 on ViT-B). s=12 CLIP-L cells run 09-06, so the
+%     appendix grid matches the main table: {2,4,8,12}, FRCP 9/12 at
+%     a01 (every loss EuroSAT) and 8/12 at a005.
 %   * Score-histogram -> appendix, regenerated on the DEPLOYED
 %     prototype-softmax score with a logit-scaled axis.
 %
@@ -46,15 +48,17 @@
 Tables~\ref{tab:headline-clipl} and~\ref{tab:headline-clipl-a005}
 repeat the comparison of Table~\ref{tab:headline-main} on CLIP
 ViT-L~\citep{radford2021clip} embeddings of dimension $d = 1024$, at
-both miscoverage levels and on the budget grid $s \in \{2, 4, 8\}$ run
-for this encoder. The pipeline and per-dataset configuration of
-Appendix~\ref{app:config} carry over unchanged. Only the pool
-statistics are refitted, and the softmax temperature is re-piloted for
-the encoder. FRCP is smallest in 7 of 9 cells at $\alpha = 0.1$ and 8
-of 9 at $\alpha = 0.05$, and the EuroSAT crossover of the main table
-is again the only exception. The advantage also widens with encoder
-quality: on the smaller CLIP ViT-B the corresponding counts are 6 of 9
-at both levels, and the FRCP sets themselves roughly halve on
+both miscoverage levels and on the same budget grid. The pipeline and
+per-dataset configuration of Appendix~\ref{app:config} carry over
+unchanged. Only the pool statistics are refitted, and the softmax
+temperature is re-piloted for the encoder. FRCP is smallest in 9 of 12
+cells at $\alpha = 0.1$, and every loss is on EuroSAT, where the
+crossover arrives at $s = 4$ on this encoder. At $\alpha = 0.05$ it is
+smallest in 8 of 12, with CV+ passing narrowly at $s = 12$ on CIFAR-10
+and CIFAR-100, 1.07 against 1.11 and 5.87 against 6.04. The advantage
+also widens with encoder quality: on the shared $s \in \{2, 4, 8\}$
+cells the smaller CLIP ViT-B gives 6 of 9 at both levels against 7 of
+9 and 8 of 9 on ViT-L, and the FRCP sets themselves roughly halve on
 CIFAR-100 in the move to ViT-L, 21.1 to 11.7 at two shots.
 
 % EITHER keep these two \input lines (and upload the two .tex files to
@@ -67,24 +71,24 @@ CIFAR-100 in the move to ViT-L, 21.1 to 11.7 at two shots.
 \small
 \caption{Headline comparison on CLIP ViT-L embeddings: mean prediction-set size ($\pm$ SE, 50 trials, balanced split) with marginal coverage in parentheses. Split CP and SemiCP are shown at their best score (THR/APS/RAPS) and train fraction per cell (strongest-baseline convention). FRCP = the frozen pool-fitted refinement with exact full CP. Bold: smallest set per dataset and budget. Target miscoverage $\alpha=0.1$.}
 \label{tab:headline-clipl}
-\begin{tabular}{llccc}
+\begin{tabular}{llcccc}
 \toprule
-dataset & method & 2 shots & 4 shots & 8 shots\\
+dataset & method & 2 shots & 4 shots & 8 shots & 12 shots\\
 \midrule
-\multirow{4}{*}{CIFAR-10} & Split CP (best) & 9.80$\pm$0.04 {\scriptsize(0.989)} & 2.86$\pm$0.25 {\scriptsize(0.957)} & 1.10$\pm$0.04 {\scriptsize(0.908)}\\
- & CV+ & 4.44$\pm$0.28 {\scriptsize(0.945)} & 1.33$\pm$0.05 {\scriptsize(0.917)} & 0.99$\pm$0.01 {\scriptsize(0.916)}\\
- & SemiCP (best) & 6.47$\pm$0.53 {\scriptsize(0.906)} & 2.45$\pm$0.35 {\scriptsize(0.900)} & 1.01$\pm$0.03 {\scriptsize(0.894)}\\
- & FRCP (ours) & \textbf{1.47$\pm$0.07 {\scriptsize(0.940)}} & \textbf{1.11$\pm$0.02 {\scriptsize(0.926)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.912)}}\\
+\multirow{4}{*}{CIFAR-10} & Split CP (best) & 9.80$\pm$0.04 {\scriptsize(0.989)} & 2.86$\pm$0.25 {\scriptsize(0.957)} & 1.10$\pm$0.04 {\scriptsize(0.908)} & 1.02$\pm$0.02 {\scriptsize(0.925)}\\
+ & CV+ & 4.44$\pm$0.28 {\scriptsize(0.945)} & 1.33$\pm$0.05 {\scriptsize(0.917)} & 0.99$\pm$0.01 {\scriptsize(0.916)} & 0.96$\pm$0.01 {\scriptsize(0.918)}\\
+ & SemiCP (best) & 6.47$\pm$0.53 {\scriptsize(0.906)} & 2.45$\pm$0.35 {\scriptsize(0.900)} & 1.01$\pm$0.03 {\scriptsize(0.894)} & 0.98$\pm$0.02 {\scriptsize(0.906)}\\
+ & FRCP (ours) & \textbf{1.47$\pm$0.07 {\scriptsize(0.940)}} & \textbf{1.11$\pm$0.02 {\scriptsize(0.926)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.912)}} & \textbf{0.94$\pm$0.01 {\scriptsize(0.907)}}\\
 \midrule
-\multirow{4}{*}{CIFAR-100} & Split CP (best) & 92.60$\pm$0.16 {\scriptsize(0.928)} & 25.00$\pm$1.42 {\scriptsize(0.945)} & 6.10$\pm$0.23 {\scriptsize(0.919)}\\
- & CV+ & 37.43$\pm$0.94 {\scriptsize(0.956)} & 8.81$\pm$0.19 {\scriptsize(0.923)} & 3.97$\pm$0.05 {\scriptsize(0.912)}\\
- & SemiCP (best) & 92.26$\pm$0.27 {\scriptsize(0.925)} & 20.73$\pm$1.25 {\scriptsize(0.932)} & 5.65$\pm$0.24 {\scriptsize(0.912)}\\
- & FRCP (ours) & \textbf{11.72$\pm$0.47 {\scriptsize(0.945)}} & \textbf{4.32$\pm$0.12 {\scriptsize(0.913)}} & \textbf{3.01$\pm$0.05 {\scriptsize(0.902)}}\\
+\multirow{4}{*}{CIFAR-100} & Split CP (best) & 92.60$\pm$0.16 {\scriptsize(0.928)} & 25.00$\pm$1.42 {\scriptsize(0.945)} & 6.10$\pm$0.23 {\scriptsize(0.919)} & 3.67$\pm$0.09 {\scriptsize(0.911)}\\
+ & CV+ & 37.43$\pm$0.94 {\scriptsize(0.956)} & 8.81$\pm$0.19 {\scriptsize(0.923)} & 3.97$\pm$0.05 {\scriptsize(0.912)} & 2.93$\pm$0.03 {\scriptsize(0.909)}\\
+ & SemiCP (best) & 92.26$\pm$0.27 {\scriptsize(0.925)} & 20.73$\pm$1.25 {\scriptsize(0.932)} & 5.65$\pm$0.24 {\scriptsize(0.912)} & 3.52$\pm$0.10 {\scriptsize(0.906)}\\
+ & FRCP (ours) & \textbf{11.72$\pm$0.47 {\scriptsize(0.945)}} & \textbf{4.32$\pm$0.12 {\scriptsize(0.913)}} & \textbf{3.01$\pm$0.05 {\scriptsize(0.902)}} & \textbf{2.77$\pm$0.03 {\scriptsize(0.902)}}\\
 \midrule
-\multirow{4}{*}{EuroSAT} & Split CP (best) & 9.74$\pm$0.04 {\scriptsize(0.982)} & 4.58$\pm$0.27 {\scriptsize(0.948)} & 2.06$\pm$0.11 {\scriptsize(0.913)}\\
- & CV+ & 5.75$\pm$0.25 {\scriptsize(0.950)} & \textbf{2.66$\pm$0.11 {\scriptsize(0.921)}} & \textbf{1.62$\pm$0.03 {\scriptsize(0.926)}}\\
- & SemiCP (best) & 7.57$\pm$0.46 {\scriptsize(0.931)} & 4.20$\pm$0.45 {\scriptsize(0.894)} & 2.01$\pm$0.20 {\scriptsize(0.886)}\\
- & FRCP (ours) & \textbf{4.08$\pm$0.19 {\scriptsize(0.920)}} & 2.86$\pm$0.12 {\scriptsize(0.913)} & 2.09$\pm$0.07 {\scriptsize(0.911)}\\
+\multirow{4}{*}{EuroSAT} & Split CP (best) & 9.74$\pm$0.04 {\scriptsize(0.982)} & 4.58$\pm$0.27 {\scriptsize(0.948)} & 2.06$\pm$0.11 {\scriptsize(0.913)} & 1.50$\pm$0.06 {\scriptsize(0.898)}\\
+ & CV+ & 5.75$\pm$0.25 {\scriptsize(0.950)} & \textbf{2.66$\pm$0.11 {\scriptsize(0.921)}} & \textbf{1.62$\pm$0.03 {\scriptsize(0.926)}} & \textbf{1.36$\pm$0.02 {\scriptsize(0.920)}}\\
+ & SemiCP (best) & 7.57$\pm$0.46 {\scriptsize(0.931)} & 4.20$\pm$0.45 {\scriptsize(0.894)} & 2.01$\pm$0.20 {\scriptsize(0.886)} & 1.47$\pm$0.07 {\scriptsize(0.901)}\\
+ & FRCP (ours) & \textbf{4.08$\pm$0.19 {\scriptsize(0.920)}} & 2.86$\pm$0.12 {\scriptsize(0.913)} & 2.09$\pm$0.07 {\scriptsize(0.911)} & 1.78$\pm$0.04 {\scriptsize(0.903)}\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -93,24 +97,24 @@ dataset & method & 2 shots & 4 shots & 8 shots\\
 \small
 \caption{Headline comparison on CLIP ViT-L embeddings: mean prediction-set size ($\pm$ SE, 50 trials, balanced split) with marginal coverage in parentheses. Split CP and SemiCP are shown at their best score (THR/APS/RAPS) and train fraction per cell (strongest-baseline convention). FRCP = the frozen pool-fitted refinement with exact full CP. Bold: smallest set per dataset and budget. Target miscoverage $\alpha=0.05$.}
 \label{tab:headline-clipl-a005}
-\begin{tabular}{llccc}
+\begin{tabular}{llcccc}
 \toprule
-dataset & method & 2 shots & 4 shots & 8 shots\\
+dataset & method & 2 shots & 4 shots & 8 shots & 12 shots\\
 \midrule
-\multirow{4}{*}{CIFAR-10} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.96$\pm$0.36 {\scriptsize(0.986)} & 1.61$\pm$0.09 {\scriptsize(0.963)}\\
- & CV+ & 6.14$\pm$0.33 {\scriptsize(0.974)} & 2.15$\pm$0.12 {\scriptsize(0.967)} & 1.18$\pm$0.02 {\scriptsize(0.960)}\\
- & SemiCP (best) & 7.32$\pm$0.50 {\scriptsize(0.941)} & 3.42$\pm$0.44 {\scriptsize(0.940)} & 1.66$\pm$0.25 {\scriptsize(0.945)}\\
- & FRCP (ours) & \textbf{1.89$\pm$0.14 {\scriptsize(0.968)}} & \textbf{1.40$\pm$0.07 {\scriptsize(0.960)}} & \textbf{1.13$\pm$0.02 {\scriptsize(0.954)}}\\
+\multirow{4}{*}{CIFAR-10} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.96$\pm$0.36 {\scriptsize(0.986)} & 1.61$\pm$0.09 {\scriptsize(0.963)} & 1.48$\pm$0.10 {\scriptsize(0.971)}\\
+ & CV+ & 6.14$\pm$0.33 {\scriptsize(0.974)} & 2.15$\pm$0.12 {\scriptsize(0.967)} & 1.18$\pm$0.02 {\scriptsize(0.960)} & \textbf{1.07$\pm$0.01 {\scriptsize(0.959)}}\\
+ & SemiCP (best) & 7.32$\pm$0.50 {\scriptsize(0.941)} & 3.42$\pm$0.44 {\scriptsize(0.940)} & 1.66$\pm$0.25 {\scriptsize(0.945)} & 1.14$\pm$0.07 {\scriptsize(0.948)}\\
+ & FRCP (ours) & \textbf{1.89$\pm$0.14 {\scriptsize(0.968)}} & \textbf{1.40$\pm$0.07 {\scriptsize(0.960)}} & \textbf{1.13$\pm$0.02 {\scriptsize(0.954)}} & 1.11$\pm$0.02 {\scriptsize(0.956)}\\
 \midrule
-\multirow{4}{*}{CIFAR-100} & Split CP (best) & 96.72$\pm$0.09 {\scriptsize(0.968)} & 47.05$\pm$2.57 {\scriptsize(0.976)} & 12.68$\pm$0.42 {\scriptsize(0.962)}\\
- & CV+ & 62.68$\pm$1.32 {\scriptsize(0.984)} & 18.99$\pm$0.42 {\scriptsize(0.964)} & 8.34$\pm$0.15 {\scriptsize(0.961)}\\
- & SemiCP (best) & 96.16$\pm$0.15 {\scriptsize(0.962)} & 46.81$\pm$3.21 {\scriptsize(0.965)} & 11.12$\pm$0.47 {\scriptsize(0.955)}\\
- & FRCP (ours) & \textbf{22.00$\pm$0.81 {\scriptsize(0.975)}} & \textbf{9.50$\pm$0.35 {\scriptsize(0.957)}} & \textbf{6.65$\pm$0.16 {\scriptsize(0.951)}}\\
+\multirow{4}{*}{CIFAR-100} & Split CP (best) & 96.72$\pm$0.09 {\scriptsize(0.968)} & 47.05$\pm$2.57 {\scriptsize(0.976)} & 12.68$\pm$0.42 {\scriptsize(0.962)} & 7.49$\pm$0.27 {\scriptsize(0.958)}\\
+ & CV+ & 62.68$\pm$1.32 {\scriptsize(0.984)} & 18.99$\pm$0.42 {\scriptsize(0.964)} & 8.34$\pm$0.15 {\scriptsize(0.961)} & \textbf{5.87$\pm$0.08 {\scriptsize(0.958)}}\\
+ & SemiCP (best) & 96.16$\pm$0.15 {\scriptsize(0.962)} & 46.81$\pm$3.21 {\scriptsize(0.965)} & 11.12$\pm$0.47 {\scriptsize(0.955)} & 6.97$\pm$0.23 {\scriptsize(0.954)}\\
+ & FRCP (ours) & \textbf{22.00$\pm$0.81 {\scriptsize(0.975)}} & \textbf{9.50$\pm$0.35 {\scriptsize(0.957)}} & \textbf{6.65$\pm$0.16 {\scriptsize(0.951)}} & 6.04$\pm$0.12 {\scriptsize(0.950)}\\
 \midrule
-\multirow{4}{*}{EuroSAT} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 7.40$\pm$0.34 {\scriptsize(0.970)} & 3.27$\pm$0.19 {\scriptsize(0.966)}\\
- & CV+ & 7.24$\pm$0.26 {\scriptsize(0.977)} & 4.10$\pm$0.16 {\scriptsize(0.962)} & \textbf{2.35$\pm$0.07 {\scriptsize(0.958)}}\\
- & SemiCP (best) & 8.61$\pm$0.33 {\scriptsize(0.962)} & 5.50$\pm$0.33 {\scriptsize(0.949)} & 3.30$\pm$0.39 {\scriptsize(0.924)}\\
- & FRCP (ours) & \textbf{5.71$\pm$0.24 {\scriptsize(0.967)}} & \textbf{4.00$\pm$0.16 {\scriptsize(0.955)}} & 3.03$\pm$0.10 {\scriptsize(0.950)}\\
+\multirow{4}{*}{EuroSAT} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 7.40$\pm$0.34 {\scriptsize(0.970)} & 3.27$\pm$0.19 {\scriptsize(0.966)} & 2.43$\pm$0.13 {\scriptsize(0.964)}\\
+ & CV+ & 7.24$\pm$0.26 {\scriptsize(0.977)} & 4.10$\pm$0.16 {\scriptsize(0.962)} & \textbf{2.35$\pm$0.07 {\scriptsize(0.958)}} & \textbf{1.89$\pm$0.04 {\scriptsize(0.964)}}\\
+ & SemiCP (best) & 8.61$\pm$0.33 {\scriptsize(0.962)} & 5.50$\pm$0.33 {\scriptsize(0.949)} & 3.30$\pm$0.39 {\scriptsize(0.924)} & 2.25$\pm$0.29 {\scriptsize(0.936)}\\
+ & FRCP (ours) & \textbf{5.71$\pm$0.24 {\scriptsize(0.967)}} & \textbf{4.00$\pm$0.16 {\scriptsize(0.955)}} & 3.03$\pm$0.10 {\scriptsize(0.950)} & 2.64$\pm$0.06 {\scriptsize(0.958)}\\
 \bottomrule
 \end{tabular}
 \end{table}
