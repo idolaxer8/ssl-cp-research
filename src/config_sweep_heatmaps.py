@@ -111,8 +111,10 @@ def main():
         tf = make_tf(Xu, dprime, C, kappa, gamma)
         T = pool_T(tf)
         r = eval_cell(tf, T, X, y, allc, args)
-        r.update(grid=grid, **{p1n: p1, p2n: p2}, dprime=dprime, C=C,
-                 kappa=kappa, gamma=gamma, T=T)
+        r.update(grid=grid, dprime=dprime, C=C, kappa=kappa, gamma=gamma,
+                 T=T)
+        if grid == "dc":
+            r["cmult"] = p2
         rows.append(r)
         print(f"[{args.dataset}|{grid}] {p1n}={p1} {p2n}={p2} "
               f"sz1={r['sz1']:.2f} cov1={r['cov1']:.3f} T={T:.3f} "

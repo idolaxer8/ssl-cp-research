@@ -165,13 +165,12 @@ them on EuroSAT, whose crossover arrives within the grid on the weaker
 encoder.
 \begin{table}[t]
 \caption{Test-time compute in seconds on CIFAR-100 ($K = 100$, 500
-test points, median over 9 trials): only the phase that runs when a
-new test batch arrives. Probe and fold fits, pool scoring, calibration
-quantiles and the conformal calibration pass are prepared beforehand
-and cost at most 1.9 seconds at the largest budget, 0.18 for FRCP,
-with the one-off pool-transform fit of 8.4\,s shared by every batch.
-The naive sweep is the same predictor with identical p-values,
-computed by the unvectorized per-candidate transductive loop on CPU.}
+test points, median over 10 trials): the time to return prediction
+sets for a new test batch, with all fitting and calibration done
+beforehand (at most 2.0\,s per method at the largest budget, 0.18\,s
+for FRCP, plus a one-off 9.5\,s pool-transform fit). The naive sweep
+returns identical p-values through the unvectorized per-candidate
+loop on CPU.}
 \label{tab:runtime-cifar100}
 \begin{center}
 \small
@@ -181,30 +180,28 @@ computed by the unvectorized per-candidate transductive loop on CPU.}
 method & 2 shots & 4 shots & 6 shots & 8 shots\\
 \midrule
 Split CP & 0.04 & 0.04 & 0.04 & 0.04\\
-CV+ & 0.03 & 0.04 & 0.05 & 0.05\\
-SemiCP & 0.04 & 0.04 & 0.04 & 0.04\\
-full CP, naive sweep & 29.15 & 45.37 & 62.22 & 79.45\\
-FRCP (ours) & 0.48 & 0.46 & 0.52 & 0.61\\
+CV+ & 0.03 & 0.04 & 0.04 & 0.05\\
+SemiCP & 0.04 & 0.04 & 0.03 & 0.04\\
+full CP, naive sweep & 35.39 & 45.70 & 62.37 & 83.16\\
+FRCP (ours) & 0.44 & 0.44 & 0.51 & 0.63\\
 \bottomrule
 \end{tabular}
 \end{center}
 \end{table}
-\textbf{Runtime.} Full conformal prediction does its work at test
-time, and Table~\ref{tab:runtime-cifar100} measures exactly that
-phase. The naive per-candidate sweep is what earned full CP its
-reputation: 29 to 79 seconds to conformalize the 500-point CIFAR-100
-batch, growing linearly with the calibration size. The closed-form
-batched sweep of Appendix~\ref{app:cost} returns the identical
-p-values, verified bit for bit, in 0.5 to 0.6 seconds across the whole
-grid, a 60 to 130 times reduction. The inductive baselines threshold a
-trained probe at test time and cost a few hundredths of a second, so
-FRCP pays about half a second more per 500-point batch. In exchange
-its preparation is the lightest of every method, 0.05 to 0.18 seconds
-against 1.9 for CV+'s fold probes, on top of the one-off
-pool-transform fit that every batch shares. On the two $K = 10$
-datasets every method, naive sweep included, finishes within 0.16
-seconds. Tractability, in short, is a property of the sweep
-implementation, not of the construction.
+\textbf{Runtime.} Table~\ref{tab:runtime-cifar100} times the only
+phase that matters at deployment: returning prediction sets for a new
+batch of 500 test points, with all fitting and calibration done
+beforehand. The naive transductive sweep, which rescores the
+calibration set for every candidate label of every test point, takes
+35 to 83 seconds and grows linearly with the calibration size. The
+cached sweep of Algorithm~\ref{alg:frcp} returns the identical
+p-values, verified bit for bit, in about half a second, an 80 to 130
+times reduction (Appendix~\ref{app:cost} derives the closed form).
+The inductive baselines threshold a trained probe and cost hundredths
+of a second, while FRCP's preparation side is the lightest of every
+method. On the two $K = 10$ datasets every method, naive sweep
+included, finishes within 0.16 seconds. Tractability is a property of
+the sweep implementation, not of the construction.
 % "Full CP or the score?" paragraph REMOVED 2026-09-07 with the
 % attribution appendix (user call, "for now"); the jackknife+ and
 % split-with-same-score material survives at output/headline_attrib +

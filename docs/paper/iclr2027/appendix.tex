@@ -314,21 +314,31 @@ marks the deployed pool-resolved $T$.}
 
 \paragraph{The remaining knobs.} Figure~\ref{fig:config-heatmaps}
 varies the two stage pairs around the deployed values, holding
-everything else fixed: the truncation dimension $d'$ against the
-whitening group count $C$, and the smoothing neighborhood $\kappa$
-against the weight exponent $\gamma$.
-% FILL-KNOBS-SENTENCE: quantitative reading (plateau extent, deployed
-% cell position) after fig_config_heatmaps.pdf lands from the 09-07
-% sweep.
+everything else fixed: the smoothing neighborhood $\kappa$ against the
+weight exponent $\gamma$, and the truncation dimension $d'$ against
+the whitening group count $C$. The surface is flat where it matters.
+The smoothing pair moves the sets by a few percent at most on every
+dataset (CIFAR-100 spans 1.40 to 1.49 over the whole grid), and the
+truncation and grouping pair sits on a plateau covering $d'$ from 64
+to 256 and $C$ from $K$ to $4K$. The two visible failure modes are
+shared across datasets and far from the deploy: too few whitening
+groups ($C = K/2$ inflates every dataset) and severe truncation with
+many groups ($d' = 32$ with $C = 4K$ collapses CIFAR-100 to 71.8
+labels). A few EuroSAT cells edge the deployed one by up to 14
+percent, with no direction shared across datasets, which is the trade
+a single shared configuration accepts.
 
 \begin{figure}[h]
 \begin{center}
 \includegraphics[width=\linewidth]{fig_config_heatmaps.pdf}
 \end{center}
 \caption{Configuration sensitivity. Mean prediction-set size (FRCP,
-$\alpha = 0.1$) as each stage pair varies around the deployed
-configuration (boxed cell), with all other knobs held at their
-deployed values.}
+$\alpha = 0.1$, four labels per class, 10 trials, non-empty
+convention) as each stage pair varies around the deployed
+configuration (boxed cell), with every other knob held at its
+deployed value. Top: smoothing neighborhood $\kappa$ against weight
+exponent $\gamma$. Bottom: truncation dimension $d'$ against
+whitening groups per class $C/K$.}
 \label{fig:config-heatmaps}
 \end{figure}
 
