@@ -65,23 +65,21 @@ def main():
         lines = [r"\begin{table}[t]", r"\centering", r"\small",
                  r"\setlength{\tabcolsep}{5pt}"]
         if tt:
-            calib = {label: med(d["rows"], arm, max(shots), "calib")
-                     for arm, label in arms if arm != "frozen_naive"}
-            calib_txt = ", ".join(
-                f"{lbl} {v:.2f}\\,s" for lbl, v in calib.items()
-                if v is not None)
+            calib = [med(d["rows"], arm, max(shots), "calib")
+                     for arm, _ in arms if arm != "frozen_naive"]
+            calib = [v for v in calib if v is not None]
+            fro_cal = med(d["rows"], "frozen", max(shots), "calib")
             cap = (f"Test-time compute in seconds on {DS_LABEL[ds]} "
                    f"($K={d['K']}$, {d['n_test']} test points, median "
-                   f"over {n_reps} trials): only the phase that runs "
-                   "when a new test batch arrives. Probe and fold fits, "
-                   "pool scoring, calibration quantiles and the "
-                   "conformal calibration pass are prepared beforehand "
-                   f"(at the largest budget: {calib_txt}; one-off "
-                   f"pool-transform fit {one['transform_fit_s']:.1f}\\,s"
-                   ", shared by every batch). The naive sweep is the "
-                   "same predictor and identical p-values, computed by "
-                   "the unvectorized per-candidate transductive loop "
-                   "on CPU.")
+                   f"over {n_reps} trials): the time to return "
+                   "prediction sets for a new test batch, with all "
+                   "fitting and calibration done beforehand (at most "
+                   f"{max(calib):.1f}\\,s per method at the largest "
+                   f"budget, {fro_cal:.2f}\\,s for FRCP, plus a one-off "
+                   f"{one['transform_fit_s']:.1f}\\,s pool-transform "
+                   "fit). The naive sweep returns identical p-values "
+                   "through the unvectorized per-candidate loop on "
+                   "CPU.")
         else:
             cap = (f"Per-trial compute time in seconds on {DS_LABEL[ds]} "
                    f"($K={d['K']}$, {d['n_test']} test points, single "

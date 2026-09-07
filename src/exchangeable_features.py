@@ -35,6 +35,12 @@ import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 
+# Numerical eigenvalue floor for the unshrunk 'cluster_full' whitening. NOT a
+# regulariser -- it never binds on a PCA-truncated space; a hit means the
+# within-group covariance is rank-deficient and the inverse is undefined
+# (loud RuntimeWarning + a recorded count), the signal to truncate first.
+CLUSTER_FULL_EPS = 1e-8
+
 
 class IdentityTransform:
     """No-op transform for the no-unlabeled-pool fallback. Fully exchangeable
@@ -131,9 +137,10 @@ class UnlabeledTransform:
                  pre=None, qe_k=10, qe_alpha=3.0, lpp_graph_k=15,
                  qe_mode="both", qe_beta=None, qe_reciprocal=False,
                  qe_stage="pre", ldapool_rank="total",
-                 qe_hub_gamma=None, qe_iters=1, qe_znorm=False):
+                 qe_hub_gamma=None, qe_iters=1, qe_znorm=False,
+                 lw_shrinkage_force=None):
         assert whiten in ("cluster", "global", "lw_global", "lw_cluster",
-                          "lw_cluster_soft", None)
+                          "lw_cluster_soft", "cluster_full", None)
         assert projection in ("pca", "pca_tail", "random", "lpp", "ldapool",
                               "center", None)
         assert pre in (None, "yj", "qe")
@@ -148,6 +155,7 @@ class UnlabeledTransform:
                                  and qe_mode != "apply_only"), \
             "qe_iters>1 requires qe_stage='pre' and qe_mode in (both, fit_only)"
         self.ldapool_rank = ldapool_rank
+        self.lw_shrinkage_force = lw_shrinkage_force
         self.pca_dim = pca_dim
         self.whiten = whiten
         self.n_clusters = n_clusters
@@ -195,8 +203,9 @@ class UnlabeledTransform:
         self.center_ = None              # pool mean (random/tail/center/lw paths)
         self.kmeans_ = None
         self.inv_std_ = None             # diagonal whitening ('cluster'/'global')
-        self.W_ = None                   # full-matrix ZCA whitening ('lw_*')
+        self.W_ = None                   # full-matrix ZCA whitening ('lw_*' / 'cluster_full')
         self.lw_shrinkage_ = None        # fitted Ledoit-Wolf shrinkage intensity
+        self.cluster_full_floored_ = None  # # eigenvalues at the numerical floor ('cluster_full')
         self.cluster_centroids_ = None   # in transformed (post-whiten) space
         self.cluster_dists_ = None
         self.yj_lambdas_ = None          # per-dim YJ lambda ('yj' pre)
@@ -314,7 +323,8 @@ class UnlabeledTransform:
             Xp = (X - self.center_) @ self.lpp_basis_
         elif self.projection == "center" or self.whiten in ("lw_global",
                                                             "lw_cluster",
-                                                            "lw_cluster_soft"):
+                                                            "lw_cluster_soft",
+                                                            "cluster_full"):
             # full-rank arms: center by the pool mean (PCA parity)
             self.center_ = X.mean(axis=0)
             Xp = X - self.center_
@@ -361,11 +371,54 @@ class UnlabeledTransform:
                         resid[m] -= Xp[m].mean(axis=0)
             else:
                 resid = Xp - Xp.mean(axis=0)
-            lw = LedoitWolf(assume_centered=True).fit(resid)
-            self.lw_shrinkage_ = float(lw.shrinkage_)
-            evals, evecs = np.linalg.eigh(lw.covariance_)
+            # lw_shrinkage_force (config audit 09-04): 0.0 uses the PLAIN
+            # empirical pooled covariance Sigma_w = (1/m) resid^T resid --
+            # exactly the whitener the paper states; any float forces that rho.
+            if self.lw_shrinkage_force is None:
+                lw = LedoitWolf(assume_centered=True).fit(resid)
+                self.lw_shrinkage_ = float(lw.shrinkage_)
+                cov = lw.covariance_
+            else:
+                S = resid.T @ resid / len(resid)
+                rho = float(self.lw_shrinkage_force)
+                cov = ((1.0 - rho) * S
+                       + rho * (np.trace(S) / S.shape[0]) * np.eye(S.shape[0]))
+                self.lw_shrinkage_ = rho
+            evals, evecs = np.linalg.eigh(cov)
             evals = np.maximum(evals, 1e-12)
             # symmetric (ZCA) inverse square root: rotation-neutral whitening
+            self.W_ = evecs @ np.diag(evals ** -0.5) @ evecs.T
+
+        if self.whiten == "cluster_full":
+            # UNSHRUNK full-matrix ZCA from the pooled within-group covariance
+            # (ported 09-04 from the drop-shrinkage worktree, where it produced
+            # the output/pipeline_ablation artefacts; on PCA-truncated spaces
+            # it equals lw_cluster with lw_shrinkage_force=0.0).
+            # CLUSTER_FULL_EPS is a pure NUMERICAL floor, never a regulariser:
+            # a hit means the within-group covariance is rank-deficient and
+            # the unshrunk ZCA inverse is undefined -- a loud failure
+            # (warning + recorded count), the signal to truncate first. It
+            # never triggers post-PCA; it guards the full-rank arm only.
+            resid = Xp.copy()
+            for c in range(self.n_clusters):
+                m = labels == c
+                if m.any():
+                    resid[m] -= Xp[m].mean(axis=0)
+            S = resid.T @ resid / resid.shape[0]
+            evals, evecs = np.linalg.eigh(S)
+            n_floored = int(np.sum(evals < CLUSTER_FULL_EPS))
+            if n_floored:
+                import warnings
+                warnings.warn(
+                    f"cluster_full: {n_floored}/{len(evals)} within-group "
+                    f"eigenvalues below the numerical floor {CLUSTER_FULL_EPS:g}"
+                    f" -- the unshrunk ZCA inverse is not defined without "
+                    f"regularisation on this (rank-deficient) space; use PCA "
+                    f"truncation or a shrunk whiten mode here.",
+                    RuntimeWarning)
+            self.cluster_full_floored_ = n_floored
+            self.lw_shrinkage_ = None            # unshrunk: no LW term
+            evals = np.maximum(evals, CLUSTER_FULL_EPS)
             self.W_ = evecs @ np.diag(evals ** -0.5) @ evecs.T
 
         if self.whiten == "lw_cluster_soft":

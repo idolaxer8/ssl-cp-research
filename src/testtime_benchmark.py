@@ -182,22 +182,10 @@ def main():
             rows.append(dict(arm="cvplus", phase="calib", shots=shots,
                              rep=rep, seconds=time.perf_counter() - t0))
 
-            # GPU warm-up + naive-vs-ours parity check (rep 0 only)
+            # GPU warm-up (rep 0 only, untimed)
             if rep == 0:
-                Zt_w = tf.transform(X[ti])
-                res_g = cp.predict(Zt_w, verbose=False, device="cuda",
-                                   return_p_values=True)
-                if not checked:
-                    res_c = cp.predict(Zt_w, verbose=False, device="cpu",
-                                       return_p_values=True)
-                    for pg, pc in zip(res_g["p_values"],
-                                      res_c["p_values"]):
-                        for c in pg:
-                            assert abs(pg[c] - pc[c]) < 1e-12, \
-                                (shots, c, pg[c], pc[c])
-                    checked = True
-                    print(f"  [check] naive(CPU) == ours(GPU) p-values "
-                          f"at shots={shots}: PASS")
+                _ = cp.predict(tf.transform(X[ti]), verbose=False,
+                               device="cuda", return_p_values=True)
 
             # ---------- timed test phases -----------------------------
             t0 = time.perf_counter()
@@ -231,14 +219,34 @@ def main():
             rows.append(dict(arm="frozen", phase="test", shots=shots,
                              rep=rep, seconds=time.perf_counter() - t0))
 
-            if rep < args.n_naive_reps:
-                t0 = time.perf_counter()
-                res = cp.predict(tf.transform(X[ti]), verbose=False,
-                                 device="cpu", return_p_values=True)
-                sets_from_pvalues(res, ALPHAS)
-                rows.append(dict(arm="frozen_naive", phase="test",
-                                 shots=shots, rep=rep,
-                                 seconds=time.perf_counter() - t0))
+        # naive pass LAST, after every timed arm of every rep: its
+        # minutes-long CPU saturation would otherwise contaminate the
+        # measurements that follow it (observed 09-07: frozen medians
+        # inflate ~3x when naive reps are interleaved)
+        for rep in range(args.n_naive_reps):
+            rng = np.random.default_rng(args.seed + 1000 * rep)
+            ci, ti = balanced_split(y, allc, shots, args.test_per_class,
+                                    rng)
+            ncm = make_ncm("prototype_softmax", T_frozen)
+            cp = FullConformalPredictor(ncm, alpha=min(ALPHAS))
+            cp.calibrate(tf.transform(X[ci]), y[ci], all_classes=allc)
+            t0 = time.perf_counter()
+            res = cp.predict(tf.transform(X[ti]), verbose=False,
+                             device="cpu", return_p_values=True)
+            sets_from_pvalues(res, ALPHAS)
+            rows.append(dict(arm="frozen_naive", phase="test",
+                             shots=shots, rep=rep,
+                             seconds=time.perf_counter() - t0))
+            if not checked:
+                res_g = cp.predict(tf.transform(X[ti]), verbose=False,
+                                   device="cuda", return_p_values=True)
+                for pg, pc in zip(res_g["p_values"], res["p_values"]):
+                    for c in pg:
+                        assert abs(pg[c] - pc[c]) < 1e-12, \
+                            (shots, c, pg[c], pc[c])
+                checked = True
+                print(f"  [check] naive(CPU) == ours(GPU) p-values "
+                      f"at shots={shots}: PASS")
 
         done = [r for r in rows if r["shots"] == shots
                 and r["phase"] == "test"]

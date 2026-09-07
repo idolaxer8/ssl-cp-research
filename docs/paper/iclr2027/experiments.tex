@@ -62,7 +62,8 @@ $\kappa = 10$ pool neighbors with weight exponent $\gamma = 3$. The
 score is the prototype softmax of \eqref{eq:score}. Its temperature $T$
 is the one quantity resolved per dataset and encoder, fixed from the
 unlabeled pool before any label is seen and then held constant across
-every trial and budget. Appendix~B reports the values.
+every trial and budget. Appendix~\ref{app:config} details the rule and
+the sensitivity of every configuration choice.
 \textbf{Baselines.} We compare against split CP on a trained linear
 head, scored by the three standard conformal
 scores~\citep{sadinle2019least, romano2020aps, angelopoulos2021raps},
@@ -74,7 +75,8 @@ Every split-based baseline divides its labels between training and
 calibration. We grant each its most favorable allocation per cell,
 selected with hindsight from $n_{\mathrm{tr}}/n \in \{0.25, 0.5,
 0.75\}$, and its best score, so all comparisons favor the baselines.
-SemiCP follows the official implementation (adaptations in Appendix~E).
+SemiCP follows the official implementation (adaptations in
+Appendix~\ref{app:baselines}).
 The unlabeled pool is available to every method that can consume one.
 \textbf{Protocol.} The labeled budget is indexed by shots per class
 $s = n/K$, tabulated at $s \in \{2, 4, 6, 8\}$. Each cell
@@ -89,12 +91,13 @@ grow.
 % Random-split arm DROPPED 08-30 (user call). Tables survive at
 % output/r1_headline/plots/table_r1b_random_*.tex if it returns.
 We report $\alpha = 0.1$ in the main text and $\alpha = 0.05$ in
-Appendix~C, with three metrics: marginal coverage, mean prediction-set
+Appendix~\ref{app:alpha005}, with three metrics: marginal coverage,
+mean prediction-set
 size, and
 the class-conditional
 coverage gap
 $\mathrm{CovGap} = \frac{1}{K}\sum_c |\mathrm{cov}_c - (1-\alpha)|$ in
-percentage points, reported in Appendix~F.
+percentage points, reported in Appendix~\ref{app:covgap}.
 \subsection{FRCP against trained-head baselines}
 \label{sec:headline}
 Table~\ref{tab:headline-main} reports mean prediction-set size and
@@ -202,19 +205,16 @@ pool-transform fit that every batch shares. On the two $K = 10$
 datasets every method, naive sweep included, finishes within 0.16
 seconds. Tractability, in short, is a property of the sweep
 implementation, not of the construction.
-\textbf{Full CP or the score?} Every baseline differs from FRCP in both
-the construction and the score, so Appendix~\ref{app:attrib} varies only
-the construction. Jackknife+ with the same score reproduces FRCP set for
-set, so full CP earns the exact guarantee rather than efficiency. Split
-CP with the same score loses at two shots and converges by eight without
-collapsing, which places most of the margin on the training-free score
-and the rest on spending every label on calibration.
+% "Full CP or the score?" paragraph REMOVED 2026-09-07 with the
+% attribution appendix (user call, "for now"); the jackknife+ and
+% split-with-same-score material survives at output/headline_attrib +
+% figs/table_attrib_a0{1,05}.tex and in git history.
 \subsection{Refinement ablation}
 \label{sec:ablation}
 Figure~\ref{fig:ablation} ablates the refinement stage by stage on
 every dataset under the deployed score: the raw embedding, each single
 stage, the truncation-plus-whitening pair, and the full chain.
-Appendix~D tabulates the decomposition, and
+Appendix~\ref{app:ablation} tabulates the decomposition, and
 Appendix~\ref{app:scorehist} shows what the surviving subset does to
 the score distributions.
 \begin{figure}[t]

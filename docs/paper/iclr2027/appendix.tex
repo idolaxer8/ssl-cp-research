@@ -1,14 +1,26 @@
-% ALIGNED 2026-09-03: the Overleaf ido_paper.tex Ido pasted in chat now
-% carries this appendix verbatim (A Proofs, B config, C alpha 0.05,
-% D ablation tables, E baselines, F CovGap, G attribution, H backbone
-% transfer, I SNAPS vs smoothing, J candidate sweep), with the mirror's
-% header comment block pasted along with it. Body unchanged here. One
-% thing to CHECK on Overleaf: the chat paste ended mid-sentence at
-% "... collapses to" (app:cost, last line); the mirror's closing
-% "$O(n(d' + K))$." must be present there. NOTE the main text still
-% reaches B, C, D, E, F by hard-coded letter on Overleaf; only
-% app:ablation, app:backbones, app:attrib, app:snaps, app:cost use \ref.
-% Appendix. v1 (2026-08-27), NOT yet on Overleaf.
+% REORGANIZED 2026-09-07 (appendix session, user calls). NEW ORDER:
+%     app:proofs      A   Proofs (validated, spelling pass)
+%     app:backbones   B   Backbone transfer (CLIP significant -> front)
+%     app:alpha005    C   Results at the tighter miscoverage level
+%     app:config      D   Configuration (REWRITTEN: table dropped, one
+%                         config for all; T treated first w/ pool rule +
+%                         fixed-T sweep; knob heatmaps PENDING sweep)
+%     app:ablation    E   Refinement ablation tables
+%     app:baselines   F   Baseline implementations
+%     app:covgap      G   Class-conditional coverage
+%     app:snaps       H   Score- vs representation-level smoothing
+%     app:cost        I   The candidate sweep in closed form
+%     app:scorehist   J   Refinement and the score distribution
+% app:attrib REMOVED (user call, "for now") + its 5.2 paragraph.
+% experiments.tex now reaches EVERY appendix by \ref (hard-coded
+% letters eliminated 09-07, so reorders cannot drift again).
+% On Overleaf the OLD order still stands until the appendix paste.
+% ----------------------------------------------------------------------
+% Pre-reorg history (03..07): the 09-03 Overleaf alignment carried
+% A proofs, B config, C alpha005, D ablation, E baselines, F covgap,
+% G attrib, H backbones, I snaps, J cost. CHECK on Overleaf: the chat
+% paste once ended mid-sentence at "... collapses to" (app:cost);
+% the closing "$O(n(d' + K))$." must be present there.
 % v3 (2026-08-31, backbone transfer): NEW section app:backbones between
 %   app:attrib and app:snaps -- see its block comment. NOT yet on Overleaf.
 % v2 (2026-08-31, Section 5.2 / 5.4 closure -- Gap A + Gap B): THREE additions,
@@ -165,59 +177,53 @@ applies to the deployed map at that $\beta$.
 % Table \input from figs/table_h_cert.tex. Grounds contribution 2's "theory
 % covering its benefit" and the Section 4.3 mechanism sentence (M5).
 % ===================================================================
+% Counts REWORDED 2026-09-07 to the three-dataset roster (miniImageNet
+% row dropped from table_h_cert.tex). DANGLER: the underlying
+% h_cert_roster.json was computed with the pre-audit LW-shrinkage
+% whitening; recompute with shrinkage off in the appendix pass.
 \paragraph{Homophily and the Lemma~\ref{lem:smooth} certified fraction.}
 Lemma~\ref{lem:smooth} is a per-point sufficient condition, and
 Table~\ref{tab:h-cert} instantiates it on the deployed pipeline. The weighted
 pool-$k$NN homophily $h_w$, the same quantity Eq.~\eqref{eq:qe} weights, rises
 under truncation and whitening on every dataset, most where it starts lowest
 (from $0.81$ to $0.83$ on CIFAR-100), so whitening improves the
-neighbourhoods the smoothing stage averages over. The certified fraction, the
+neighborhoods the smoothing stage averages over. The certified fraction, the
 share of labeled points for which the budget of the lemma falls below the
-displacement $\varepsilon$, rises with it on three of the four datasets (from
+displacement $\varepsilon$, rises with it on the two in-domain datasets (from
 $0.42$ to $0.52$ on CIFAR-100). It falls on EuroSAT ($0.45$ to $0.24$), the one
 off-domain dataset, where whitening spreads the class centers apart faster
 than it lowers the foreign weight $1 - h_w$, and we report this rather than
 explain it away. The condition is sufficient only and
-conservative: the realised fraction of points that move closer to their class
+conservative: the realized fraction of points that move closer to their class
 center after smoothing is near one on every dataset, so the certification
 tracks where smoothing is provably safe rather than where it happens to help.
 
 \input{figs/table_h_cert.tex}
 
-\section{Per-dataset configuration}
-\label{app:config}
+% MOVED 2026-09-07 (user call: "the clip results are significant") from
+% its old slot after covgap to section B, directly after the proofs.
+% Tables from output/temperature/nonempty_clipb/results_*.json
+% (50 trials, pool-T + shrinkage off, non-empty convention) via
+% make_headline_tables.py --convention filled
+% --frozen_arm frozen_Tpool_shrzero --shots 2 4 6 8.
+\section{Backbone transfer}
+\label{app:backbones}
 
-Table~\ref{tab:app-config} lists the configuration behind every
-reported FRCP number. Each entry is fixed once per dataset and held
-constant across all trials and budgets. Smoothing uses
-$\kappa = 10$ neighbors with $\gamma = 3$ throughout, the values
-standard in query expansion. The softmax temperature $T$ is resolved
-once per dataset from a small pilot split and then held fixed.
+Tables~\ref{tab:headline-clipb} and~\ref{tab:headline-clipb-a005}
+repeat the comparison of Table~\ref{tab:headline-main} on CLIP
+ViT-B~\citep{radford2021clip} embeddings, at both miscoverage levels
+and on the same budget grid and non-empty convention. The pipeline and
+configuration of Appendix~\ref{app:config} carry over unchanged. Only
+the pool statistics are refitted, and the temperature is re-resolved
+from the pool for the encoder. FRCP is smallest in 8 of 12 cells at
+both miscoverage levels. Every loss is to CV+, three of the four on
+EuroSAT, where the crossover that sits beyond the grid on DINOv2
+arrives at four shots on this weaker encoder, and the fourth on
+CIFAR-100 at eight shots. SemiCP falls below the coverage target in
+five cells at $\alpha = 0.1$, reaching 0.870.
 
-\begin{table}[h]
-\caption{FRCP configuration per dataset. $m$ is the size of the
-unlabeled pool. T, W and S are the truncation, whitening and smoothing
-stages of Section~\ref{sec:refine}. Whitening is always the pooled
-within-group covariance over $C$ $k$-means groups.}
-\label{tab:app-config}
-\begin{center}
-\small
-\begin{tabular}{lrrlrrl}
-\toprule
-Dataset & $K$ & pool $m$ & stages & $d'$ & $C$ & score \\
-\midrule
-CIFAR-10       &  10 & 10{,}000 & T{+}W{+}S & 128 &  10 & prototype softmax \\
-CIFAR-100      & 100 & 10{,}000 & T{+}W{+}S & 128 & 100 & prototype softmax \\
-\emph{mini}ImageNet & 100 & 10{,}000 & T{+}W{+}S & 128 & 100 & prototype softmax \\
-EuroSAT        &  10 & 10{,}000 & T{+}W{+}S & 128 &  10 & prototype softmax \\
-\bottomrule
-\end{tabular}
-\end{center}
-\end{table}
-
-Every dataset runs the same three stages at the same neighborhood
-settings, and the only entry that varies with the benchmark is the
-number of $k$-means groups, which is set to the class count.
+\input{figs/table_headline_clipb_a01.tex}
+\input{figs/table_headline_clipb_a005.tex}
 
 \section{Results at the tighter miscoverage level}
 \label{app:alpha005}
@@ -260,6 +266,71 @@ dataset & method & 2 shots & 4 shots & 6 shots & 8 shots\\
 \end{tabular}
 \end{center}
 \end{table}
+
+% REWRITTEN + MOVED 2026-09-07 (user call): one configuration serves
+% every dataset, so the per-dataset table is REDUNDANT and gone; the
+% section now argues the design and sits AFTER the results sections
+% (order: A proofs, B backbones, C alpha005, D config). T is treated
+% first and separately (pool rule + the 9-point fixed-T sweep,
+% output/temperature/sweep, 20 trials, shots {2,8}); the knob
+% sensitivity heatmaps (kappa x gamma, d' x C) come from the 09-07
+% sweep at output/config_heatmaps_0907 (see src/config_sweep_heatmaps).
+\section{Configuration}
+\label{app:config}
+
+One configuration serves every dataset and both encoders: truncation
+to $d' = 128$ dimensions, whitening pooled over $C = K$ $k$-means
+groups, smoothing over $\kappa = 10$ pool neighbors with weight
+exponent $\gamma = 3$, and the prototype-softmax score. Nothing is
+tuned per dataset, so there is no per-dataset configuration to report.
+This section shows the two facts that make the shared choice
+defensible: the one resolved scalar sits on the flat part of its
+sensitivity curve, and the remaining knobs sit on a broad plateau.
+
+\paragraph{The temperature.} $T$ is the one quantity resolved per
+dataset and encoder, and it is resolved from the unlabeled pool alone.
+The pool is carried through the frozen refinement map, the whitening
+stage's $C = K$ $k$-means groups stand in as pseudo-classes, and $T$
+is fitted by the same rule the score would use on labels, so
+resolving it consumes none. Figure~\ref{fig:t-sweep} sweeps a grid of
+fixed temperatures around the resolved value on each dataset. The
+deployed value lands on the flat part of the curve everywhere: at the
+grid minimum on CIFAR-100 (2.24 labels at two shots against 3.02 at
+the grid's low end), and inside a plateau spanning more than an order
+of magnitude on CIFAR-10 and EuroSAT, where only a far-off temperature
+moves the sets (9.9 labels at the smallest EuroSAT temperature against
+3.6 on the plateau).
+
+\begin{figure}[h]
+\begin{center}
+\includegraphics[width=\linewidth]{fig_T_sensitivity.pdf}
+\end{center}
+\caption{Temperature sensitivity. Mean prediction-set size under fixed
+temperatures on a log grid (20 trials, $\alpha = 0.1$, DINOv2 ViT-B,
+plain-convention sizes), at 2 and 8 labels per class. The dashed line
+marks the deployed pool-resolved $T$.}
+\label{fig:t-sweep}
+\end{figure}
+
+\paragraph{The remaining knobs.} Figure~\ref{fig:config-heatmaps}
+varies the two stage pairs around the deployed values, holding
+everything else fixed: the truncation dimension $d'$ against the
+whitening group count $C$, and the smoothing neighborhood $\kappa$
+against the weight exponent $\gamma$.
+% FILL-KNOBS-SENTENCE: quantitative reading (plateau extent, deployed
+% cell position) after fig_config_heatmaps.pdf lands from the 09-07
+% sweep.
+
+\begin{figure}[h]
+\begin{center}
+\includegraphics[width=\linewidth]{fig_config_heatmaps.pdf}
+\end{center}
+\caption{Configuration sensitivity. Mean prediction-set size (FRCP,
+$\alpha = 0.1$) as each stage pair varies around the deployed
+configuration (boxed cell), with all other knobs held at their
+deployed values.}
+\label{fig:config-heatmaps}
+\end{figure}
 
 \section{Refinement ablation tables}
 \label{app:ablation}
@@ -386,91 +457,11 @@ dataset & method & 2 shots & 4 shots & 8 shots & 14 shots\\
 \end{center}
 \end{table}
 
-% ===================================================================
-% Gap A (Section 5.2) attribution appendix. ADDED 2026-08-31.
-% Source: output/headline_attrib/results_*.json (splitproto, jkproto, 50
-% trials; closed-form jackknife+ verified EXACTLY vs brute-force n-refit in
-% src/attrib_arms._selftest, max|p_closed-p_brute|=0). FRCP rows copied from
-% output/headline. Tables \input from figs/ (regenerable via
-% src/make_headline_tables.py --attrib_dir output/headline_attrib). Every
-% number below is read off the generated JSONs, none retyped. Closes M4.
-% ===================================================================
-\section{Attributing the gain to full CP, not to the score}
-\label{app:attrib}
-
-Every baseline in Table~\ref{tab:headline-main} differs from FRCP in both the
-conformal construction and the score. Table~\ref{tab:attrib-a01} removes that
-confound: all three rows use the identical frozen transform and frozen score
-and differ only in whether every label calibrates (full CP), $n$
-leave-one-out folds calibrate (jackknife+), or a train and calibration split
-calibrates (split CP).
-
-\input{figs/table_attrib_a01.tex}
-
-Jackknife+ reproduces FRCP set for set. Its mean set size and marginal
-coverage match to within standard error in every one of the forty cells, with
-a largest size difference of $0.09$ of a label, so the per-candidate
-transductive refit contributes nothing measurable to efficiency. Full CP's
-distinct value over jackknife+ is therefore the exact $1-\alpha$ guarantee at
-the same cost, not tighter sets, since jackknife+ carries only the
-$1-2\alpha$ bound while covering at the target in practice here. Split
-conformal with the same score pays for the split: it loses at two shots
-($2.69$ against $2.43$ on CIFAR-100, $4.28$ against $3.59$ on EuroSAT) and
-converges to FRCP by eight to fourteen shots, yet it never collapses the way
-the trained-head baselines do, returning $2.69$ rather than $92.9$ labels on
-CIFAR-100 at two shots. Most of FRCP's margin over those baselines is thus the
-training-free score, which keeps split CP usable, and the residual small
-margin is full CP spending every label on calibration. At $\alpha = 0.05$ and
-two shots on the ten-class datasets, split CP hits the full-set floor
-(Table~\ref{tab:attrib-a005}): after the train split $n_{\mathrm{cal}}$ falls
-below the $\lceil 1/\alpha\rceil - 1$ labels a quantile at that level needs, a
-finite-sample floor full CP escapes.
-
-\input{figs/table_attrib_a005.tex}
-
-% ===================================================================
-% Backbone transfer (Section 5.2 companion). ADDED 2026-08-31
-% (paste_sec52_backbone v4). Full budget grids behind
-% fig:backbone-transfer, Table-2 layout and conventions, split CP rows
-% and per-cell coverage included, both alphas. Tables generated by the
-% src/make_headline_tables.py driver from
-% output/backbone_headline/{clip-base,ssl-resnet50}/results_*.json and
-% \input from figs/. SemiCP <= split CP in 57/60 cells across the three
-% encoders (computed 08-31); T re-piloted per encoder;
-% resnet50/cifar100 runs the prototype cosine score (auto-T collapse).
-% ===================================================================
-% REWORKED 2026-09-02 (results-display rework, experiments.tex v9): the
-% CLIP comparison at alpha = 0.1 moved INTO the main text as
-% tab:headline-clipb, so the a01 table here is gone and the section
-% keeps only the tighter-level companion. fig:backbone-transfer no
-% longer exists; refs retargeted. Old figs/table_backbone_clipb_*.tex
-% moved to figs/_superseded/; the a005 companion is now the
-% generator-emitted figs/table_headline_clipb_a005.tex (ours-last row
-% order, label tab:headline-clipb-a005).
-% REWORKED 2026-09-07 (final-results round): encoder is CLIP ViT-B
-% (user call; CLIP ViT-L left the paper, its tables stay in figs/ and
-% output/instructor_comparisons_0907 for the record). Tables from
-% output/temperature/nonempty_clipb/results_*.json (50 trials, pool-T +
-% shrinkage off, non-empty convention) via make_headline_tables.py
-% --convention filled --frozen_arm frozen_Tpool_shrzero --shots 2 4 6 8.
-\section{Backbone transfer}
-\label{app:backbones}
-
-Tables~\ref{tab:headline-clipb} and~\ref{tab:headline-clipb-a005}
-repeat the comparison of Table~\ref{tab:headline-main} on CLIP
-ViT-B~\citep{radford2021clip} embeddings, at both miscoverage levels
-and on the same budget grid and non-empty convention. The pipeline and
-per-dataset configuration of Appendix~\ref{app:config} carry over
-unchanged. Only the pool statistics are refitted, and the temperature
-is re-resolved from the pool for the encoder. FRCP is smallest in 8 of
-12 cells at both miscoverage levels. Every loss is to CV+, three of
-the four on EuroSAT, where the crossover that sits beyond the grid on
-DINOv2 arrives at four shots on this weaker encoder, and the fourth on
-CIFAR-100 at eight shots. SemiCP falls below the coverage target in
-five cells at $\alpha = 0.1$, reaching 0.870.
-
-\input{figs/table_headline_clipb_a01.tex}
-\input{figs/table_headline_clipb_a005.tex}
+% ATTRIBUTION section (app:attrib, "Full CP or the score?") REMOVED
+% 2026-09-07 (user call, "for now"). Its material survives at
+% output/headline_attrib/results_*.json + figs/table_attrib_a0{1,05}.tex
+% and in git history of this file; the 5.2 paragraph that pointed at it
+% was removed from experiments.tex in the same round.
 
 % ===================================================================
 % Gap B2 (Section 5.4) score- vs representation-level smoothing. ADDED
