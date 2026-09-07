@@ -1,0 +1,131 @@
+% ======================================================================
+% paste_sec5_final_0907.tex -- FINAL-RESULTS round (user decisions
+% 2026-09-07). Supersedes paste_sec5_reorg_0906.tex as the active
+% Section 5 paste. Mirrors: docs/paper/iclr2027/experiments.tex (v11)
+% and appendix.tex.
+%
+% The decisions baked in:
+%   * NON-EMPTY convention for every method (empty conformal set ->
+%     top-ranked label; size counts it, coverage credits it; validity
+%     untouched). Stated in 5.1 Protocol.
+%   * Budget grid {2,4,6,8}. Under it FRCP is smallest in ALL 12
+%     DINOv2 cells at alpha=.1 (11/12 at .05) and 8/12 on CLIP ViT-B
+%     at both levels.
+%   * Encoders: DINOv2 ViT-B main + CLIP ViT-B appendix (both d=768).
+%     CLIP ViT-L is OUT of the paper.
+%   * Frozen config = audited deploy: pool-resolved temperature
+%     (label-free) + whitening shrinkage off. 5.1 Configuration now
+%     says T comes from the unlabeled pool.
+%   * Runtime = TEST-TIME table (tab:runtime-cifar100): naive full CP
+%     29-79s vs FRCP 0.5-0.6s (identical p-values, verified bit for
+%     bit; 60-130x), baselines 0.03-0.05s; preparation costs in the
+%     caption.
+%
+% UPLOADS to Overleaf figs/ (if you keep the \input form of R-3):
+%   table_headline_clipb_a01.tex, table_headline_clipb_a005.tex
+%   (both REGENERATED 09-07: filled convention, {2,4,6,8} columns; the
+%    two tables are also inlined below so you can paste instead)
+% No new figure uploads: fig_stage_ablation_row.pdf and
+%   fig_refine_score_hist_softmax.pdf are unchanged from the 0906 round.
+%
+% R-1  REPLACE the whole \section{Experiments} body with the body of
+%      docs/paper/iclr2027/experiments.tex (everything below its
+%      comment header). Self-contained: the DINOv2 table and the NEW
+%      test-time runtime table are inlined there.
+%
+% R-2  Appendix C (Results at the tighter miscoverage level): REPLACE
+%      the tabular of tab:headline-appendix-a005 with the version now
+%      in docs/paper/iclr2027/appendix.tex (columns {2,4,6,8}, filled
+%      convention).
+%
+% R-3  Backbone-transfer appendix section: REPLACE its body with:
+% ----------------------------------------------------------------------
+\section{Backbone transfer}
+\label{app:backbones}
+
+Tables~\ref{tab:headline-clipb} and~\ref{tab:headline-clipb-a005}
+repeat the comparison of Table~\ref{tab:headline-main} on CLIP
+ViT-B~\citep{radford2021clip} embeddings, at both miscoverage levels
+and on the same budget grid and non-empty convention. The pipeline and
+per-dataset configuration of Appendix~\ref{app:config} carry over
+unchanged. Only the pool statistics are refitted, and the temperature
+is re-resolved from the pool for the encoder. FRCP is smallest in 8 of
+12 cells at both miscoverage levels. Every loss is to CV+, three of
+the four on EuroSAT, where the crossover that sits beyond the grid on
+DINOv2 arrives at four shots on this weaker encoder, and the fourth on
+CIFAR-100 at eight shots. SemiCP falls below the coverage target in
+five cells at $\alpha = 0.1$, reaching 0.870.
+
+% EITHER keep these two \input lines (and upload the two REGENERATED
+% .tex files to Overleaf figs/):
+%   \input{figs/table_headline_clipb_a01.tex}
+%   \input{figs/table_headline_clipb_a005.tex}
+% OR paste the identical inlined tables below.
+\begin{table}[t]
+\centering
+\small
+\caption{Headline comparison on CLIP ViT-B embeddings: mean prediction-set size ($\pm$ SE, 50 trials, balanced split) with marginal coverage in parentheses. Split CP and SemiCP are shown at their best score (THR/APS/RAPS) and train fraction per cell (strongest-baseline convention). FRCP = the frozen pool-fitted refinement with exact full CP. Bold: smallest set per dataset and budget. Every method follows the non-empty convention: an empty conformal set receives the top-ranked label, which the size counts and the coverage credits. Target miscoverage $\alpha=0.1$.}
+\label{tab:headline-clipb}
+\begin{tabular}{llcccc}
+\toprule
+dataset & method & 2 shots & 4 shots & 6 shots & 8 shots\\
+\midrule
+\multirow{4}{*}{CIFAR-10} & Split CP (best) & 9.68$\pm$0.06 {\scriptsize(0.981)} & 3.08$\pm$0.27 {\scriptsize(0.940)} & 2.22$\pm$0.17 {\scriptsize(0.954)} & 1.43$\pm$0.08 {\scriptsize(0.933)}\\
+ & CV+ & 3.93$\pm$0.28 {\scriptsize(0.946)} & 1.53$\pm$0.07 {\scriptsize(0.916)} & 1.25$\pm$0.03 {\scriptsize(0.926)} & 1.14$\pm$0.02 {\scriptsize(0.920)}\\
+ & SemiCP (best) & 6.33$\pm$0.53 {\scriptsize(0.926)} & 2.51$\pm$0.34 {\scriptsize(0.899)} & 1.44$\pm$0.11 {\scriptsize(0.894)} & 1.31$\pm$0.09 {\scriptsize(0.916)}\\
+ & FRCP (ours) & \textbf{1.84$\pm$0.10 {\scriptsize(0.948)}} & \textbf{1.26$\pm$0.04 {\scriptsize(0.924)}} & \textbf{1.19$\pm$0.02 {\scriptsize(0.931)}} & \textbf{1.13$\pm$0.02 {\scriptsize(0.929)}}\\
+\midrule
+\multirow{4}{*}{CIFAR-100} & Split CP (best) & 92.86$\pm$0.17 {\scriptsize(0.929)} & 24.17$\pm$1.14 {\scriptsize(0.944)} & 11.70$\pm$0.52 {\scriptsize(0.923)} & 8.30$\pm$0.26 {\scriptsize(0.918)}\\
+ & CV+ & 34.07$\pm$0.79 {\scriptsize(0.957)} & 10.67$\pm$0.22 {\scriptsize(0.924)} & 7.43$\pm$0.12 {\scriptsize(0.919)} & \textbf{5.77$\pm$0.09 {\scriptsize(0.914)}}\\
+ & SemiCP (best) & 92.34$\pm$0.23 {\scriptsize(0.924)} & 22.19$\pm$1.30 {\scriptsize(0.934)} & 10.22$\pm$0.51 {\scriptsize(0.909)} & 7.58$\pm$0.27 {\scriptsize(0.908)}\\
+ & FRCP (ours) & \textbf{21.08$\pm$0.58 {\scriptsize(0.948)}} & \textbf{8.89$\pm$0.21 {\scriptsize(0.915)}} & \textbf{6.73$\pm$0.12 {\scriptsize(0.905)}} & 6.02$\pm$0.12 {\scriptsize(0.903)}\\
+\midrule
+\multirow{4}{*}{EuroSAT} & Split CP (best) & 9.75$\pm$0.06 {\scriptsize(0.984)} & 4.50$\pm$0.26 {\scriptsize(0.942)} & 3.98$\pm$0.23 {\scriptsize(0.943)} & 2.48$\pm$0.15 {\scriptsize(0.910)}\\
+ & CV+ & 5.85$\pm$0.22 {\scriptsize(0.949)} & \textbf{2.91$\pm$0.11 {\scriptsize(0.918)}} & \textbf{2.20$\pm$0.08 {\scriptsize(0.918)}} & \textbf{1.78$\pm$0.05 {\scriptsize(0.909)}}\\
+ & SemiCP (best) & 7.77$\pm$0.46 {\scriptsize(0.936)} & 4.29$\pm$0.44 {\scriptsize(0.893)} & 2.61$\pm$0.31 {\scriptsize(0.870)} & 1.95$\pm$0.13 {\scriptsize(0.872)}\\
+ & FRCP (ours) & \textbf{4.64$\pm$0.20 {\scriptsize(0.931)}} & 3.09$\pm$0.12 {\scriptsize(0.906)} & 2.68$\pm$0.10 {\scriptsize(0.908)} & 2.36$\pm$0.08 {\scriptsize(0.901)}\\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{table}[t]
+\centering
+\small
+\caption{Headline comparison on CLIP ViT-B embeddings: mean prediction-set size ($\pm$ SE, 50 trials, balanced split) with marginal coverage in parentheses. Split CP and SemiCP are shown at their best score (THR/APS/RAPS) and train fraction per cell (strongest-baseline convention). FRCP = the frozen pool-fitted refinement with exact full CP. Bold: smallest set per dataset and budget. Every method follows the non-empty convention: an empty conformal set receives the top-ranked label, which the size counts and the coverage credits. Target miscoverage $\alpha=0.05$.}
+\label{tab:headline-clipb-a005}
+\begin{tabular}{llcccc}
+\toprule
+dataset & method & 2 shots & 4 shots & 6 shots & 8 shots\\
+\midrule
+\multirow{4}{*}{CIFAR-10} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.65$\pm$0.42 {\scriptsize(0.975)} & 5.45$\pm$0.34 {\scriptsize(0.985)} & 2.17$\pm$0.19 {\scriptsize(0.964)}\\
+ & CV+ & 5.65$\pm$0.33 {\scriptsize(0.979)} & 2.51$\pm$0.14 {\scriptsize(0.973)} & 1.77$\pm$0.07 {\scriptsize(0.968)} & 1.49$\pm$0.05 {\scriptsize(0.960)}\\
+ & SemiCP (best) & 7.31$\pm$0.52 {\scriptsize(0.943)} & 4.22$\pm$0.51 {\scriptsize(0.932)} & 2.51$\pm$0.34 {\scriptsize(0.940)} & 1.79$\pm$0.22 {\scriptsize(0.941)}\\
+ & FRCP (ours) & \textbf{2.76$\pm$0.17 {\scriptsize(0.970)}} & \textbf{1.80$\pm$0.10 {\scriptsize(0.965)}} & \textbf{1.49$\pm$0.06 {\scriptsize(0.963)}} & \textbf{1.42$\pm$0.04 {\scriptsize(0.959)}}\\
+\midrule
+\multirow{4}{*}{CIFAR-100} & Split CP (best) & 96.67$\pm$0.15 {\scriptsize(0.967)} & 46.45$\pm$2.82 {\scriptsize(0.975)} & 21.39$\pm$0.90 {\scriptsize(0.963)} & 15.27$\pm$0.49 {\scriptsize(0.961)}\\
+ & CV+ & 58.81$\pm$1.30 {\scriptsize(0.985)} & 20.41$\pm$0.42 {\scriptsize(0.965)} & 14.07$\pm$0.24 {\scriptsize(0.963)} & \textbf{11.02$\pm$0.19 {\scriptsize(0.960)}}\\
+ & SemiCP (best) & 95.88$\pm$0.20 {\scriptsize(0.960)} & 45.21$\pm$3.28 {\scriptsize(0.964)} & 18.78$\pm$1.11 {\scriptsize(0.953)} & 14.08$\pm$0.55 {\scriptsize(0.955)}\\
+ & FRCP (ours) & \textbf{33.71$\pm$0.88 {\scriptsize(0.975)}} & \textbf{17.68$\pm$0.42 {\scriptsize(0.961)}} & \textbf{13.65$\pm$0.28 {\scriptsize(0.954)}} & 12.17$\pm$0.26 {\scriptsize(0.953)}\\
+\midrule
+\multirow{4}{*}{EuroSAT} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 7.69$\pm$0.28 {\scriptsize(0.975)} & 6.90$\pm$0.28 {\scriptsize(0.979)} & 3.85$\pm$0.24 {\scriptsize(0.954)}\\
+ & CV+ & 7.34$\pm$0.22 {\scriptsize(0.974)} & \textbf{4.44$\pm$0.17 {\scriptsize(0.966)}} & \textbf{3.51$\pm$0.14 {\scriptsize(0.963)}} & \textbf{2.78$\pm$0.10 {\scriptsize(0.956)}}\\
+ & SemiCP (best) & 8.58$\pm$0.32 {\scriptsize(0.973)} & 5.85$\pm$0.33 {\scriptsize(0.966)} & 3.69$\pm$0.39 {\scriptsize(0.912)} & 3.49$\pm$0.34 {\scriptsize(0.923)}\\
+ & FRCP (ours) & \textbf{5.68$\pm$0.22 {\scriptsize(0.956)}} & 4.46$\pm$0.17 {\scriptsize(0.956)} & 4.15$\pm$0.14 {\scriptsize(0.952)} & 3.98$\pm$0.11 {\scriptsize(0.958)}\\
+\bottomrule
+\end{tabular}
+\end{table}
+% ======================================================================
+% KNOWN DANGLERS for the appendix pass:
+%   - Appendix B (per-dataset configuration): temperature values must
+%     become the POOL values and note the pool rule (dinov2:
+%     cifar10 0.156, cifar100 0.105, eurosat 0.075; clip-b: 0.142,
+%     0.028, 0.070) and the shrinkage-off setting.
+%   - app:covgap (F), table_h_cert, table_attrib_*, table_snaps_* and
+%     their prose: still four-dataset / old-grid / plain-convention /
+%     pilot-T artifacts.
+%   - app:attrib "Full CP or the score?" tables are pilot-T plain-
+%     convention; the 5.2 paragraph is qualitative and still holds.
+%   - paste_refined_baselines_0906.tex: ViT-B raw-vs-refined control at
+%     the old grid; regenerate or shelve in the appendix pass.
+%   - Stage-ablation figure + score-hist appendix stay PLAIN-convention
+%     (caption clause added in 5.3; hist shows score mass, not sets).
+% ======================================================================

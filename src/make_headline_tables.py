@@ -12,8 +12,14 @@ $\\pm$ SE with coverage in scriptsize parens; bold = smallest size per
 best over score x train_frac per cell.
 
 The requested --shots grid is intersected per results dir with the shots
-actually present (the CLIP runs currently stop at {2,4,8,14}); missing
-budgets are dropped with a warning rather than emitted as empty columns.
+actually present; missing budgets are dropped with a warning rather than
+emitted as empty columns.
+
+Final-results round (user call 2026-09-07): --convention filled reads the
+non-empty-convention metrics (sz1 / sz1_se / cov1, recorded per arm by the
+exp/temperature-audit driver: empty sets receive the top-ranked label) and
+selects/bolds by sz1. --frozen_arm overrides the frozen arm name (the
+audited deploy tags it frozen_Tpool_shrzero).
 
 Outputs (out_dir):
     table_headline_dinov2_a01.tex    main Table 2 (alpha = 0.1)
@@ -44,10 +50,15 @@ INTERNAL_DS = ["miniimagenet", "aircraft", "cub200", "food101",
                "stanford_cars"]
 
 
-def best_row(rows, arm, shots, alpha):
+# metric keys per convention: (size, size SE, coverage)
+METRIC = {"plain": ("sz", "sz_se", "cov"),
+          "filled": ("sz1", "sz1_se", "cov1")}
+
+
+def best_row(rows, arm, shots, alpha, szk="sz"):
     cand = [x for x in rows if x["arm"] == arm and x["shots"] == shots
-            and x["alpha"] == alpha]
-    return min(cand, key=lambda x: x["sz"]) if cand else None
+            and x["alpha"] == alpha and szk in x]
+    return min(cand, key=lambda x: x[szk]) if cand else None
 
 
 def available_shots(results_dir, datasets, shots_req):
@@ -70,7 +81,9 @@ def available_shots(results_dir, datasets, shots_req):
     return kept
 
 
-def build(results_dir, datasets, alpha, shots_sel, label, caption, out):
+def build(results_dir, datasets, alpha, shots_sel, label, caption, out,
+          convention="plain", frozen_default="frozen"):
+    szk, sek, cvk = METRIC[convention]
     lines = [r"\begin{table}[t]", r"\centering", r"\small",
              rf"\caption{{{caption}}}", rf"\label{{{label}}}",
              rf"\begin{{tabular}}{{ll{'c' * len(shots_sel)}}}",
@@ -83,23 +96,23 @@ def build(results_dir, datasets, alpha, shots_sel, label, caption, out):
             print(f"[skip] {path} missing")
             continue
         rows = json.load(open(path))["rows"]
-        fro = FROZEN_ARM.get(ds, "frozen")
+        fro = FROZEN_ARM.get(ds, frozen_default)
         lines.append(r"\midrule")
-        best = {s: min(v["sz"] for a, _ in ARMS
+        best = {s: min(v[szk] for a, _ in ARMS
                        if (v := best_row(rows, fro if a == "frozen" else a,
-                                         s, alpha)))
+                                         s, alpha, szk)))
                 for s in shots_sel}
         for i, (arm, arm_label) in enumerate(ARMS):
             a = fro if arm == "frozen" else arm
             cells = []
             for s in shots_sel:
-                b = best_row(rows, a, s, alpha)
+                b = best_row(rows, a, s, alpha, szk)
                 if b is None:
                     cells.append("--")
                     continue
-                txt = (f"{b['sz']:.2f}$\\pm${b['sz_se']:.2f} "
-                       rf"{{\scriptsize({b['cov']:.3f})}}")
-                if b["sz"] <= best[s] + 5e-3:
+                txt = (f"{b[szk]:.2f}$\\pm${b[sek]:.2f} "
+                       rf"{{\scriptsize({b[cvk]:.3f})}}")
+                if b[szk] <= best[s] + 5e-3:
                     txt = rf"\textbf{{{txt}}}"
                 cells.append(txt)
             head = (rf"\multirow{{{len(ARMS)}}}{{*}}"
@@ -118,11 +131,18 @@ def main():
                     help="dinov2 results (the Table 2 run)")
     ap.add_argument("--clipb_dir",
                     default="output/backbone_headline/clip-base")
-    ap.add_argument("--clipl_dir",
-                    default="output/backbone_headline/clip-large")
+    ap.add_argument("--clipl_dir", default="",
+                    help="CLIP ViT-L results dir; empty = do not emit "
+                         "(out of the paper since 09-07)")
     ap.add_argument("--out_dir", default="output/headline/plots")
-    ap.add_argument("--shots", type=int, nargs="+", default=[2, 4, 8, 12],
+    ap.add_argument("--shots", type=int, nargs="+", default=[2, 4, 6, 8],
                     help="requested grid, intersected per results dir")
+    ap.add_argument("--convention", default="plain",
+                    choices=list(METRIC),
+                    help="filled = non-empty convention (sz1/cov1)")
+    ap.add_argument("--frozen_arm", default="frozen",
+                    help="frozen arm name in the results rows, e.g. "
+                         "frozen_Tpool_shrzero for the audited deploy")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -132,14 +152,20 @@ def main():
                 "train fraction per cell (strongest-baseline convention). "
                 "FRCP = the frozen pool-fitted refinement with exact full "
                 "CP. Bold: smallest set per dataset and budget.")
+    if args.convention == "filled":
+        base_cap += (" Every method follows the non-empty convention: an "
+                     "empty conformal set receives the top-ranked label, "
+                     "which the size counts and the coverage credits.")
     backbones = [
         ("dinov2", "DINOv2 ViT-B", args.headline_dir,
          {0.1: "tab:headline-main", 0.05: "tab:headline-appendix-a005"}),
         ("clipb", "CLIP ViT-B", args.clipb_dir,
          {0.1: "tab:headline-clipb", 0.05: "tab:headline-clipb-a005"}),
-        ("clipl", "CLIP ViT-L", args.clipl_dir,
-         {0.1: "tab:headline-clipl", 0.05: "tab:headline-clipl-a005"}),
     ]
+    if args.clipl_dir:
+        backbones.append(
+            ("clipl", "CLIP ViT-L", args.clipl_dir,
+             {0.1: "tab:headline-clipl", 0.05: "tab:headline-clipl-a005"}))
     for bb_tag, bb_name, res_dir, lab in backbones:
         shots_sel = available_shots(res_dir, MAIN_DS, args.shots)
         for alpha, atag in ((0.1, "a01"), (0.05, "a005")):
@@ -147,7 +173,9 @@ def main():
                   f"Headline comparison on {bb_name} embeddings: "
                   + base_cap + f" Target miscoverage $\\alpha={alpha:g}$.",
                   os.path.join(args.out_dir,
-                               f"table_headline_{bb_tag}_{atag}.tex"))
+                               f"table_headline_{bb_tag}_{atag}.tex"),
+                  convention=args.convention,
+                  frozen_default=args.frozen_arm)
     shots_sel = available_shots(args.headline_dir, INTERNAL_DS, args.shots)
     for alpha, atag in ((0.1, "a01"), (0.05, "a005")):
         build(args.headline_dir, INTERNAL_DS, alpha, shots_sel,
@@ -155,7 +183,9 @@ def main():
               f"INTERNAL (not for submission): datasets outside the "
               f"09-06 scope at $\\alpha={alpha:g}$.",
               os.path.join(args.out_dir,
-                           f"table_headline_internal_{atag}.tex"))
+                           f"table_headline_internal_{atag}.tex"),
+              convention=args.convention,
+              frozen_default=args.frozen_arm)
 
 
 if __name__ == "__main__":

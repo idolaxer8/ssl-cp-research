@@ -1,44 +1,40 @@
-% v10 (2026-09-06, sec5 reorg -- user calls, background session).
-%   Main-text results = DINOv2 table + runtime table + stage ablation.
-%     - Datasets: miniImageNet REMOVED from the comparison entirely
-%       (roster = CIFAR-10 / CIFAR-100 / EuroSAT); vinyals2016matching
-%       cite dropped from 5.1.
-%     - Budget grid: tables stop at 12 shots (columns {2,4,8,12}); the
-%       s=14 runs stay in output/headline for the record.
-%     - CLIP table MOVED to Appendix app:backbones and UPGRADED to CLIP
-%       ViT-L (d=1024): the large encoder STRENGTHENS the claim (shared
-%       {2,4,8} cells: 7/9 a01 + 8/9 a005 vs 6/9 + 6/9 on ViT-B; FRCP
-%       sets ~halve on cifar100, 21.1->11.7 at s=2). s=12 CLIP-L cells
-%       run locally 09-06 (checkpoint merge), full grid now {2,4,8,12}:
-%       9/12 a01 (all losses eurosat) + 8/12 a005 (narrow CIFAR s12
-%       passes: 1.07 vs 1.11, 5.87 vs 6.04).
-%     - Runtime NEW main-text table (tab:runtime-cifar100):
-%       headline_timing_benchmark.py rerun at shots {2,4,8,12} +
-%       make_runtime_table.py (medians over 5 reps). CV+ 0.34->3.75s vs
-%       FRCP 0.78->1.32s. Old runtime paragraph replaced.
-%     - Figure 3 -> fig_stage_ablation_row.pdf (1x3, three datasets);
-%       the v9 "all eight subsets" prose FIXED to the six combos the
-%       09-01 run actually holds (raw/T/W/S/TW/full; the 8-subset run
-%       lives on the unmerged exp/temperature-audit branch).
-%     - Score-hist figure MOVED to Appendix app:scorehist and
-%       REGENERATED on the deployed prototype-softmax score with a
-%       logit-scaled axis (plot_refine_score_hist.py --score softmax
-%       --xscale logit); main text keeps the paragraph as a pointer with
-%       the new softmax leak numbers (0.55->0.02 / 1.50->0.42 /
-%       1.84->1.56).
-%     - 5.2 prose recomputed for the 3x4 grid: FRCP smallest 11/12
-%       (single loss eurosat s12 to CV+, 1.31 vs 1.44), cov 0.899-0.945,
-%       SemiCP below target in 3 cells, min 0.884.
-%     - The v9 "implementation(adaptations" missing space is FIXED here
-%       (was carried-as-pasted from Overleaf).
-%     - OPEN: the non-empty-sets variant (other session) may replace the
-%       results JSONs; tables regenerate with one command
-%       (make_headline_tables.py --headline_dir <new_dir>). CLOSED
-%       09-06: CLIP-L s=12 cells run, appendix grid = {2,4,8,12}.
+% v11 (2026-09-07, FINAL-RESULTS round -- user decisions, confirmed in
+%   chat: fill scope = ALL methods, config = pool-T + shrinkage off,
+%   runtime = per-test-batch).
+%     - NON-EMPTY CONVENTION adopted for every method: an empty
+%       conformal set receives the top-ranked label (metrics sz1/cov1,
+%       recorded per arm by the exp/temperature-audit driver). Stated in
+%       5.1 Protocol; validity unaffected (sets only grow). Empty sets
+%       were a CIFAR-10 phenomenon (FRCP 4-8%, baselines similar);
+%       filling converts abstention into over-coverage there
+%       (FRCP cov 0.976-0.984).
+%     - GRID: tables show s in {2,4,6,8} (12/14 dropped from display).
+%     - FROZEN CONFIG: the audited deploy -- pool-margin temperature +
+%       whitening shrinkage OFF (arm frozen_Tpool_shrzero). T is now
+%       resolved from the unlabeled pool (label-free), which 5.1 states;
+%       Appendix B's temperature values still need updating (dangler).
+%     - ENCODERS: DINOv2 ViT-B main + CLIP ViT-B appendix (both d=768).
+%       CLIP ViT-L left the paper (analysis retained in
+%       output/instructor_comparisons_0907 and figs/ for the record).
+%     - DATA: output/temperature/nonempty (dinov2, 50 trials, s=6 cells
+%       topped up 09-07, resume verified: 0 pre-existing rows changed)
+%       + output/temperature/nonempty_clipb (clip-base {2,4,6,8}, run
+%       09-07). Tables: make_headline_tables.py --convention filled
+%       --frozen_arm frozen_Tpool_shrzero --shots 2 4 6 8.
+%     - HEADLINE COUNTS (filled, {2,4,6,8}): dinov2 a01 FRCP smallest
+%       12/12 (cov 0.901-0.984, SemiCP below target 2 cells min 0.885);
+%       a005 11/12 (loss eurosat s8, CV+ 2.25 vs 2.28). clip-b 8/12 at
+%       both levels (losses to CV+: eurosat s4/s6/s8 + cifar100 s8).
+%     - RUNTIME: test-time only (per test batch, given trained probes /
+%       calibration / quantiles) + "full CP, naive sweep" row = same
+%       predictor, identical p-values (asserted), unvectorized CPU
+%       per-candidate loop. src/testtime_benchmark.py ->
+%       timing_testtime_<ds>.json -> make_runtime_table.py --mode
+%       testtime. Old per-trial runtime table replaced.
+%     - Stage-ablation figure kept under the PLAIN convention with a
+%       caption clause (fill only adds the empty-set mass, <= 0.08).
 % ----------------------------------------------------------------------
-% v9 history (2026-09-02/03) kept for provenance: two headline tables
-%   (ours last), stage-ablation figure, cosine score-hist figure,
-%   09-03 alignment to the Overleaf gold. See git history of this file.
+% v10 history (2026-09-06 sec5 reorg) and earlier: see git log.
 % Float conventions (ICLR): table caption ABOVE the table, figure
 %   caption BELOW the figure, both centered; booktabs.
 % OVERLEAF: preamble needs \usepackage{graphicx}, \usepackage{booktabs},
@@ -54,9 +50,9 @@ benchmarks. CIFAR-10 and CIFAR-100~\citep{krizhevsky2009learning} are
 consumer photographs of the kind the backbone saw in pre-training,
 while EuroSAT~\citep{helber2019eurosat} is Sentinel-2 satellite imagery
 and sits further from it. Embeddings come from the frozen DINOv2
-ViT-B/14 encoder~\citep{oquab2023dinov2}, of dimension $d = 768$, and
+ViT-B/14 encoder~\citep{oquab2023dinov2}, and
 Appendix~\ref{app:backbones} repeats every comparison on CLIP
-ViT-L~\citep{radford2021clip}, of dimension $d = 1024$. For each
+ViT-B~\citep{radford2021clip}, both of dimension $d = 768$. For each
 dataset the unlabeled pool $\mathcal{U}$ holds 10,000 held-out images
 of the same distribution and never overlaps the labeled sample.
 \textbf{Configuration.} One configuration serves every dataset and both
@@ -64,9 +60,9 @@ encoders. Truncation keeps $d' = 128$ dimensions, whitening pools the within-gro
 $C = K$ $k$-means groups, and smoothing averages each embedding over
 $\kappa = 10$ pool neighbors with weight exponent $\gamma = 3$. The
 score is the prototype softmax of \eqref{eq:score}. Its temperature $T$
-is the one quantity resolved per dataset and encoder, fixed once from a
-small pilot split and then held constant across every trial and budget.
-Appendix~B reports the values.
+is the one quantity resolved per dataset and encoder, fixed from the
+unlabeled pool before any label is seen and then held constant across
+every trial and budget. Appendix~B reports the values.
 \textbf{Baselines.} We compare against split CP on a trained linear
 head, scored by the three standard conformal
 scores~\citep{sadinle2019least, romano2020aps, angelopoulos2021raps},
@@ -81,10 +77,15 @@ selected with hindsight from $n_{\mathrm{tr}}/n \in \{0.25, 0.5,
 SemiCP follows the official implementation (adaptations in Appendix~E).
 The unlabeled pool is available to every method that can consume one.
 \textbf{Protocol.} The labeled budget is indexed by shots per class
-$s = n/K$, tabulated at $s \in \{2, 4, 8, 12\}$. Each cell
+$s = n/K$, tabulated at $s \in \{2, 4, 6, 8\}$. Each cell
 averages 50 independent trials that resample the labeled sample, the
 test points (5 per class), and where applicable the baseline's
 train/calibration split. Labeled samples are class-balanced.
+Prediction sets follow the non-empty convention: a method whose
+conformal set comes back empty predicts its top-ranked label instead.
+Every method follows it, the reported size counts that label, the
+coverage credits it, and the guarantee is untouched because sets only
+grow.
 % Random-split arm DROPPED 08-30 (user call). Tables survive at
 % output/r1_headline/plots/table_r1b_random_*.tex if it returns.
 We report $\alpha = 0.1$ in the main text and $\alpha = 0.05$ in
@@ -98,37 +99,39 @@ percentage points, reported in Appendix~F.
 \label{sec:headline}
 Table~\ref{tab:headline-main} reports mean prediction-set size and
 marginal coverage across the budget grid, and
-Table~\ref{tab:runtime-cifar100} the compute cost of every method.
-Appendix~\ref{app:backbones} repeats the comparison on the CLIP ViT-L
-encoder.
+Table~\ref{tab:runtime-cifar100} the test-time compute cost of every
+method. Appendix~\ref{app:backbones} repeats the comparison on the
+CLIP ViT-B encoder.
 \begin{table}[t]
 \caption{Mean prediction-set size ($\pm$ standard error) with marginal
 coverage in parentheses, on DINOv2 ViT-B at target miscoverage
 $\alpha = 0.1$ over 50 trials. Split CP and SemiCP take their best
 score and train fraction in each cell, so every comparison favors the
-baselines. Bold marks the smallest set per dataset and budget.}
+baselines. All methods follow the non-empty convention of
+Section~\ref{sec:setup}. Bold marks the smallest set per dataset and
+budget.}
 \label{tab:headline-main}
 \begin{center}
 \small
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{llcccc}
 \toprule
-dataset & method & 2 shots & 4 shots & 8 shots & 12 shots\\
+dataset & method & 2 shots & 4 shots & 6 shots & 8 shots\\
 \midrule
-\multirow{4}{*}{CIFAR-10} & Split CP (best) & 9.81$\pm$0.04 {\scriptsize(0.988)} & 2.61$\pm$0.25 {\scriptsize(0.944)} & 1.06$\pm$0.04 {\scriptsize(0.921)} & 0.96$\pm$0.01 {\scriptsize(0.916)}\\
- & CV+ & 3.59$\pm$0.27 {\scriptsize(0.951)} & 1.17$\pm$0.04 {\scriptsize(0.922)} & 0.95$\pm$0.01 {\scriptsize(0.914)} & 0.93$\pm$0.01 {\scriptsize(0.916)}\\
- & SemiCP (best) & 6.36$\pm$0.46 {\scriptsize(0.930)} & 1.61$\pm$0.16 {\scriptsize(0.892)} & 1.01$\pm$0.04 {\scriptsize(0.897)} & 0.93$\pm$0.01 {\scriptsize(0.904)}\\
- & FRCP (ours) & \textbf{0.99$\pm$0.01 {\scriptsize(0.945)}} & \textbf{0.93$\pm$0.01 {\scriptsize(0.921)}} & \textbf{0.92$\pm$0.01 {\scriptsize(0.910)}} & \textbf{0.91$\pm$0.01 {\scriptsize(0.908)}}\\
+\multirow{4}{*}{CIFAR-10} & Split CP (best) & 9.81$\pm$0.04 {\scriptsize(0.988)} & 2.62$\pm$0.25 {\scriptsize(0.951)} & 1.85$\pm$0.20 {\scriptsize(0.965)} & 1.11$\pm$0.03 {\scriptsize(0.944)}\\
+ & CV+ & 3.59$\pm$0.26 {\scriptsize(0.953)} & 1.21$\pm$0.04 {\scriptsize(0.940)} & 1.04$\pm$0.01 {\scriptsize(0.954)} & 1.01$\pm$0.00 {\scriptsize(0.951)}\\
+ & SemiCP (best) & 6.36$\pm$0.46 {\scriptsize(0.930)} & 1.65$\pm$0.15 {\scriptsize(0.907)} & 1.51$\pm$0.19 {\scriptsize(0.939)} & 1.08$\pm$0.03 {\scriptsize(0.935)}\\
+ & FRCP (ours) & \textbf{1.02$\pm$0.01 {\scriptsize(0.978)}} & \textbf{1.00$\pm$0.00 {\scriptsize(0.984)}} & \textbf{1.00$\pm$0.00 {\scriptsize(0.983)}} & \textbf{1.00$\pm$0.00 {\scriptsize(0.976)}}\\
 \midrule
-\multirow{4}{*}{CIFAR-100} & Split CP (best) & 92.92$\pm$0.15 {\scriptsize(0.931)} & 8.76$\pm$1.09 {\scriptsize(0.945)} & 1.93$\pm$0.05 {\scriptsize(0.918)} & 1.49$\pm$0.02 {\scriptsize(0.913)}\\
- & CV+ & 8.34$\pm$0.50 {\scriptsize(0.952)} & 2.09$\pm$0.03 {\scriptsize(0.914)} & 1.49$\pm$0.02 {\scriptsize(0.911)} & 1.32$\pm$0.01 {\scriptsize(0.910)}\\
- & SemiCP (best) & 91.94$\pm$0.23 {\scriptsize(0.920)} & 5.83$\pm$0.76 {\scriptsize(0.927)} & 1.78$\pm$0.04 {\scriptsize(0.909)} & 1.44$\pm$0.02 {\scriptsize(0.909)}\\
- & FRCP (ours) & \textbf{2.43$\pm$0.09 {\scriptsize(0.939)}} & \textbf{1.41$\pm$0.02 {\scriptsize(0.908)}} & \textbf{1.26$\pm$0.01 {\scriptsize(0.901)}} & \textbf{1.22$\pm$0.01 {\scriptsize(0.899)}}\\
+\multirow{4}{*}{CIFAR-100} & Split CP (best) & 92.92$\pm$0.15 {\scriptsize(0.931)} & 8.76$\pm$1.09 {\scriptsize(0.945)} & 2.73$\pm$0.14 {\scriptsize(0.925)} & 1.93$\pm$0.05 {\scriptsize(0.919)}\\
+ & CV+ & 8.34$\pm$0.50 {\scriptsize(0.952)} & 2.09$\pm$0.03 {\scriptsize(0.915)} & 1.70$\pm$0.02 {\scriptsize(0.917)} & 1.51$\pm$0.02 {\scriptsize(0.916)}\\
+ & SemiCP (best) & 91.94$\pm$0.23 {\scriptsize(0.920)} & 5.83$\pm$0.76 {\scriptsize(0.927)} & 2.32$\pm$0.12 {\scriptsize(0.912)} & 1.79$\pm$0.04 {\scriptsize(0.911)}\\
+ & FRCP (ours) & \textbf{2.43$\pm$0.09 {\scriptsize(0.940)}} & \textbf{1.42$\pm$0.02 {\scriptsize(0.910)}} & \textbf{1.31$\pm$0.01 {\scriptsize(0.904)}} & \textbf{1.28$\pm$0.01 {\scriptsize(0.903)}}\\
 \midrule
-\multirow{4}{*}{EuroSAT} & Split CP (best) & 9.75$\pm$0.06 {\scriptsize(0.980)} & 3.97$\pm$0.27 {\scriptsize(0.944)} & 2.04$\pm$0.13 {\scriptsize(0.915)} & 1.58$\pm$0.07 {\scriptsize(0.918)}\\
- & CV+ & 4.76$\pm$0.23 {\scriptsize(0.948)} & 2.19$\pm$0.08 {\scriptsize(0.902)} & 1.52$\pm$0.03 {\scriptsize(0.916)} & \textbf{1.31$\pm$0.02 {\scriptsize(0.913)}}\\
- & SemiCP (best) & 7.47$\pm$0.38 {\scriptsize(0.946)} & 3.80$\pm$0.20 {\scriptsize(0.908)} & 1.65$\pm$0.10 {\scriptsize(0.884)} & 1.44$\pm$0.06 {\scriptsize(0.903)}\\
- & FRCP (ours) & \textbf{3.59$\pm$0.17 {\scriptsize(0.941)}} & \textbf{2.06$\pm$0.08 {\scriptsize(0.916)}} & \textbf{1.51$\pm$0.04 {\scriptsize(0.901)}} & 1.44$\pm$0.03 {\scriptsize(0.907)}\\
+\multirow{4}{*}{EuroSAT} & Split CP (best) & 9.75$\pm$0.06 {\scriptsize(0.980)} & 3.97$\pm$0.27 {\scriptsize(0.944)} & 3.44$\pm$0.26 {\scriptsize(0.952)} & 2.04$\pm$0.13 {\scriptsize(0.915)}\\
+ & CV+ & 4.76$\pm$0.23 {\scriptsize(0.948)} & 2.19$\pm$0.08 {\scriptsize(0.902)} & 1.77$\pm$0.06 {\scriptsize(0.913)} & 1.52$\pm$0.03 {\scriptsize(0.916)}\\
+ & SemiCP (best) & 7.48$\pm$0.38 {\scriptsize(0.956)} & 3.84$\pm$0.19 {\scriptsize(0.949)} & 2.35$\pm$0.25 {\scriptsize(0.893)} & 1.66$\pm$0.10 {\scriptsize(0.885)}\\
+ & FRCP (ours) & \textbf{3.55$\pm$0.18 {\scriptsize(0.937)}} & \textbf{2.02$\pm$0.09 {\scriptsize(0.910)}} & \textbf{1.69$\pm$0.05 {\scriptsize(0.910)}} & \textbf{1.51$\pm$0.04 {\scriptsize(0.901)}}\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -137,60 +140,68 @@ dataset & method & 2 shots & 4 shots & 8 shots & 12 shots\\
 At $s = 2$ split CP and SemiCP return 64 to 98 percent of the $K$
 candidates on every dataset, while FRCP returns 1.0 to 3.6 labels and
 the smallest set in all three cells. CV+ is the only competitive
-alternative there, at 1.3 to 3.6 times the FRCP size and under the
+alternative there, at 1.3 to 3.5 times the FRCP size and under the
 weaker $1 - 2\alpha$ guarantee. Across the table FRCP is smallest in
-11 of 12 cells.
+every one of the 12 cells.
 \textbf{Set sizes are comparable only because coverage is.} FRCP holds
-marginal coverage between 0.899 and 0.945 over the whole grid, never
-more than 0.001 below the target. SemiCP falls below it in three
-cells, reaching 0.884 on EuroSAT, so part of the size advantage it
-shows at larger budgets is bought back from coverage rather than
-earned on efficiency.
-\textbf{The advantage narrows as the budget grows.} FRCP is still
-smallest on every dataset at $s = 8$. By $s = 12$ CV+ passes it on
-EuroSAT, 1.31 against 1.44, and the margins on CIFAR-10 and CIFAR-100
-are down to a few percent. Neither shift reaches the small-budget
-ranking, where CV+ remains the strongest baseline in every cell. The
-picture repeats on the larger CLIP ViT-L encoder
-(Appendix~\ref{app:backbones}), where FRCP is smallest in 9 of 12
-cells at $\alpha = 0.1$ and every loss is again on EuroSAT.
+marginal coverage at or above the target in every cell, between 0.901
+and 0.984. The high end is CIFAR-10, where sets are essentially
+singletons and the non-empty convention turns what used to be
+abstentions into extra coverage. SemiCP falls below the target in two
+cells, both on EuroSAT, reaching 0.885, so part of the size advantage
+it shows there is bought back from coverage rather than earned on
+efficiency.
+\textbf{The advantage narrows as the budget grows.} On CIFAR-100 the
+CV+ set is 3.4 times the FRCP set at $s = 2$ and 18 percent larger at
+$s = 8$, and on EuroSAT the two methods meet at $s = 8$, 1.52 against
+1.51. Neither shift reaches the ranking, and CV+ remains the strongest
+baseline in every cell. The picture repeats on CLIP ViT-B
+(Appendix~\ref{app:backbones}), where FRCP is smallest in 8 of 12
+cells at both miscoverage levels and every loss is to CV+, three of
+them on EuroSAT, whose crossover arrives within the grid on the weaker
+encoder.
 \begin{table}[t]
-\caption{Per-trial compute time in seconds on CIFAR-100 ($K = 100$,
-500 test points, single GPU, median over 5 trials), timed standalone
-on the headline protocol. Split-based rows include their probe fit and
-all three scores, and CV+ its per-fold probe fits. FRCP additionally
-pays a one-off pool-transform fit of 13.4\,s and a 0.3\,s temperature
-pilot, shared by every trial, budget and test batch.}
+\caption{Test-time compute in seconds on CIFAR-100 ($K = 100$, 500
+test points, median over 9 trials): only the phase that runs when a
+new test batch arrives. Probe and fold fits, pool scoring, calibration
+quantiles and the conformal calibration pass are prepared beforehand
+and cost at most 1.9 seconds at the largest budget, 0.18 for FRCP,
+with the one-off pool-transform fit of 8.4\,s shared by every batch.
+The naive sweep is the same predictor with identical p-values,
+computed by the unvectorized per-candidate transductive loop on CPU.}
 \label{tab:runtime-cifar100}
 \begin{center}
 \small
 \setlength{\tabcolsep}{5pt}
 \begin{tabular}{lcccc}
 \toprule
-method & 2 shots & 4 shots & 8 shots & 12 shots\\
+method & 2 shots & 4 shots & 6 shots & 8 shots\\
 \midrule
-Split CP & 0.40 & 0.70 & 0.80 & 0.95\\
-CV+ & 0.34 & 1.76 & 2.94 & 3.75\\
-SemiCP & 0.76 & 1.15 & 1.40 & 1.73\\
-FRCP (ours) & 0.78 & 0.83 & 0.99 & 1.32\\
+Split CP & 0.04 & 0.04 & 0.04 & 0.04\\
+CV+ & 0.03 & 0.04 & 0.05 & 0.05\\
+SemiCP & 0.04 & 0.04 & 0.04 & 0.04\\
+full CP, naive sweep & 29.15 & 45.37 & 62.22 & 79.45\\
+FRCP (ours) & 0.48 & 0.46 & 0.52 & 0.61\\
 \bottomrule
 \end{tabular}
 \end{center}
 \end{table}
-\textbf{Runtime.} Table~\ref{tab:runtime-cifar100} answers the
-tractability question directly. FRCP conformalizes the 500-point
-CIFAR-100 test set in 0.8 to 1.3 seconds per trial across the whole
-grid, after the one-off pool-transform fit that every trial, budget
-and test batch shares. CV+ starts cheapest and ends most expensive, at
-3.75 seconds by $s = 12$, almost three times the FRCP cost: its
-per-fold probes are refit as the budget grows, while the closed-form
-update of \eqref{eq:score} leaves FRCP nearly flat. Split CP stays the
-cheapest construction throughout and pays for it in set size at the
-small budgets above. On the two $K = 10$ datasets every method
-finishes in under half a second and CV+ is again the most expensive by
-$s = 12$, 0.41 against 0.09 seconds for FRCP on EuroSAT. The one
-baseline that competes with FRCP on set size at small budgets is also
-the one whose cost grows fastest with the budget.
+\textbf{Runtime.} Full conformal prediction does its work at test
+time, and Table~\ref{tab:runtime-cifar100} measures exactly that
+phase. The naive per-candidate sweep is what earned full CP its
+reputation: 29 to 79 seconds to conformalize the 500-point CIFAR-100
+batch, growing linearly with the calibration size. The closed-form
+batched sweep of Appendix~\ref{app:cost} returns the identical
+p-values, verified bit for bit, in 0.5 to 0.6 seconds across the whole
+grid, a 60 to 130 times reduction. The inductive baselines threshold a
+trained probe at test time and cost a few hundredths of a second, so
+FRCP pays about half a second more per 500-point batch. In exchange
+its preparation is the lightest of every method, 0.05 to 0.18 seconds
+against 1.9 for CV+'s fold probes, on top of the one-off
+pool-transform fit that every batch shares. On the two $K = 10$
+datasets every method, naive sweep included, finishes within 0.16
+seconds. Tractability, in short, is a property of the sweep
+implementation, not of the construction.
 \textbf{Full CP or the score?} Every baseline differs from FRCP in both
 the construction and the score, so Appendix~\ref{app:attrib} varies only
 the construction. Jackknife+ with the same score reproduces FRCP set for
@@ -215,7 +226,8 @@ embedding, each single refinement stage, the T$+$W pair, and the full
 chain, with truncation (T), whitening (W), and smoothing (S), at 2, 4,
 and 8 labels per class and $\alpha = 0.1$ over 20 trials. The dot
 matrix marks the active stages. Bars above a panel cap are clipped and
-annotated with their value.}
+annotated with their value. Sizes are shown before the non-empty fill
+of Section~\ref{sec:setup}, which only adds the empty-set mass.}
 \label{fig:ablation}
 \end{figure}
 \textbf{Refinement pays most at small budgets, and only the full chain
@@ -260,15 +272,16 @@ matter, at comparable per-trial cost, and stacking the two adds little.
 
 
 % --- provenance comments -----------------------------------------------
-% Temperature values must be re-verified against the results JSONs
-% before they are written into Appendix B (v4 note still open). The
-% wording "fixed once from a small pilot split" is deliberate: T is
-% fitted on a labeled pilot split (resolve_softmax_T), not from pool
-% statistics alone.
+% Appendix B temperature values: now the POOL-margin values (pool T per
+% dataset/encoder printed in the run logs, e.g. dinov2 cifar10 0.1558,
+% cifar100 0.1051, eurosat 0.0746; clip-b 0.1419 / 0.0279 / 0.0696) --
+% Appendix B's table must be updated in the appendix pass.
+% The score-hist appendix figure and the stage-ablation data are
+% single-split / 20-trial PLAIN-convention artifacts (illustrative);
+% the caption clause covers the ablation, the hist shows score mass,
+% not set sizes.
 % --- appendix stock ---------------------------------------------------
-% Stage table (r1b decomposition, 50 trials, raw / +T,W / full):
-% output/r1_headline/plots/table_r1b_cifar100.tex. The 2^3 grid behind
-% Figure 3 is tabulated in
+% The 2^3 grid behind Figure 3 is tabulated in
 % output/pipeline_ablation/plots/stage_ablation_stats.json (20 trials,
-% six combos post 09-06 rerun on the three-dataset roster);
-% generate a booktabs table from it if Appendix D wants the full grid.
+% six combos, three-dataset roster); generate a booktabs table from it
+% if Appendix D wants the full grid.

@@ -226,9 +226,10 @@ number of $k$-means groups, which is set to the class count.
 % ICLR style file is not in this mirror so we cannot confirm it loads.
 % If it does, "Results at $\alpha = 0.05$" also works.
 
-% REGENERATED 2026-09-06 (sec5 reorg): three-dataset roster, columns
-% {2,4,8,12}. Content = generator-emitted table_headline_dinov2_a005.tex
-% (caption kept in the appendix house style).
+% REGENERATED 2026-09-07 (final-results round): columns {2,4,6,8},
+% non-empty convention, pool-T + shrinkage-off config. Content =
+% generator-emitted table_headline_dinov2_a005.tex (caption kept in the
+% appendix house style).
 \begin{table}[h]
 \caption{Mean prediction-set size ($\pm$ SE) with marginal coverage in
 parentheses, at target miscoverage $\alpha = 0.05$ over 50 trials per
@@ -239,22 +240,22 @@ cell. Layout and conventions follow Table~\ref{tab:headline-main}.}
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{llcccc}
 \toprule
-dataset & method & 2 shots & 4 shots & 8 shots & 12 shots\\
+dataset & method & 2 shots & 4 shots & 6 shots & 8 shots\\
 \midrule
-\multirow{4}{*}{CIFAR-10} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.68$\pm$0.37 {\scriptsize(0.978)} & 1.71$\pm$0.14 {\scriptsize(0.964)} & 1.33$\pm$0.09 {\scriptsize(0.972)}\\
- & CV+ & 5.43$\pm$0.32 {\scriptsize(0.975)} & 1.72$\pm$0.09 {\scriptsize(0.962)} & 1.07$\pm$0.01 {\scriptsize(0.958)} & 1.01$\pm$0.01 {\scriptsize(0.957)}\\
- & SemiCP (best) & 7.46$\pm$0.43 {\scriptsize(0.961)} & 2.62$\pm$0.30 {\scriptsize(0.942)} & 1.46$\pm$0.20 {\scriptsize(0.941)} & 1.03$\pm$0.01 {\scriptsize(0.949)}\\
- & FRCP (ours) & \textbf{1.11$\pm$0.05 {\scriptsize(0.964)}} & \textbf{1.00$\pm$0.02 {\scriptsize(0.960)}} & \textbf{0.96$\pm$0.01 {\scriptsize(0.948)}} & \textbf{0.96$\pm$0.00 {\scriptsize(0.951)}}\\
+\multirow{4}{*}{CIFAR-10} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.68$\pm$0.37 {\scriptsize(0.978)} & 4.85$\pm$0.38 {\scriptsize(0.982)} & 1.72$\pm$0.14 {\scriptsize(0.969)}\\
+ & CV+ & 5.43$\pm$0.32 {\scriptsize(0.976)} & 1.73$\pm$0.09 {\scriptsize(0.963)} & 1.21$\pm$0.03 {\scriptsize(0.970)} & 1.08$\pm$0.01 {\scriptsize(0.964)}\\
+ & SemiCP (best) & 7.46$\pm$0.43 {\scriptsize(0.961)} & 2.63$\pm$0.30 {\scriptsize(0.945)} & 2.45$\pm$0.40 {\scriptsize(0.959)} & 1.48$\pm$0.20 {\scriptsize(0.950)}\\
+ & FRCP (ours) & \textbf{1.13$\pm$0.05 {\scriptsize(0.982)}} & \textbf{1.03$\pm$0.01 {\scriptsize(0.986)}} & \textbf{1.00$\pm$0.00 {\scriptsize(0.983)}} & \textbf{1.00$\pm$0.00 {\scriptsize(0.977)}}\\
 \midrule
-\multirow{4}{*}{CIFAR-100} & Split CP (best) & 96.71$\pm$0.10 {\scriptsize(0.969)} & 26.90$\pm$3.04 {\scriptsize(0.977)} & 3.40$\pm$0.11 {\scriptsize(0.961)} & 2.40$\pm$0.06 {\scriptsize(0.958)}\\
- & CV+ & 24.06$\pm$1.40 {\scriptsize(0.984)} & 3.97$\pm$0.10 {\scriptsize(0.962)} & 2.39$\pm$0.04 {\scriptsize(0.958)} & 1.97$\pm$0.02 {\scriptsize(0.957)}\\
- & SemiCP (best) & 95.98$\pm$0.16 {\scriptsize(0.962)} & 21.66$\pm$3.19 {\scriptsize(0.969)} & 3.27$\pm$0.15 {\scriptsize(0.957)} & 2.33$\pm$0.08 {\scriptsize(0.956)}\\
- & FRCP (ours) & \textbf{5.15$\pm$0.34 {\scriptsize(0.969)}} & \textbf{2.28$\pm$0.06 {\scriptsize(0.952)}} & \textbf{2.00$\pm$0.03 {\scriptsize(0.951)}} & \textbf{1.94$\pm$0.03 {\scriptsize(0.951)}}\\
+\multirow{4}{*}{CIFAR-100} & Split CP (best) & 96.71$\pm$0.10 {\scriptsize(0.969)} & 26.90$\pm$3.04 {\scriptsize(0.977)} & 6.26$\pm$0.46 {\scriptsize(0.966)} & 3.40$\pm$0.11 {\scriptsize(0.961)}\\
+ & CV+ & 24.06$\pm$1.40 {\scriptsize(0.984)} & 3.97$\pm$0.10 {\scriptsize(0.962)} & 2.91$\pm$0.06 {\scriptsize(0.960)} & 2.39$\pm$0.04 {\scriptsize(0.958)}\\
+ & SemiCP (best) & 95.98$\pm$0.16 {\scriptsize(0.962)} & 21.66$\pm$3.19 {\scriptsize(0.969)} & 4.67$\pm$0.33 {\scriptsize(0.954)} & 3.27$\pm$0.15 {\scriptsize(0.957)}\\
+ & FRCP (ours) & \textbf{5.05$\pm$0.34 {\scriptsize(0.969)}} & \textbf{2.27$\pm$0.06 {\scriptsize(0.952)}} & \textbf{2.06$\pm$0.04 {\scriptsize(0.950)}} & \textbf{2.01$\pm$0.03 {\scriptsize(0.951)}}\\
 \midrule
-\multirow{4}{*}{EuroSAT} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.76$\pm$0.36 {\scriptsize(0.974)} & 3.15$\pm$0.22 {\scriptsize(0.964)} & 2.74$\pm$0.14 {\scriptsize(0.958)}\\
- & CV+ & 6.34$\pm$0.25 {\scriptsize(0.977)} & 3.44$\pm$0.15 {\scriptsize(0.956)} & \textbf{2.25$\pm$0.08 {\scriptsize(0.956)}} & \textbf{1.90$\pm$0.05 {\scriptsize(0.959)}}\\
- & SemiCP (best) & 8.21$\pm$0.33 {\scriptsize(0.969)} & 4.57$\pm$0.25 {\scriptsize(0.940)} & 2.56$\pm$0.23 {\scriptsize(0.936)} & 2.35$\pm$0.21 {\scriptsize(0.948)}\\
- & FRCP (ours) & \textbf{4.90$\pm$0.23 {\scriptsize(0.972)}} & \textbf{3.10$\pm$0.15 {\scriptsize(0.950)}} & 2.32$\pm$0.10 {\scriptsize(0.947)} & 2.04$\pm$0.05 {\scriptsize(0.952)}\\
+\multirow{4}{*}{EuroSAT} & Split CP (best) & 10.00$\pm$0.00 {\scriptsize(1.000)} & 6.76$\pm$0.36 {\scriptsize(0.974)} & 6.24$\pm$0.30 {\scriptsize(0.984)} & 3.15$\pm$0.22 {\scriptsize(0.964)}\\
+ & CV+ & 6.34$\pm$0.25 {\scriptsize(0.977)} & 3.44$\pm$0.15 {\scriptsize(0.956)} & 2.60$\pm$0.10 {\scriptsize(0.958)} & \textbf{2.25$\pm$0.08 {\scriptsize(0.956)}}\\
+ & SemiCP (best) & 8.22$\pm$0.33 {\scriptsize(0.973)} & 4.59$\pm$0.24 {\scriptsize(0.961)} & 3.94$\pm$0.43 {\scriptsize(0.944)} & 2.56$\pm$0.23 {\scriptsize(0.936)}\\
+ & FRCP (ours) & \textbf{4.86$\pm$0.24 {\scriptsize(0.971)}} & \textbf{3.12$\pm$0.16 {\scriptsize(0.949)}} & \textbf{2.55$\pm$0.12 {\scriptsize(0.954)}} & 2.28$\pm$0.10 {\scriptsize(0.946)}\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -446,35 +447,30 @@ finite-sample floor full CP escapes.
 % moved to figs/_superseded/; the a005 companion is now the
 % generator-emitted figs/table_headline_clipb_a005.tex (ours-last row
 % order, label tab:headline-clipb-a005).
-% REWORKED 2026-09-06 (sec5 reorg): the CLIP comparison left the main
-% text (user call) and the encoder is UPGRADED to CLIP ViT-L, which
-% STRENGTHENS the claim. Tables from
-% output/backbone_headline/clip-large/results_*.json via
-% make_headline_tables.py; the ViT-B tables remain generator-emitted
-% (table_headline_clipb_*.tex) if a reviewer asks. s=12 cells run
-% locally 09-06 (checkpoint-merged into the {2,4,8,14} results), so the
-% grid matches the main table: {2,4,8,12}.
+% REWORKED 2026-09-07 (final-results round): encoder is CLIP ViT-B
+% (user call; CLIP ViT-L left the paper, its tables stay in figs/ and
+% output/instructor_comparisons_0907 for the record). Tables from
+% output/temperature/nonempty_clipb/results_*.json (50 trials, pool-T +
+% shrinkage off, non-empty convention) via make_headline_tables.py
+% --convention filled --frozen_arm frozen_Tpool_shrzero --shots 2 4 6 8.
 \section{Backbone transfer}
 \label{app:backbones}
 
-Tables~\ref{tab:headline-clipl} and~\ref{tab:headline-clipl-a005}
+Tables~\ref{tab:headline-clipb} and~\ref{tab:headline-clipb-a005}
 repeat the comparison of Table~\ref{tab:headline-main} on CLIP
-ViT-L~\citep{radford2021clip} embeddings of dimension $d = 1024$, at
-both miscoverage levels and on the same budget grid. The pipeline and
+ViT-B~\citep{radford2021clip} embeddings, at both miscoverage levels
+and on the same budget grid and non-empty convention. The pipeline and
 per-dataset configuration of Appendix~\ref{app:config} carry over
-unchanged. Only the pool statistics are refitted, and the softmax
-temperature is re-piloted for the encoder. FRCP is smallest in 9 of 12
-cells at $\alpha = 0.1$, and every loss is on EuroSAT, where the
-crossover arrives at $s = 4$ on this encoder. At $\alpha = 0.05$ it is
-smallest in 8 of 12, with CV+ passing narrowly at $s = 12$ on CIFAR-10
-and CIFAR-100, 1.07 against 1.11 and 5.87 against 6.04. The advantage
-also widens with encoder quality: on the shared $s \in \{2, 4, 8\}$
-cells the smaller CLIP ViT-B gives 6 of 9 at both levels against 7 of
-9 and 8 of 9 on ViT-L, and the FRCP sets themselves roughly halve on
-CIFAR-100 in the move to ViT-L, 21.1 to 11.7 at two shots.
+unchanged. Only the pool statistics are refitted, and the temperature
+is re-resolved from the pool for the encoder. FRCP is smallest in 8 of
+12 cells at both miscoverage levels. Every loss is to CV+, three of
+the four on EuroSAT, where the crossover that sits beyond the grid on
+DINOv2 arrives at four shots on this weaker encoder, and the fourth on
+CIFAR-100 at eight shots. SemiCP falls below the coverage target in
+five cells at $\alpha = 0.1$, reaching 0.870.
 
-\input{figs/table_headline_clipl_a01.tex}
-\input{figs/table_headline_clipl_a005.tex}
+\input{figs/table_headline_clipb_a01.tex}
+\input{figs/table_headline_clipb_a005.tex}
 
 % ===================================================================
 % Gap B2 (Section 5.4) score- vs representation-level smoothing. ADDED
