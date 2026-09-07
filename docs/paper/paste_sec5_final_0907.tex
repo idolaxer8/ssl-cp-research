@@ -21,22 +21,38 @@
 %     bit; 60-130x), baselines 0.03-0.05s; preparation costs in the
 %     caption.
 %
-% UPLOADS to Overleaf figs/ (if you keep the \input form of R-3):
+% NOTE: the 0906 round was never pasted, so this file is fully
+% SELF-CONTAINED against the 09-03 Overleaf state (it folds in the two
+% 0906 steps the new Section 5 depends on: the app:scorehist appendix
+% section and the Appendix D miniImageNet deletion).
+%
+% UPLOADS to Overleaf figs/ (REQUIRED -- neither is on Overleaf yet):
+%   fig_stage_ablation_row.pdf        (replaces fig_stage_ablation.pdf,
+%                                      1x3 three-dataset row layout)
+%   fig_refine_score_hist_softmax.pdf (appendix score-hist figure)
+% Optional uploads (only if you keep the \input form of R-3):
 %   table_headline_clipb_a01.tex, table_headline_clipb_a005.tex
 %   (both REGENERATED 09-07: filled convention, {2,4,6,8} columns; the
 %    two tables are also inlined below so you can paste instead)
-% No new figure uploads: fig_stage_ablation_row.pdf and
-%   fig_refine_score_hist_softmax.pdf are unchanged from the 0906 round.
 %
 % R-1  REPLACE the whole \section{Experiments} body with the body of
 %      docs/paper/iclr2027/experiments.tex (everything below its
 %      comment header). Self-contained: the DINOv2 table and the NEW
-%      test-time runtime table are inlined there.
+%      test-time runtime table are inlined there. This removes the old
+%      Table 3 (CLIP in main text), the old runtime paragraph, and the
+%      old fig_refine_score_hist figure block.
 %
 % R-2  Appendix C (Results at the tighter miscoverage level): REPLACE
 %      the tabular of tab:headline-appendix-a005 with the version now
 %      in docs/paper/iclr2027/appendix.tex (columns {2,4,6,8}, filled
-%      convention).
+%      convention; miniImageNet block gone).
+%
+% R-2b Appendix D (Refinement ablation tables): DELETE the miniImageNet
+%      table (tab:r1b-decomposition-miniimagenet) and change the intro
+%      sentence to the singular:
+%        "Table~\ref{tab:r1b-decomposition-cifar100} gives the numbers
+%         behind Figure~\ref{fig:ablation}, for every stage and score
+%         combination."
 %
 % R-3  Backbone-transfer appendix section: REPLACE its body with:
 % ----------------------------------------------------------------------
@@ -113,6 +129,42 @@ dataset & method & 2 shots & 4 shots & 6 shots & 8 shots\\
 \bottomrule
 \end{tabular}
 \end{table}
+% ======================================================================
+% R-4  APPEND at the very END of the appendix (after the candidate-
+%      sweep section, so the hard-coded A-F letters do not move) -- this
+%      is the 0906 step the new 5.3 references as app:scorehist:
+% ----------------------------------------------------------------------
+\section{Refinement and the score distribution}
+\label{app:scorehist}
+
+Figure~\ref{fig:score-hist} shows what the frozen refinement does to
+the distribution of the deployed prototype-softmax score. Because the
+temperatures are sharp, the score saturates near 0 and 1, so
+the axis is logit-scaled and both saturated ends are resolved. Before
+refinement the false-class mass leans on the calibration quantile from
+above and spills across it. After refinement the true-class mass
+concentrates well below the quantile and the false-class mass
+separates cleanly above it on CIFAR-10 and CIFAR-100, which is why the
+same coverage is bought with fewer false labels in the set. On EuroSAT
+the two masses stay entangled and the gain is correspondingly small,
+consistent with its position in Table~\ref{tab:headline-main}.
+
+\begin{figure}[h]
+\begin{center}
+\includegraphics[width=\linewidth]{fig_refine_score_hist_softmax.pdf}
+\end{center}
+\caption{Refinement and the score distribution. True-class (green) and
+false-class (red) mass of the deployed prototype-softmax score
+$s = 1 - p_T(c \,|\, z)$ over the test set, before (top) and after
+(bottom) the frozen refinement T$\to$W$\to$S, with the calibration
+quantile $\hat q_{1-\alpha}$ dashed, at four labels per class and
+$\alpha = 0.1$ on a single balanced split (DINOv2 ViT-B, per-panel
+temperature annotated). The score axis is logit-scaled to
+resolve both saturated ends, and bar heights are per-class probability
+mass per bin. Annotations give coverage, mean set size, and leak, the
+mean number of false labels inside the set.}
+\label{fig:score-hist}
+\end{figure}
 % ======================================================================
 % KNOWN DANGLERS for the appendix pass:
 %   - Appendix B (per-dataset configuration): temperature values must
