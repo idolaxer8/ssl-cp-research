@@ -295,7 +295,7 @@ is fitted by the same rule the score would use on labels, so
 resolving it consumes none. Figure~\ref{fig:t-sweep} sweeps a grid of
 fixed temperatures around the resolved value on each dataset. The
 deployed value lands on the flat part of the curve everywhere: at the
-grid minimum on CIFAR-100 (2.24 labels at two shots against 3.02 at
+grid minimum on CIFAR-100 (2.26 labels at two shots against 3.11 at
 the grid's low end), and inside a plateau spanning more than an order
 of magnitude on CIFAR-10 and EuroSAT, where only a far-off temperature
 moves the sets (9.9 labels at the smallest EuroSAT temperature against
@@ -307,7 +307,7 @@ moves the sets (9.9 labels at the smallest EuroSAT temperature against
 \end{center}
 \caption{Temperature sensitivity. Mean prediction-set size under fixed
 temperatures on a log grid (20 trials, $\alpha = 0.1$, DINOv2 ViT-B,
-plain-convention sizes), at 2 and 8 labels per class. The dashed line
+non-empty convention), at 2 and 8 labels per class. The dashed line
 marks the deployed pool-resolved $T$.}
 \label{fig:t-sweep}
 \end{figure}
@@ -334,11 +334,12 @@ a single shared configuration accepts.
 \end{center}
 \caption{Configuration sensitivity. Mean prediction-set size (FRCP,
 $\alpha = 0.1$, four labels per class, 10 trials, non-empty
-convention) as each stage pair varies around the deployed
-configuration (boxed cell), with every other knob held at its
-deployed value. Top: smoothing neighborhood $\kappa$ against weight
-exponent $\gamma$. Bottom: truncation dimension $d'$ against
-whitening groups per class $C/K$.}
+convention) as each stage pair varies with every other knob held at
+its deployed value. The solid red box is the deployed cell and the
+dashed box the grid minimum, drawn on the deployed cell when the two
+tie at display precision. Top: smoothing neighborhood $\kappa$
+against weight exponent $\gamma$. Bottom: truncation dimension $d'$
+against whitening groups per class $C/K$.}
 \label{fig:config-heatmaps}
 \end{figure}
 

@@ -27,23 +27,35 @@ plt.rcParams.update({
 
 
 def panel(ax, rows, grid, p1n, p1v, p2n, p2v, deploy, xlab, ylab):
+    # color by the DISPLAYED (2-decimal) value, so equal annotations get
+    # equal colors (raw-value coloring made visually identical cells
+    # differ, user report 09-08)
     M = np.full((len(p2v), len(p1v)), np.nan)
     for r in rows:
         if r["grid"] != grid:
             continue
         i = p2v.index(r[p2n])
         j = p1v.index(r[p1n])
-        M[i, j] = r["sz1"]
+        M[i, j] = round(r["sz1"], 2)
     im = ax.imshow(M, cmap="viridis_r", aspect="auto", origin="lower")
+    vmin, vmax = np.nanmin(M), np.nanmax(M)
     for i in range(M.shape[0]):
         for j in range(M.shape[1]):
             if np.isfinite(M[i, j]):
-                vmin, vmax = np.nanmin(M), np.nanmax(M)
                 frac = 0.5 if vmax == vmin else (M[i, j] - vmin) / (vmax - vmin)
                 ax.text(j, i, f"{M[i, j]:.2f}", ha="center", va="center",
                         fontsize=6.5,
                         color="white" if frac > 0.55 else "black")
+    # solid red = deployed cell; dashed black (inset) = grid minimum.
+    # If the deployed cell TIES the minimum at display precision, the
+    # dashed box sits on the deployed cell (deployed = minimum).
     di, dj = p2v.index(deploy[p2n]), p1v.index(deploy[p1n])
+    mi, mj = np.unravel_index(np.nanargmin(M), M.shape)
+    if M[di, dj] == M[mi, mj]:
+        mi, mj = di, dj
+    ax.add_patch(plt.Rectangle((mj - 0.42, mi - 0.42), 0.84, 0.84,
+                               fill=False, edgecolor="black", lw=1.4,
+                               ls=(0, (3, 2))))
     ax.add_patch(plt.Rectangle((dj - 0.5, di - 0.5), 1, 1, fill=False,
                                edgecolor="red", lw=1.8))
     ax.set_xticks(range(len(p1v)))

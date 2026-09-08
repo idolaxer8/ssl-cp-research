@@ -1,18 +1,22 @@
 """Appendix D temperature-sensitivity figure (3-dataset roster).
 
 Adapted 2026-09-07 from the temperature-audit branch's
-plot_T_sensitivity.py (R2 figure): mean FRCP set size under a grid of
-FIXED temperatures (log x, linear y per the standing preference), one
-panel per headline dataset, shots {2, 8} at alpha=0.1, 20 trials. The
-deployed pool-resolved T is the dashed vertical line.
+plot_T_sensitivity.py (R2 figure); 09-08: reads the sweep_ne rerun
+(non-empty convention sz1, shrinkage off -- the deployed variant, so
+sizes are >= 1 by construction): mean FRCP filled set size under a
+grid of FIXED temperatures (log x, linear y per the standing
+preference), one panel per headline dataset, shots {2, 8} at
+alpha=0.1, 20 trials. The deployed pool-resolved T is the dashed
+vertical line.
 
-Reads output/temperature/sweep/<ds>/T<i>/headline_checkpoint_<ds>.json
-and output/temperature/resolver_check.json (dinov2 rows, T_pool).
+Reads output/temperature/sweep_ne/<ds>/T<i>/headline_checkpoint_<ds>.json
+(arm frozen_shrzero) and output/temperature/resolver_check.json
+(dinov2 rows, T_pool).
 
 Usage: python src/plot_T_sensitivity_paper.py \
-    --sweep_dir output/temperature/sweep \
+    --sweep_dir output/temperature/sweep_ne \
     --resolver output/temperature/resolver_check.json \
-    --out_dir output/temperature/sweep
+    --out_dir output/temperature/sweep_ne
 """
 import argparse, json, os
 
@@ -38,10 +42,11 @@ plt.rcParams.update({
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sweep_dir", default="output/temperature/sweep")
+    ap.add_argument("--sweep_dir", default="output/temperature/sweep_ne")
     ap.add_argument("--resolver",
                     default="output/temperature/resolver_check.json")
-    ap.add_argument("--out_dir", default="output/temperature/sweep")
+    ap.add_argument("--out_dir", default="output/temperature/sweep_ne")
+    ap.add_argument("--arm", default="frozen_shrzero")
     args = ap.parse_args()
     resolver = {r["dataset"]: r for r in json.load(open(args.resolver))
                 if r["encoder"] == "dinov2"}
@@ -60,11 +65,13 @@ def main():
                 if not os.path.exists(p):
                     continue
                 ck = json.load(open(p))
-                cell = ck["cells"].get(f"frozen|balanced_both|{shots}")
+                cell = ck["cells"].get(f"{args.arm}|balanced_both|{shots}")
                 if not cell or not cell["trials"]:
                     continue
-                sz = np.array([t[AK]["sz"] for t in cell["trials"]
-                               if AK in t])
+                sz = np.array([t[AK]["sz1"] for t in cell["trials"]
+                               if AK in t and "sz1" in t[AK]])
+                if sz.size == 0:
+                    continue
                 Ts.append(float(cell["T"]))
                 mu.append(sz.mean())
                 se.append(sz.std() / np.sqrt(len(sz)))
